@@ -260,23 +260,15 @@ type OpenAIChatToolCallDelta = Schema.Schema.Type<typeof OpenAIChatToolCallDelta
 // Mistral-style models stream `content` as typed parts instead of a string:
 // `text` parts carry output, and `thinking` parts nest their own text units.
 // Other part types (references, media) carry nothing renderable and are skipped.
+const OpenAIChatThinkingText = Schema.StructWithRest(Schema.Struct({ text: optionalNull(Schema.String) }), [JsonObject])
+
 const OpenAIChatContentPart = Schema.StructWithRest(
   Schema.Struct({
     type: Schema.String,
     text: optionalNull(Schema.String),
-    thinking: optionalNull(
-      Schema.Union([
-        Schema.String,
-        Schema.Array(
-          Schema.StructWithRest(
-            Schema.Struct({ type: Schema.optional(Schema.String), text: optionalNull(Schema.String) }),
-            [Schema.Record(Schema.String, Schema.Unknown)],
-          ),
-        ),
-      ]),
-    ),
+    thinking: optionalNull(Schema.Union([Schema.String, Schema.Array(OpenAIChatThinkingText)])),
   }),
-  [Schema.Record(Schema.String, Schema.Unknown)],
+  [JsonObject],
 )
 
 export const OpenAIChatDelta = Schema.StructWithRest(
@@ -967,16 +959,30 @@ interface ContentDelta {
 }
 
 // Flattens string or part-array content into ordered text and reasoning deltas.
-const contentDeltas = (content: Schema.Schema.Type<typeof OpenAIChatDelta>["content"]) => {
-  if (typeof content === "string") return content ? [{ type: "text" as const, text: content }] : []
-  return (content ?? []).flatMap((part): ContentDelta[] => {
-    if (part.type === "text") return part.text ? [{ type: "text", text: part.text }] : []
-    if (part.type !== "thinking") return []
-    const text =
-      typeof part.thinking === "string" ? part.thinking : (part.thinking ?? []).map((unit) => unit.text ?? "").join("")
-    return text ? [{ type: "reasoning", text }] : []
-  })
-}
+const contentDeltas = Effect.fnUntraced(function* (content: Schema.Schema.Type<typeof OpenAIChatDelta>["content"]) {
+  if (!content) return []
+  if (typeof content === "string") return [{ type: "text" as const, text: content }]
+  const deltas: ContentDelta[] = []
+  const skipped: string[] = []
+  for (const part of content) {
+    if (part.type === "text") {
+      if (part.text) deltas.push({ type: "text", text: part.text })
+    } else if (part.type === "thinking") {
+      const text =
+        typeof part.thinking === "string"
+          ? part.thinking
+          : (part.thinking ?? []).map((unit) => unit.text ?? "").join("")
+      if (text) deltas.push({ type: "reasoning", text })
+    } else {
+      skipped.push(part.type)
+    }
+  }
+  if (skipped.length > 0)
+    yield* Effect.logDebug("openai-chat.content_parts_skipped").pipe(
+      Effect.annotateLogs({ types: skipped.join(",") }),
+    )
+  return deltas
+})
 
 const detailText = (details: ReadonlyArray<ReasoningDetail>, hideKimiSummary: boolean) => {
   const text = details.flatMap((detail) => {
@@ -1102,14 +1108,7 @@ const step = (state: ParserState, event: OpenAIChatEvent) =>
     let lifecycle = state.lifecycle
 
     const reasoning = reasoningDelta(delta, state.reasoningField)
-    const content = contentDeltas(delta?.content)
-    const skippedParts = Array.isArray(delta?.content)
-      ? delta.content.filter((part) => part.type !== "text" && part.type !== "thinking").map((part) => part.type)
-      : []
-    if (skippedParts.length > 0)
-      yield* Effect.logDebug("openai-chat.content_parts_skipped").pipe(
-        Effect.annotateLogs({ types: skippedParts.join(",") }),
-      )
+    const content = yield* contentDeltas(delta?.content)
     if (
       state.finishReason !== undefined &&
       toolDeltas.some((tool) => Boolean(tool.id) || Boolean(tool.function?.name) || Boolean(tool.function?.arguments))
