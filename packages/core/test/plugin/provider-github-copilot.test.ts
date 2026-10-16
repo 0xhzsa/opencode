@@ -717,7 +717,9 @@ describe("GithubCopilotPlugin", () => {
           model: Model.Ref.make({ providerID: Provider.ID.githubCopilot, id: Model.ID.make("auto") }),
         })
       const ids = yield* sessions()
-      expect((yield* resolve(ids.parent)).target).toBe(Model.ID.make("routed"))
+      // The title and the main request resolve a new Session's model concurrently.
+      const concurrent = yield* Effect.all([resolve(ids.parent), resolve(ids.parent)], { concurrency: "unbounded" })
+      expect(concurrent.map((event) => event.target)).toEqual([Model.ID.make("routed"), Model.ID.make("routed")])
       expect((yield* resolve(ids.parent)).target).toBe(Model.ID.make("routed"))
       expect(routed).toEqual([{ prompt: "" }])
       const request = yield* hooks.trigger("session", "model.request", {

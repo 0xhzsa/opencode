@@ -172,6 +172,8 @@ export const GithubCopilotPlugin = define({
       connection?: Effect.Success<ReturnType<typeof ctx.integration.connection.active>>
     } = {}
     const routes = new Map<Session.ID, CopilotAuto.Route>()
+    // Routing misses are rare (once per Session per day), so one lock is simpler than per-Session locks.
+    const routing = Semaphore.makeUnsafe(1)
 
     const load = Effect.fn("GithubCopilotPlugin.load")(function* () {
       routes.clear()
@@ -297,6 +299,53 @@ export const GithubCopilotPlugin = define({
         }),
       { providerID: Provider.ID.githubCopilot },
     )
+    const current = (sessionID: Session.ID) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.map((now) => {
+          const route = routes.get(sessionID)
+          return route && route.until > now ? route : undefined
+        }),
+      )
+    const route = Effect.fn("GithubCopilotPlugin.route")(function* (sessionID: Session.ID) {
+      const cached = yield* current(sessionID)
+      if (cached) return cached
+      const models = loaded.models
+      if (!loaded.baseURL || !loaded.token || !models) return
+      const user = yield* ctx.session.context({ sessionID }).pipe(
+        Effect.map((messages) => messages.findLast((message) => message.type === "user")),
+        Effect.orElseSucceed(() => undefined),
+      )
+      const provider = yield* providers.get(Provider.ID.githubCopilot)
+      const routed = yield* Effect.tryPromise(() =>
+        CopilotAuto.route(
+          loaded.baseURL ?? baseURL(),
+          {
+            ...provider?.headers,
+            Authorization: `Bearer ${loaded.token}`,
+            "User-Agent": App.useragent(ctx.app),
+            "X-GitHub-Api-Version": apiVersion,
+          },
+          {
+            prompt: user?.text ?? "",
+            image: user?.files?.some((file) => file.mime.startsWith("image/")) ?? false,
+          },
+        ),
+      ).pipe(
+        Effect.tapError((cause) => Effect.logWarning("Copilot auto routing failed", { cause })),
+        Effect.orElseSucceed(() => undefined),
+      )
+      // Retry routing shortly when the router fails or picks a model this client cannot serve.
+      const fallback = Array.from(models.values()).find((model) => model.is_chat_fallback)
+      const result =
+        routed && models.has(routed.model)
+          ? routed
+          : fallback && { model: fallback.id, until: (yield* Clock.currentTimeMillis) + 5 * 60 * 1000 }
+      if (!result) return
+      const oldest = routes.keys().next().value
+      if (routes.size >= 100 && oldest) routes.delete(oldest)
+      routes.set(sessionID, result)
+      return result
+    })
     // Auto is a catalog model that Copilot's router resolves to a concrete model once per Session,
     // like VS Code does, so every request after resolution takes that model's normal route.
     yield* ctx.session.hook(
@@ -304,46 +353,10 @@ export const GithubCopilotPlugin = define({
       (evt) =>
         Effect.gen(function* () {
           if (evt.model.id !== CopilotModels.auto) return
-          const now = yield* Clock.currentTimeMillis
-          const cached = routes.get(evt.sessionID)
-          if (cached && cached.until > now) {
-            evt.target = Model.ID.make(cached.model)
-            return
-          }
-          const models = loaded.models
-          if (!loaded.baseURL || !loaded.token || !models) return
-          const user = yield* ctx.session.context({ sessionID: evt.sessionID }).pipe(
-            Effect.map((messages) => messages.findLast((message) => message.type === "user")),
-            Effect.orElseSucceed(() => undefined),
-          )
-          const provider = yield* providers.get(Provider.ID.githubCopilot)
-          const routed = yield* Effect.tryPromise(() =>
-            CopilotAuto.route(
-              loaded.baseURL ?? baseURL(),
-              {
-                ...provider?.headers,
-                Authorization: `Bearer ${loaded.token}`,
-                "User-Agent": App.useragent(ctx.app),
-                "X-GitHub-Api-Version": apiVersion,
-              },
-              {
-                prompt: user?.text ?? "",
-                image: user?.files?.some((file) => file.mime.startsWith("image/")) ?? false,
-              },
-            ),
-          ).pipe(
-            Effect.tapError((cause) => Effect.logWarning("Copilot auto routing failed", { cause })),
-            Effect.orElseSucceed(() => undefined),
-          )
-          // Retry routing shortly when the router fails or picks a model this client cannot serve.
-          const fallback = Array.from(models.values()).find((model) => model.is_chat_fallback)
-          const route =
-            routed && models.has(routed.model) ? routed : fallback && { model: fallback.id, until: now + 5 * 60 * 1000 }
-          if (!route) return
-          const oldest = routes.keys().next().value
-          if (routes.size >= 100 && oldest) routes.delete(oldest)
-          routes.set(evt.sessionID, route)
-          evt.target = Model.ID.make(route.model)
+          // A Session's first prompt resolves its model for the title and the main request concurrently;
+          // both must share one route because its session token only unlocks the model it was issued for.
+          const selected = (yield* current(evt.sessionID)) ?? (yield* routing.withPermit(route(evt.sessionID)))
+          if (selected) evt.target = Model.ID.make(selected.model)
         }),
       { providerID: Provider.ID.githubCopilot },
     )
