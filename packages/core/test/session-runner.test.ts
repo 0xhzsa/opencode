@@ -63,7 +63,13 @@ import { Document, Info } from "@opencode/schema/config"
 import { ConfigCompaction } from "@opencode/schema/config/compaction"
 import { Tool } from "@opencode/core/tool"
 import type { Info as ToolInfo } from "@opencode/schema/tool"
-import { InstructionStateTable, SessionInboxTable, SessionMessageTable, SessionTable } from "@opencode/core/session/sql"
+import {
+  InstructionEntryTable,
+  InstructionStateTable,
+  SessionInboxTable,
+  SessionMessageTable,
+  SessionTable,
+} from "@opencode/core/session/sql"
 import { InstructionEntry } from "@opencode/core/session/instruction-entry"
 import { SessionStore } from "@opencode/core/session/store"
 import { Instructions } from "@opencode/core/instructions/index"
@@ -2039,6 +2045,59 @@ describe("SessionRunnerLLM", () => {
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(InstructionEntry.ValueTooLargeError)
     expect(yield* entries.list(sessionID)).toEqual([])
+  })
+
+  scenario("validates API instruction entry keys on put and remove", function* () {
+    const entries = yield* InstructionEntry.Service
+    const maxKey = "a".repeat(InstructionEntry.MaxKeyLength)
+
+    yield* entries.put({ sessionID, key: maxKey, value: "ok" })
+    expect(yield* entries.list(sessionID)).toEqual([{ key: maxKey, value: "ok" }])
+    yield* entries.remove({ sessionID, key: maxKey })
+    expect(yield* entries.list(sessionID)).toEqual([])
+
+    for (const badKey of ["", "Bad Key", "a/b", "-leading", "a".repeat(InstructionEntry.MaxKeyLength + 1)]) {
+      const putExit = yield* entries.put({ sessionID, key: badKey, value: "nope" }).pipe(Effect.exit)
+      expect(Exit.isFailure(putExit)).toBe(true)
+      if (Exit.isFailure(putExit)) {
+        const error = Cause.squash(putExit.cause)
+        expect(error).toBeInstanceOf(InstructionEntry.InvalidKeyError)
+        expect(error).toMatchObject({ key: badKey })
+      }
+
+      const removeExit = yield* entries.remove({ sessionID, key: badKey }).pipe(Effect.exit)
+      expect(Exit.isFailure(removeExit)).toBe(true)
+      if (Exit.isFailure(removeExit)) {
+        const error = Cause.squash(removeExit.cause)
+        expect(error).toBeInstanceOf(InstructionEntry.InvalidKeyError)
+        expect(error).toMatchObject({ key: badKey })
+      }
+    }
+
+    expect(yield* entries.list(sessionID)).toEqual([])
+  })
+
+  scenario("skips stored instruction entries with malformed keys when loading", function* (s) {
+    const { db } = yield* Database.Service
+    const entries = yield* InstructionEntry.Service
+
+    yield* db
+      .insert(InstructionEntryTable)
+      .values([
+        { session_id: sessionID, key: "Bad Key", value: "ignored", removed: false },
+        { session_id: sessionID, key: "a/b", value: "also-ignored", removed: false },
+      ])
+      .run()
+      .pipe(Effect.orDie)
+    yield* entries.put({ sessionID, key: "deploy-target", value: "production" })
+
+    yield* s.runPrompt("First")
+
+    expect(s.requests[0]?.system.map((part) => part.text)).toEqual([
+      defaultSystem,
+      fakeIdentity,
+      ["Initial context", "", '<context key="deploy-target">', "production", "</context>"].join("\n"),
+    ])
   })
 
   scenario("keeps initial instructions and chronological updates after a model switch", function* (s) {

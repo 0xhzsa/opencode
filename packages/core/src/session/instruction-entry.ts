@@ -1,7 +1,7 @@
 export * as InstructionEntry from "./instruction-entry.js"
 
 import { and, asc, eq, isNotNull, isNull, ne, or } from "drizzle-orm"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { InstructionEntry } from "@opencode/schema/instruction-entry"
 import { Database } from "../database/database.js"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
@@ -15,7 +15,9 @@ export const Info = InstructionEntry.Info
 export type Info = typeof Info.Type
 export const Snapshot = InstructionEntry.Snapshot
 export type Snapshot = typeof Snapshot.Type
+export const MaxKeyLength = InstructionEntry.MaxKeyLength
 export const MaxValueBytes = InstructionEntry.MaxValueBytes
+export const InvalidKeyError = InstructionEntry.InvalidKeyError
 export const ValueTooLargeError = InstructionEntry.ValueTooLargeError
 
 type DatabaseService = Database.Interface["db"]
@@ -72,13 +74,24 @@ export interface Interface {
     readonly sessionID: SessionSchema.ID
     readonly key: Key
     readonly value: Schema.Json
-  }) => Effect.Effect<void, InstructionEntry.ValueTooLargeError>
-  readonly remove: (input: { readonly sessionID: SessionSchema.ID; readonly key: Key }) => Effect.Effect<void>
+  }) => Effect.Effect<void, InstructionEntry.InvalidKeyError | InstructionEntry.ValueTooLargeError>
+  readonly remove: (input: {
+    readonly sessionID: SessionSchema.ID
+    readonly key: Key
+  }) => Effect.Effect<void, InstructionEntry.InvalidKeyError>
   /** Produces one Instructions source per stored entry, keyed `api/<key>`. */
   readonly load: (sessionID: SessionSchema.ID) => Effect.Effect<Instructions.List>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/InstructionEntry") {}
+
+const decodeKey = Schema.decodeUnknownOption(Key)
+
+const invalidKey = (key: string) =>
+  new InvalidKeyError({
+    key,
+    message: `Instruction entry key "${key}" must match /^[a-z0-9][a-z0-9._-]*$/ and be at most ${MaxKeyLength} characters`,
+  })
 
 const renderValue = (value: Schema.Json) => (typeof value === "string" ? value : JSON.stringify(value, null, 2))
 
@@ -132,9 +145,11 @@ const layer = Layer.effect(
     })
 
     const put = Effect.fn("InstructionEntry.put")(function* (input: Parameters<Interface["put"]>[0]) {
+      const key = Option.getOrUndefined(decodeKey(input.key))
+      if (key === undefined) return yield* invalidKey(input.key)
       const actualBytes = Buffer.byteLength(JSON.stringify(input.value), "utf8")
       if (actualBytes > MaxValueBytes)
-        yield* new ValueTooLargeError({
+        return yield* new ValueTooLargeError({
           actualBytes,
           maxBytes: MaxValueBytes,
           message: `Instruction entry value is ${actualBytes} bytes; the limit is ${MaxValueBytes} bytes`,
@@ -145,7 +160,7 @@ const layer = Layer.effect(
           : or(isNull(InstructionEntryTable.value), ne(InstructionEntryTable.value, input.value))
       yield* db
         .insert(InstructionEntryTable)
-        .values({ session_id: input.sessionID, key: input.key, value: input.value, removed: false })
+        .values({ session_id: input.sessionID, key, value: input.value, removed: false })
         .onConflictDoUpdate({
           target: [InstructionEntryTable.session_id, InstructionEntryTable.key],
           set: { value: input.value, removed: false, time_updated: Date.now() },
@@ -156,13 +171,15 @@ const layer = Layer.effect(
     })
 
     const remove = Effect.fn("InstructionEntry.remove")(function* (input: Parameters<Interface["remove"]>[0]) {
+      const key = Option.getOrUndefined(decodeKey(input.key))
+      if (key === undefined) return yield* invalidKey(input.key)
       yield* db
         .update(InstructionEntryTable)
         .set({ value: null, removed: true, time_updated: Date.now() })
         .where(
           and(
             eq(InstructionEntryTable.session_id, input.sessionID),
-            eq(InstructionEntryTable.key, input.key),
+            eq(InstructionEntryTable.key, key),
             eq(InstructionEntryTable.removed, false),
           ),
         )
@@ -171,7 +188,14 @@ const layer = Layer.effect(
     })
 
     const load = Effect.fn("InstructionEntry.load")(function* (sessionID: SessionSchema.ID) {
-      return Instructions.combine((yield* rows(sessionID, true)).map(source))
+      const entries = yield* Effect.forEach(yield* rows(sessionID, true), (row) => {
+        const key = Option.getOrUndefined(decodeKey(row.key))
+        if (key !== undefined) return Effect.succeed(source({ ...row, key }))
+        return Effect.logWarning("skipping instruction entry with invalid key", { sessionID, key: row.key }).pipe(
+          Effect.as(Instructions.empty),
+        )
+      })
+      return Instructions.combine(entries)
     })
 
     return Service.of({ list, put, remove, load })

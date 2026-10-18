@@ -2,12 +2,17 @@ export * as InstructionEntry from "./instruction-entry.js"
 
 import { Schema } from "effect"
 
+export const MaxKeyLength = 128
+
 /**
  * Slash-free client-facing key for one API-managed instruction entry. The server
  * derives the namespaced Instructions key as `api/<key>`, keeping the
  * `api/*` namespace enforced by construction.
  */
-export const Key = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9._-]*$/u)).annotate({
+export const Key = Schema.String.check(
+  Schema.isMaxLength(MaxKeyLength),
+  Schema.isPattern(/^[a-z0-9][a-z0-9._-]*$/u),
+).annotate({
   identifier: "InstructionEntry.Key",
   description: "Instruction entry key (lowercase alphanumerics plus . _ -)",
 })
@@ -28,6 +33,15 @@ export const Snapshot = Schema.Array(
 export type Snapshot = typeof Snapshot.Type
 
 export const MaxValueBytes = 256 * 1024
+
+export class InvalidKeyError extends Schema.TaggedError<InvalidKeyError>()(
+  "InstructionEntryInvalidKeyError",
+  {
+    key: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 400 },
+) {}
 
 export class ValueTooLargeError extends Schema.TaggedError<ValueTooLargeError>()(
   "InstructionEntryValueTooLargeError",
