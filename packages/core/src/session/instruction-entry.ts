@@ -1,7 +1,7 @@
 export * as InstructionEntry from "./instruction-entry.js"
 
 import { and, asc, eq, isNotNull, isNull, ne, or } from "drizzle-orm"
-import { Context, Effect, Layer, Option, Schema } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 import { InstructionEntry } from "@opencode/schema/instruction-entry"
 import { Database } from "../database/database.js"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
@@ -27,17 +27,7 @@ export const snapshot = Effect.fn("InstructionEntry.snapshot")(function* (
   db: DatabaseService,
   sessionID: SessionSchema.ID,
 ) {
-  return yield* db
-    .select({
-      key: InstructionEntryTable.key,
-      value: InstructionEntryTable.value,
-      removed: InstructionEntryTable.removed,
-    })
-    .from(InstructionEntryTable)
-    .where(eq(InstructionEntryTable.session_id, sessionID))
-    .orderBy(asc(InstructionEntryTable.key))
-    .all()
-    .pipe(Effect.orDie)
+  return yield* rows(db, sessionID, true)
 })
 
 export const initialize = Effect.fn("InstructionEntry.initialize")(function* (
@@ -85,13 +75,39 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/InstructionEntry") {}
 
-const decodeKey = Schema.decodeUnknownOption(Key)
+const isKey = Schema.is(Key)
 
 const invalidKey = (key: string) =>
   new InvalidKeyError({
     key,
     message: `Instruction entry key "${key}" must match /^[a-z0-9][a-z0-9._-]*$/ and be at most ${MaxKeyLength} characters`,
   })
+
+const rows = Effect.fnUntraced(function* (db: DatabaseService, sessionID: SessionSchema.ID, includeRemoved: boolean) {
+  const stored = yield* db
+    .select({
+      key: InstructionEntryTable.key,
+      value: InstructionEntryTable.value,
+      removed: InstructionEntryTable.removed,
+    })
+    .from(InstructionEntryTable)
+    .where(
+      and(
+        eq(InstructionEntryTable.session_id, sessionID),
+        includeRemoved ? undefined : eq(InstructionEntryTable.removed, false),
+      ),
+    )
+    .orderBy(asc(InstructionEntryTable.key))
+    .all()
+    .pipe(Effect.orDie)
+  const valid = yield* Effect.forEach(stored, (row) => {
+    if (isKey(row.key)) return Effect.succeed([row])
+    return Effect.logWarning("skipping instruction entry with invalid key", { sessionID, key: row.key }).pipe(
+      Effect.as([]),
+    )
+  })
+  return valid.flat()
+})
 
 const renderValue = (value: Schema.Json) => (typeof value === "string" ? value : JSON.stringify(value, null, 2))
 
@@ -121,32 +137,12 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const { db } = yield* Database.Service
 
-    const rows = Effect.fnUntraced(function* (sessionID: SessionSchema.ID, includeRemoved: boolean) {
-      return yield* db
-        .select({
-          key: InstructionEntryTable.key,
-          value: InstructionEntryTable.value,
-          removed: InstructionEntryTable.removed,
-        })
-        .from(InstructionEntryTable)
-        .where(
-          and(
-            eq(InstructionEntryTable.session_id, sessionID),
-            includeRemoved ? undefined : eq(InstructionEntryTable.removed, false),
-          ),
-        )
-        .orderBy(asc(InstructionEntryTable.key))
-        .all()
-        .pipe(Effect.orDie)
-    })
-
     const list = Effect.fn("InstructionEntry.list")(function* (sessionID: SessionSchema.ID) {
-      return (yield* rows(sessionID, false)).map((row) => ({ key: row.key, value: row.value }))
+      return (yield* rows(db, sessionID, false)).map((row) => ({ key: row.key, value: row.value }))
     })
 
     const put = Effect.fn("InstructionEntry.put")(function* (input: Parameters<Interface["put"]>[0]) {
-      const key = Option.getOrUndefined(decodeKey(input.key))
-      if (key === undefined) return yield* invalidKey(input.key)
+      if (!isKey(input.key)) return yield* invalidKey(input.key)
       const actualBytes = Buffer.byteLength(JSON.stringify(input.value), "utf8")
       if (actualBytes > MaxValueBytes)
         return yield* new ValueTooLargeError({
@@ -160,7 +156,7 @@ const layer = Layer.effect(
           : or(isNull(InstructionEntryTable.value), ne(InstructionEntryTable.value, input.value))
       yield* db
         .insert(InstructionEntryTable)
-        .values({ session_id: input.sessionID, key, value: input.value, removed: false })
+        .values({ session_id: input.sessionID, key: input.key, value: input.value, removed: false })
         .onConflictDoUpdate({
           target: [InstructionEntryTable.session_id, InstructionEntryTable.key],
           set: { value: input.value, removed: false, time_updated: Date.now() },
@@ -171,15 +167,14 @@ const layer = Layer.effect(
     })
 
     const remove = Effect.fn("InstructionEntry.remove")(function* (input: Parameters<Interface["remove"]>[0]) {
-      const key = Option.getOrUndefined(decodeKey(input.key))
-      if (key === undefined) return yield* invalidKey(input.key)
+      if (!isKey(input.key)) return yield* invalidKey(input.key)
       yield* db
         .update(InstructionEntryTable)
         .set({ value: null, removed: true, time_updated: Date.now() })
         .where(
           and(
             eq(InstructionEntryTable.session_id, input.sessionID),
-            eq(InstructionEntryTable.key, key),
+            eq(InstructionEntryTable.key, input.key),
             eq(InstructionEntryTable.removed, false),
           ),
         )
@@ -188,14 +183,7 @@ const layer = Layer.effect(
     })
 
     const load = Effect.fn("InstructionEntry.load")(function* (sessionID: SessionSchema.ID) {
-      const entries = yield* Effect.forEach(yield* rows(sessionID, true), (row) => {
-        const key = Option.getOrUndefined(decodeKey(row.key))
-        if (key !== undefined) return Effect.succeed(source({ ...row, key }))
-        return Effect.logWarning("skipping instruction entry with invalid key", { sessionID, key: row.key }).pipe(
-          Effect.as(Instructions.empty),
-        )
-      })
-      return Instructions.combine(entries)
+      return Instructions.combine((yield* rows(db, sessionID, true)).map(source))
     })
 
     return Service.of({ list, put, remove, load })

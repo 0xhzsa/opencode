@@ -16287,8 +16287,8 @@
       },
       "InstructionEntry.Key": {
         "type": "string",
-        "maxLength": 128,
         "pattern": "^[a-z0-9][a-z0-9._-]*$",
+        "maxLength": 128,
         "description": "Instruction entry key (lowercase alphanumerics plus . _ -)"
       },
       "InstructionEntryValueTooLargeErrorEncoded": {

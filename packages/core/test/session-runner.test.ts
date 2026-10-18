@@ -2047,7 +2047,7 @@ describe("SessionRunnerLLM", () => {
     expect(yield* entries.list(sessionID)).toEqual([])
   })
 
-  scenario("validates API instruction entry keys on put and remove", function* () {
+  scenario("validates API instruction entry keys on put and remove", function* (s) {
     const entries = yield* InstructionEntry.Service
     const maxKey = "a".repeat(InstructionEntry.MaxKeyLength)
 
@@ -2057,24 +2057,23 @@ describe("SessionRunnerLLM", () => {
     expect(yield* entries.list(sessionID)).toEqual([])
 
     for (const badKey of ["", "Bad Key", "a/b", "-leading", "a".repeat(InstructionEntry.MaxKeyLength + 1)]) {
-      const putExit = yield* entries.put({ sessionID, key: badKey, value: "nope" }).pipe(Effect.exit)
-      expect(Exit.isFailure(putExit)).toBe(true)
-      if (Exit.isFailure(putExit)) {
-        const error = Cause.squash(putExit.cause)
-        expect(error).toBeInstanceOf(InstructionEntry.InvalidKeyError)
-        expect(error).toMatchObject({ key: badKey })
-      }
-
-      const removeExit = yield* entries.remove({ sessionID, key: badKey }).pipe(Effect.exit)
-      expect(Exit.isFailure(removeExit)).toBe(true)
-      if (Exit.isFailure(removeExit)) {
-        const error = Cause.squash(removeExit.cause)
+      for (const operation of [
+        entries.put({ sessionID, key: badKey, value: "nope" }),
+        entries.remove({ sessionID, key: badKey }),
+      ]) {
+        const error = yield* Effect.flip(operation)
         expect(error).toBeInstanceOf(InstructionEntry.InvalidKeyError)
         expect(error).toMatchObject({ key: badKey })
       }
     }
 
-    expect(yield* entries.list(sessionID)).toEqual([])
+    const stored = yield* s.db
+      .select({ key: InstructionEntryTable.key })
+      .from(InstructionEntryTable)
+      .where(eq(InstructionEntryTable.session_id, sessionID))
+      .all()
+      .pipe(Effect.orDie)
+    expect(stored).toEqual([{ key: maxKey }])
   })
 
   scenario("skips stored instruction entries with malformed keys when loading", function* (s) {
@@ -2086,6 +2085,8 @@ describe("SessionRunnerLLM", () => {
       .values([
         { session_id: sessionID, key: "Bad Key", value: "ignored", removed: false },
         { session_id: sessionID, key: "a/b", value: "also-ignored", removed: false },
+        { session_id: sessionID, key: "a".repeat(InstructionEntry.MaxKeyLength + 1), value: true, removed: false },
+        { session_id: sessionID, key: "bad tombstone", value: null, removed: true },
       ])
       .run()
       .pipe(Effect.orDie)
@@ -2098,6 +2099,15 @@ describe("SessionRunnerLLM", () => {
       fakeIdentity,
       ["Initial context", "", '<context key="deploy-target">', "production", "</context>"].join("\n"),
     ])
+    expect(yield* entries.list(sessionID)).toEqual([{ key: "deploy-target", value: "production" }])
+
+    yield* entries.remove({ sessionID, key: "deploy-target" })
+    yield* s.runPrompt("Second")
+
+    expect(s.requests[1]?.messages.at(-2)?.content).toEqual([
+      Expected.text('The context under "deploy-target" no longer applies. Disregard it.'),
+    ])
+    expect(yield* entries.list(sessionID)).toEqual([])
   })
 
   scenario("keeps initial instructions and chronological updates after a model switch", function* (s) {
