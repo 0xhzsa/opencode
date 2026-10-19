@@ -73,11 +73,7 @@ export function buildLocationServiceMap(
       }
       // Cached instances borrow their owner instead of retaining its Layer scope.
       const bindings: LayerNode.Replacements = [
-        Instance.node.replace(
-          Layer.succeed(Instance.Service, {
-            provide: (session) => Effect.provide(map.get(session.location)),
-          }),
-        ),
+        Instance.node.replace(Layer.succeed(Instance.Service, Instance.fromLocations(map))),
         ...replacements,
         LocationServiceMap.node.replace(Layer.succeed(LocationServiceMap.Service, map)),
       ]

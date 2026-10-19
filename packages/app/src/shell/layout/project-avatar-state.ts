@@ -21,7 +21,6 @@ export function useSessionTabAvatarState(
 
     if (!data) return []
 
-    if (!root?.()) return data.session.list()
     const id = sessionId()
 
     return [...new Set([id, ...data.session.family(id)])].flatMap((id) => {
@@ -68,8 +67,7 @@ export function useSessionTabAvatarState(
     const busy = (id: string) =>
       data.session.status(id) === "running" || data.session.pending.list(id).some((item) => item.type !== "synthetic")
 
-    if (root?.())
-      return data.session.list().some((session) => data.session.root(session.id) === sessionId() && busy(session.id))
+    if (root?.()) return [...new Set([sessionId(), ...data.session.family(sessionId())])].some(busy)
 
     return busy(sessionId())
   })

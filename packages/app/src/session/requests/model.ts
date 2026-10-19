@@ -19,6 +19,21 @@ export function createSessionRequestModel() {
   const data = useData()
   const language = useLanguage()
   const settings = useSettings()
+
+  const familySessions = createMemo(() => {
+    const id = params.id
+
+    if (!id) return []
+
+    return [...new Set([id, ...data.session.family(id)])].flatMap((sessionID) => {
+      const info = data.session.get(sessionID)
+
+      return info ? [info] : []
+    })
+  })
+
+  const treeIDs = createMemo(() => sessionTreeIDs(familySessions(), params.id))
+
   createEffect(() => {
     const id = params.id
 
@@ -28,16 +43,15 @@ export function createSessionRequestModel() {
     )
   })
   createEffect(() => {
-    const id = params.id
+    if (serverSDK.connection.status() !== "connected") return
+    const ids = treeIDs()
 
-    if (!id || serverSDK.connection.status() !== "connected") return
-    void Promise.all(
-      sessionTreeIDs(data.session.list(), id).map((sessionID) => data.session.form.sync(sessionID)),
-    ).catch(() => undefined)
+    if (!ids.length) return
+    void Promise.all(ids.map((sessionID) => data.session.form.sync(sessionID))).catch(() => undefined)
   })
 
   const formRequest = createMemo((): FormInfo | undefined => {
-    return sessionFormRequest(data.session.list(), data.session.form.list, params.id)
+    return sessionFormRequest(familySessions(), data.session.form.list, params.id)
   })
 
   // MCP elicitations are owned by the Location rather than a Session, so they are listed per Location.
@@ -102,7 +116,7 @@ export function createSessionRequestModel() {
 
     if (settings.permissions.autoApproves(project)) return
 
-    return sessionPermissionRequest(data.session.list(), data.session.permission.list, id)
+    return sessionPermissionRequest(familySessions(), data.session.permission.list, id)
   })
 
   const blocked = createMemo(() => {
@@ -131,7 +145,7 @@ export function createSessionRequestModel() {
   const running = createSessionBackground({
     sessionID: owner,
     messages: data.session.message.list,
-    sessions: data.session.list,
+    sessions: familySessions,
     status: data.session.status,
     shells: () => data.shell.list({ directory: sdk().directory }),
   })

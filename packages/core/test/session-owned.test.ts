@@ -147,6 +147,7 @@ const setup = Effect.fnUntraced(function* (options?: {
   const instances = Instance.Service.of({
     // This fixture supplies only the instance services exercised by Session.
     provide: (session) => Effect.provide(servicesFor(session.location) as Layer.Layer<Instance.Services>),
+    provideIfLoaded: () => () => Effect.die("Unexpected loaded-only instance lookup"),
   })
   const sessions = yield* Session.make().pipe(
     Effect.satisfiesServicesType<

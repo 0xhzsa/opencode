@@ -126,6 +126,8 @@ const sourceProbe = (options: { execution?: boolean } = {}) =>
                       }
                       return yield* effect.pipe(Effect.provide(locations.get(session.location)))
                     }),
+                  provideIfLoaded: (session) =>
+                    Instance.provideContextEffectOption(locations.contextEffectOption, session.location),
                 })
               }),
             ),
@@ -287,7 +289,7 @@ describe("Session.move", () => {
                   Effect.gen(function* () {
                     const locations = yield* LocationServiceMap.Service
                     const privateInstances = yield* LayerMap.make(
-                      () =>
+                      (_id: Session.ID) =>
                         Instance.layer(source, {
                           discovery: false,
                           replacements: [
@@ -306,6 +308,10 @@ describe("Session.move", () => {
                             ? privateInstances.get(session.id)
                             : locations.get(session.location),
                         ),
+                      provideIfLoaded: (session) =>
+                        session.id === selectedID && session.location.directory === source.directory
+                          ? Instance.provideContextEffectOption(privateInstances.contextEffectOption, session.id)
+                          : Instance.provideContextEffectOption(locations.contextEffectOption, session.location),
                     })
                     const bindings: LayerNode.Replacements = [
                       ...replacements,

@@ -58,11 +58,7 @@ const instances = Layer.effect(
       offlineModels,
       ConfigPluginSource.node.replace(sourceLayer),
       LocationServiceMap.node.replace(Layer.succeed(LocationServiceMap.Service, map)),
-      Instance.node.replace(
-        Layer.succeed(Instance.Service, {
-          provide: (session) => Effect.provide(map.get(session.location)),
-        }),
-      ),
+      Instance.node.replace(Layer.succeed(Instance.Service, Instance.fromLocations(map))),
     ]
     return map
   }),

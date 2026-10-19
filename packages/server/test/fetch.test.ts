@@ -41,10 +41,10 @@ it.live("returns LocationNotFoundError for a missing folder and recovers once it
     const endpoints = [
       "/api/model",
       "/api/integration",
-      `/api/session/${session.id}/permission`,
+      `/api/session/${session.id}/permission/per_missing`,
       `/api/experimental/session/${session.id}/instructions/entries`,
-      `/api/session/${session.id}/form`,
-      "/api/session/global/form",
+      `/api/session/${session.id}/form/frm_missing`,
+      "/api/session/global/form/frm_missing",
     ]
     for (const endpoint of endpoints) {
       const response = yield* Effect.promise(() =>
@@ -466,7 +466,7 @@ it.live("serves the session view operation and missing-session error", () =>
   }),
 )
 
-it.live("routes pending requests through the Session's instance", () =>
+it.live("routes pending requests by Session without loading an instance", () =>
   Effect.gen(function* () {
     const config = yield* Effect.acquireDisposable(Effect.promise(() => tmpdir("opencode-pending-read-")))
     const handler = yield* ServerFetch.make({
@@ -518,7 +518,7 @@ it.live("routes pending requests through the Session's instance", () =>
     )
     expect(global.status).toBe(200)
     expect(yield* Effect.promise(() => global.json())).toEqual({ data: [] })
-    expect(yield* loaded()).toEqual([{ directory: process.cwd() }])
+    expect(yield* loaded()).toEqual([])
 
     const createdForm = yield* Effect.promise(() =>
       handler(

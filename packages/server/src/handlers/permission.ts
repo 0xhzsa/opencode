@@ -3,11 +3,11 @@ import { Location } from "@opencode/core/location"
 import { Permission } from "@opencode/core/permission"
 import { PermissionSaved } from "@opencode/core/permission/saved"
 import { Session } from "@opencode/core/session"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { HttpApiBuilder, HttpApiSchema } from "effect/http-api"
 import { Api } from "../api"
 import { ConflictError, PermissionNotFoundError, PermissionSavedNotFoundError } from "@opencode/protocol/errors"
-import { locationErrors, response, sessionInfo } from "../location"
+import { response, sessionInfo } from "../location"
 import { missingSession } from "./session-error"
 
 function missingRequest(id: Permission.ID) {
@@ -62,8 +62,8 @@ export const PermissionHandler = HttpApiBuilder.group(Api, "server.permission", 
           const session = yield* sessionInfo(sessions, ctx.params.sessionID)
           const requests = yield* Permission.Service.use((permission) =>
             permission.forSession(ctx.params.sessionID),
-          ).pipe(instances.provide(session), locationErrors)
-          return { data: requests }
+          ).pipe(instances.provideIfLoaded(session))
+          return { data: Option.getOrElse(requests, () => []) }
         }),
       )
       .handle(

@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer, RcMap, Scope } from "effect"
+import { Effect, Layer, Option, RcMap, Scope } from "effect"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Database } from "@opencode/core/database/database"
@@ -112,6 +112,42 @@ describe("Session.remove", () => {
         _tag: "Failure",
         failure: { _tag: "Session.NotFoundError", sessionID },
       })
+    }),
+  )
+})
+
+describe("Instance.provideIfLoaded", () => {
+  it.live("skips absent instances and scopes loaded borrows without replacing the caller's Scope", () =>
+    Effect.gen(function* () {
+      const temporary = yield* tmpdirScoped()
+      const sessions = yield* Session.Service
+      const instances = yield* Instance.Service
+      const locations = yield* LocationServiceMap.Service
+      const scope = yield* Scope.Scope
+      const session = yield* sessions.create({
+        location: Location.Ref.make({ directory: AbsolutePath.make(temporary.path) }),
+      })
+      const absent = Effect.die("An unloaded instance must not run the effect").pipe(instances.provideIfLoaded(session))
+
+      expect(yield* absent).toEqual(Option.none())
+      expect(Array.from(yield* RcMap.keys(locations.rcMap))).toEqual([])
+      yield* Location.Service.pipe(instances.provide(session))
+      expect(Array.from(yield* RcMap.keys(locations.rcMap))).toEqual([session.location])
+      expect(yield* Effect.void.pipe(instances.provideIfLoaded(session))).toEqual(Option.some(undefined))
+      const failure = new Error("Borrowed operation failed")
+      expect(yield* Effect.fail(failure).pipe(instances.provideIfLoaded(session), Effect.flip)).toBe(failure)
+
+      const borrowed = yield* Effect.gen(function* () {
+        const location = yield* Location.Service
+        const callerScope = yield* Scope.Scope
+        expect(callerScope).toBe(scope)
+        yield* locations.invalidate(session.location)
+        return location.directory
+      }).pipe(instances.provideIfLoaded(session), Effect.satisfiesServicesType<Scope.Scope>())
+
+      expect(borrowed).toEqual(Option.some(session.location.directory))
+      expect(Array.from(yield* RcMap.keys(locations.rcMap))).toEqual([])
+      expect(yield* absent).toEqual(Option.none())
     }),
   )
 })

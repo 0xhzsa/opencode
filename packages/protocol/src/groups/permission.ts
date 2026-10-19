@@ -8,7 +8,6 @@ import { Context, Schema } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/http-api"
 import {
   ConflictError,
-  LocationNotFoundError,
   PermissionNotFoundError,
   PermissionSavedNotFoundError,
   SessionNotFoundError,
@@ -113,7 +112,7 @@ export const makePermissionGroup = <
       HttpApiEndpoint.get("session.permission.list", "/api/session/:sessionID/permission", {
         params: { sessionID: Session.ID },
         success: Schema.Struct({ data: Schema.Array(Permission.Request) }),
-        error: [SessionNotFoundError, LocationNotFoundError],
+        error: SessionNotFoundError,
       }).annotateMerge(
         OpenApi.annotations({
           identifier: "session.permission.list",

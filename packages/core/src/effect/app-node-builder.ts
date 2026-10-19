@@ -11,9 +11,7 @@ const instances = makeGlobalNode({
     Instance.Service,
     Effect.gen(function* () {
       const locations = yield* LocationServiceMap.Service
-      return Instance.Service.of({
-        provide: (session) => Effect.provide(locations.get(session.location)),
-      })
+      return Instance.fromLocations(locations)
     }),
   ),
   deps: [LocationServiceMap.node],

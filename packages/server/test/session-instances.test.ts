@@ -145,6 +145,8 @@ it.live(
                 )
                 const selector = Instance.Service.of({
                   provide: (session) => Effect.provide(instances.get(session.id)),
+                  provideIfLoaded: (session) =>
+                    Instance.provideContextEffectOption(instances.contextEffectOption, session.id),
                 })
                 const bindings: LayerNode.Replacements = [
                   ...replacements,

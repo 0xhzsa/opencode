@@ -250,6 +250,7 @@ const setup = Effect.gen(function* () {
             Layer.mock(Plugin.Service, { awaitActivation: Effect.void }),
           ) as Layer.Layer<Instance.Services>,
         ),
+      provideIfLoaded: () => () => Effect.die("Unexpected loaded-only instance lookup"),
     }),
   }
 })
