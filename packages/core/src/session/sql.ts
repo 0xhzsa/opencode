@@ -174,3 +174,13 @@ export const InstructionStateTable = sqliteTable("instruction_state", {
   initial_values: text({ mode: "json" }).notNull().$type<Instruction.Values>(),
   current_values: text({ mode: "json" }).notNull().$type<Instruction.Values>(),
 })
+
+export const MediaBlobTable = sqliteTable("media_blob", {
+  hash: text().primaryKey(),
+  mime: text().notNull(),
+  bytes: integer().notNull(),
+  data: text().notNull(),
+  time_created: integer()
+    .notNull()
+    .$default(() => Date.now()),
+})

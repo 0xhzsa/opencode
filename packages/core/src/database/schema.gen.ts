@@ -77,6 +77,15 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
         );
       `)
       yield* tx.run(`
+        CREATE TABLE \`media_blob\` (
+          \`hash\` text PRIMARY KEY,
+          \`mime\` text NOT NULL,
+          \`bytes\` integer NOT NULL,
+          \`data\` text NOT NULL,
+          \`time_created\` integer NOT NULL
+        );
+      `)
+      yield* tx.run(`
         CREATE TABLE \`permission\` (
           \`id\` text PRIMARY KEY,
           \`project_id\` text NOT NULL,

@@ -176,13 +176,13 @@ const layer = Layer.effect(
         const rows = yield* (input.limit === undefined ? query.all() : query.limit(input.limit).all()).pipe(
           Effect.orDie,
         )
-        return yield* Effect.forEach(
-          direction === "previous" ? rows.toReversed() : rows,
-          (row) => {
-            if (input.attachments !== "reference" || row.type !== "user" || !("files" in row.data))
-              return SessionHistory.decodeMessageRow(row)
+        // Reference mode replaces user attachments before hydration, so their blobs are never read.
+        return yield* SessionHistory.decodeMessageRows(
+          db,
+          (direction === "previous" ? rows.toReversed() : rows).map((row) => {
+            if (input.attachments !== "reference" || row.type !== "user" || !("files" in row.data)) return row
 
-            return SessionHistory.decodeMessageRow({
+            return {
               ...row,
               data: {
                 ...row.data,
@@ -197,8 +197,8 @@ const layer = Layer.effect(
                     : file,
                 ),
               },
-            })
-          },
+            }
+          }),
         )
       }),
       context: Effect.fn("SessionStore.context")((sessionID) => SessionHistory.load(db, sessionID, "latest")),
@@ -212,7 +212,7 @@ const layer = Layer.effect(
         return row
           ? {
               sessionID: Session.ID.make(row.session_id),
-              message: yield* SessionHistory.decodeMessageRow(row).pipe(Effect.orDie),
+              message: (yield* SessionHistory.decodeMessageRows(db, [row]).pipe(Effect.orDie))[0]!,
             }
           : undefined
       }),

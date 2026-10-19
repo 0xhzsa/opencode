@@ -6,6 +6,7 @@ import { SessionMessage } from "./message.js"
 import { SessionSchema } from "./schema.js"
 import { Instructions } from "../instructions/index.js"
 import { InstructionState } from "./instruction-state.js"
+import { SessionMediaBlob } from "./media-blob.js"
 import { SessionProviderContext } from "./provider-context.js"
 import { SessionMessageTable } from "./sql.js"
 
@@ -75,6 +76,14 @@ export const decodeMessageRow = (row: typeof SessionMessageTable.$inferSelect) =
     ),
   )
 
+/** Decodes rows after restoring media stored in `media_blob`. Reads that return media must use this. */
+export const decodeMessageRows = Effect.fnUntraced(function* (
+  db: DatabaseService,
+  rows: ReadonlyArray<typeof SessionMessageTable.$inferSelect>,
+) {
+  return yield* Effect.forEach(yield* SessionMediaBlob.hydrate(db, rows), decodeMessageRow)
+})
+
 const messageEntries = Effect.fnUntraced(function* (
   db: DatabaseService,
   sessionID: SessionSchema.ID,
@@ -93,7 +102,7 @@ const messageEntries = Effect.fnUntraced(function* (
     .orderBy(asc(SessionMessageTable.seq))
     .all()
     .pipe(Effect.orDie)
-  const entries = yield* Effect.forEach(rows, (row) =>
+  const entries = yield* Effect.forEach(yield* SessionMediaBlob.hydrate(db, rows), (row) =>
     decodeMessageRow(row).pipe(Effect.map((message) => ({ seq: row.seq, message }))),
   )
   // Re-expansion may cross a native checkpoint whose completion already advanced the instruction
@@ -174,7 +183,7 @@ export const firstUserMessage = Effect.fn("SessionHistory.firstUserMessage")(fun
     .get()
     .pipe(Effect.orDie)
   if (!row) return undefined
-  const message = yield* decodeMessageRow(row).pipe(Effect.orElseSucceed(() => undefined))
+  const [message] = yield* decodeMessageRows(db, [row]).pipe(Effect.orElseSucceed(() => []))
   return message?.type === "user" ? message : undefined
 })
 

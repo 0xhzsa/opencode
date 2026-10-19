@@ -26,6 +26,7 @@ import { SessionStore } from "@opencode/core/session/store"
 import { Shell } from "@opencode/schema/shell"
 import {
   InstructionStateTable,
+  MediaBlobTable,
   SessionInboxTable,
   SessionMessageTable,
   SessionTable,
@@ -806,6 +807,117 @@ describe("SessionProjector", () => {
         error: { type: "provider.invalid-request", message: "Failed" },
       })
       expect(yield* updated()).toEqual({ time_updated: 15 })
+    }),
+  )
+
+  it.effect("externalizes large tool media into media_blob and hydrates on read", () =>
+    Effect.gen(function* () {
+      const db = yield* seedSession()
+      const bus = yield* Bus.Service
+      const store = yield* SessionStore.Service
+      const assistantMessageID = SessionMessage.ID.make("msg_media_blob")
+      const base64 = "A".repeat(2_048)
+      const dataUri = `data:image/jpeg;base64,${base64}`
+
+      yield* bus.publish(SessionEvent.Step.Started, {
+        sessionID,
+        assistantMessageID,
+        agent: build,
+        model,
+        started: 1,
+      })
+      yield* bus.publish(SessionEvent.Tool.Input.Started, {
+        sessionID,
+        assistantMessageID,
+        id: "call_img_1",
+        name: "read",
+      })
+      yield* bus.publish(SessionEvent.Tool.Called, {
+        sessionID,
+        assistantMessageID,
+        id: "call_img_1",
+        input: { path: "shot.png" },
+        executed: false,
+      })
+      yield* bus.publish(SessionEvent.Tool.Success, {
+        sessionID,
+        assistantMessageID,
+        id: "call_img_1",
+        executed: false,
+        content: [
+          { type: "text", text: "Image read successfully" },
+          { type: "file", uri: dataUri, mime: "image/jpeg", name: "shot.png" },
+          { type: "file", uri: dataUri, mime: "image/jpeg", name: "shot-copy.png" },
+        ],
+      })
+
+      const blobs = yield* db.select().from(MediaBlobTable).all().pipe(Effect.orDie)
+      expect(blobs).toHaveLength(1)
+      expect(blobs[0]?.mime).toBe("image/jpeg")
+      expect(blobs[0]?.bytes).toBe(2_048)
+      expect(blobs[0]?.data).toBe(base64)
+
+      const rawRow = yield* db
+        .select()
+        .from(SessionMessageTable)
+        .where(eq(SessionMessageTable.id, assistantMessageID))
+        .get()
+        .pipe(Effect.orDie)
+      expect(JSON.stringify(rawRow?.data)).toContain(`blob:sha256:${blobs[0]?.hash}`)
+      expect(JSON.stringify(rawRow?.data)).not.toContain(base64)
+
+      const messages = yield* store.messages({ sessionID })
+      expect(messages).toMatchObject([
+        {
+          id: assistantMessageID,
+          type: "assistant",
+          content: [
+            {
+              type: "tool",
+              id: "call_img_1",
+              state: {
+                status: "completed",
+                content: [
+                  { type: "text", text: "Image read successfully" },
+                  { type: "file", uri: dataUri, mime: "image/jpeg", name: "shot.png" },
+                  { type: "file", uri: dataUri, mime: "image/jpeg", name: "shot-copy.png" },
+                ],
+              },
+            },
+          ],
+        },
+      ])
+    }),
+  )
+
+  it.effect("hydrates externalized user files everywhere except reference-mode lists", () =>
+    Effect.gen(function* () {
+      const db = yield* seedSession()
+      const bus = yield* Bus.Service
+      const inbox = yield* SessionInbox.Service
+      const store = yield* SessionStore.Service
+      const id = SessionMessage.ID.make("msg_user_image")
+      const file = { data: "A".repeat(2_048), mime: "image/png", source: { type: "inline" as const }, name: "a.png" }
+      const item = { type: "user" as const, payload: { text: "look", files: [file] }, delivery: "steer" as const }
+      yield* inbox.admit({ id, sessionID, item })
+      yield* bus.publish(SessionEvent.InboxDelivered, { sessionID, inboxID: id })
+
+      const raw = yield* db
+        .select()
+        .from(SessionMessageTable)
+        .where(eq(SessionMessageTable.id, id))
+        .get()
+        .pipe(Effect.orDie)
+      expect(JSON.stringify(raw?.data)).not.toContain(file.data)
+      expect(yield* inbox.admit({ id, sessionID, item })).toMatchObject({ payload: { files: [file] } })
+      expect((yield* store.message(id))?.message).toMatchObject({ files: [file] })
+      expect(yield* store.messages({ sessionID })).toMatchObject([{ files: [file] }])
+
+      // Any read of media_blob would now fail.
+      yield* db.run(sql`DROP TABLE media_blob`)
+      expect(yield* store.messages({ sessionID, attachments: "reference" })).toMatchObject([
+        { id, files: [{ data: "", source: { type: "uri", uri: `opencode-attachment:${sessionID}/${id}/0` } }] },
+      ])
     }),
   )
 })
