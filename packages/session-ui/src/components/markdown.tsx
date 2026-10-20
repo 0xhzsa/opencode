@@ -577,7 +577,7 @@ function initialResult(
 
       if (block.mode !== "full") touchCachedMarkdown(cacheKey, cached)
 
-      return [{ key: `${owner}:${cacheKey}`, mode: block.mode, ...cached }]
+      return [{ key: markdownBlockKey(owner, key, index, block.mode), mode: block.mode, ...cached }]
     })
 
     if (blocks.length === projection.blocks.length) return { text, blocks, ready: true }
@@ -645,7 +645,8 @@ export function Markdown(
         blocks.flatMap((block, index) => {
           if (block.mode !== "code") return []
           const pending =
-            highlighting.get(block) ?? code(block.source, block.language, `${owner}:prepared:${index}`, block.complete)
+            highlighting.get(block) ??
+            code(block.source, block.language, markdownBlockKey(owner, local.cacheKey, index, block.mode), block.complete)
           highlighting.set(block, pending)
           return [pending.then((result) => ({ block, result }))]
         }),
@@ -661,7 +662,7 @@ export function Markdown(
       text: prepared.text,
       ready: true,
       blocks: prepared.blocks.map((block, index): RenderedBlock => {
-        const key = `${owner}:prepared:${index}`
+        const key = markdownBlockKey(owner, local.cacheKey, index, block.mode)
         if (block.mode !== "code") {
           const previous = painted.get(block)
           if (previous) return previous
@@ -689,10 +690,10 @@ export function Markdown(
   const [projection] = createResource(
     () => {
       if (isServer) return
-      if (local.prepared) return
       const live = local.streaming ?? false
 
       if (live) streamed = true
+      if (local.prepared) return
 
       if (!live && !streamed) return
 
@@ -857,6 +858,9 @@ export function Markdown(
     const container = root()
     const prepared = preparedResult()
     const result = prepared ?? html.latest ?? html()
+    // Changing measurement paths can restart async preparation. Keep the revision already painted
+    // until the replacement renderer catches up, rather than painting its older cached response.
+    if (!prepared && local.text && renderedBlocks.length && (!result?.ready || result.text !== local.text)) return
     const content =
       prepared?.blocks ??
       (local.text ? pendingBlocks(result, currentProjection(), local.cacheKey, owner, local.deferUntilReady) : [])
@@ -1097,7 +1101,7 @@ function updateBlock(
     // Completion may decorate the same text; keep its words and their in-flight fades until the text actually changes.
     rendered.renderer.update(
       source.innerHTML,
-      block.mode === "live" || rendered.raw === block.raw,
+      block.mode === "live" || block.raw.startsWith(rendered.raw.trimEnd()),
       rendered.raw !== block.raw,
     )
     rendered.raw = block.raw

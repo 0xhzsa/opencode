@@ -9,8 +9,7 @@ const png = Buffer.from(
 const fixture = sourceURL(new URL("./markdown.fixture.tsx", import.meta.url))
 
 story.beforeEach(async ({ mount }) => {
-  const root = await mount("components-markdown--complete-response")
-  await expect(root.locator('[data-component="markdown"]')).toHaveAttribute("data-markdown-ready", "")
+  await mount("ui-button--playground")
 })
 
 story("renders small completed Markdown immediately without skipping sanitization", async ({ page }) => {
@@ -666,13 +665,16 @@ story("renders the trailing chunk while the stream is paused", async ({ page }) 
 story("keeps live elements and selection when a stream completes and later changes", async ({ page }) => {
   await page.evaluate(async (fixture) => {
     const { mountMarkdown } = await import(fixture)
-    await mountMarkdown({ text: "Hello **world**", streaming: true, synchronousFiles: true, cached: true })
+    await mountMarkdown({ text: "Hello **world**", streaming: true, synchronousFiles: true, cached: true, prepared: true })
   }, fixture)
   const harness = page.getByTestId("markdown-fixture")
   const markdown = harness.locator('[data-component="markdown"]')
   const paragraph = markdown.locator("p")
   await expect(markdown.locator("[data-markdown-word]")).toHaveCount(2)
   await paragraph.evaluate((element) => element.setAttribute("data-retained", "true"))
+  await harness.getByRole("button", { name: "Toggle preparation", exact: true }).click()
+  await expect(markdown).toHaveAttribute("data-markdown-ready", "")
+  await expect(paragraph).toHaveAttribute("data-retained", "true")
   await harness.getByLabel("Markdown text").fill("Hello **world** again")
   await expect(markdown.locator("[data-markdown-word]")).toHaveCount(3)
   await markdown
@@ -681,6 +683,9 @@ story("keeps live elements and selection when a stream completes and later chang
     .evaluate((element) => element.setAttribute("data-retained", "true"))
   await expect(paragraph).toHaveAttribute("data-retained", "true")
   await expect(markdown.locator("[data-markdown-enter]")).not.toHaveCount(0)
+  await harness.getByRole("button", { name: "Toggle preparation", exact: true }).click()
+  await expect(paragraph).toHaveAttribute("data-retained", "true")
+  await expect(markdown.locator('[data-markdown-word][data-retained="true"]')).toHaveText("again")
   await paragraph.evaluate((element) => {
     const range = document.createRange()
     range.selectNodeContents(element.querySelector("strong")!)
