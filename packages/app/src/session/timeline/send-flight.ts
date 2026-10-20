@@ -46,6 +46,7 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined) {
     zIndex: "1",
     contain: "strict",
     overflow: "hidden",
+    maskImage: "linear-gradient(to bottom, #000 calc(100% - 16px), transparent)",
     // The destination supplies its viewport before the copy may paint.
     visibility: "hidden",
   })
@@ -120,9 +121,17 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
   bubble.style.opacity = "0"
 
   const spring = Spring.fromDuration(0, growthSpring()).set(1)
-  let last: DOMRect | undefined
+  // Retarget the displayed rectangle, not a fresh interpolation from the composer.
+  // Another steer can move the destination while this flight is already near its end.
+  const position = {
+    x: Spring.fromDuration(start.x, growthSpring()),
+    y: Spring.fromDuration(start.y, growthSpring()),
+    w: Spring.fromDuration(start.w, growthSpring()),
+    h: Spring.fromDuration(start.h, growthSpring()),
+  }
   let rect = bubble.getBoundingClientRect()
   let clip = viewport.getBoundingClientRect()
+  let pending = bubble.closest('[data-component="user-message"]')?.hasAttribute("data-pending") ?? false
 
   const land = () => {
     bubble.style.removeProperty("opacity")
@@ -131,9 +140,13 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
 
   frameLoop.addMeasured(
     () => {
-      last = rect
       rect = bubble.getBoundingClientRect()
       clip = viewport.getBoundingClientRect()
+      pending = bubble.closest('[data-component="user-message"]')?.hasAttribute("data-pending") ?? false
+      position.x.set(rect.left)
+      position.y.set(rect.top)
+      position.w.set(rect.width)
+      position.h.set(rect.height)
     },
     (dt) => {
       if (!bubble.isConnected || !viewport.isConnected || rect.width < 1) {
@@ -142,25 +155,26 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
         return false
       }
 
-      const p = spring.step(dt)
+      // A delayed frame must not skip most of a new flight before its first paint.
+      const elapsed = Math.min(dt, 1 / 60)
+      const p = spring.step(elapsed)
       flight.layer.style.visibility = "visible"
-      const at = mix(start, { x: rect.left, y: rect.top, w: rect.width, h: rect.height }, p)
+      host.toggleAttribute("data-pending", pending)
+      const at = {
+        x: position.x.step(elapsed),
+        y: position.y.step(elapsed),
+        w: position.w.step(elapsed),
+        h: position.h.step(elapsed),
+      }
       host.style.width = `${rect.width}px`
       host.style.height = `${rect.height}px`
       host.style.transform = `translate3d(${at.x - clip.left}px, ${at.y - clip.top}px, 0) scale(${at.w / rect.width}, ${at.h / rect.height})`
       host.style.opacity = `${Math.min(1, p / 0.5)}`
 
-      const words = mix(
-        flight.from,
-        { x: rect.left + left, y: rect.top + top, w: rect.width - left - right, h: flight.from.h },
-        p,
-      )
-
-      flight.text.style.transform = `translate3d(${words.x - clip.left}px, ${words.y - clip.top}px, 0)`
+      flight.text.style.transform = `translate3d(${at.x + left - clip.left}px, ${at.y + top - clip.top}px, 0)`
       flight.text.style.opacity = `${Math.max(0, 1 - p / 0.4)}`
 
-      if (!spring.resting || !last || Math.abs(last.top - rect.top) > 0.5 || Math.abs(last.left - rect.left) > 0.5)
-        return true
+      if (!spring.resting || Object.values(position).some((axis) => !axis.resting)) return true
       land()
 
       return false
@@ -168,8 +182,4 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
   )
 
   return true
-}
-
-function mix(a: Rect, b: Rect, p: number): Rect {
-  return { x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p, w: a.w + (b.w - a.w) * p, h: a.h + (b.h - a.h) * p }
 }

@@ -683,13 +683,11 @@ export function createTimelineVirtualizer(input: Input) {
       easing: "cubic-bezier(.4,0,1,1)",
       fill: "forwards",
     })
-    void fade.finished.then(
-      () => {
-        ghosts.delete(wrapper)
-        setLeavingKeys((keys) => keys.filter((item) => item !== key))
-      },
-      () => undefined,
-    )
+    const cleanup = () => {
+      ghosts.delete(wrapper)
+      setLeavingKeys((keys) => keys.filter((item) => item !== key))
+    }
+    void fade.finished.then(cleanup, cleanup)
   }
 
   const moveGhosts = () =>

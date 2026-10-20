@@ -1282,9 +1282,11 @@ export function createSessionTimelineRowRenderer(input: {
     const contentWidth = Math.min(width * 0.82, 64 * textLayout.ch(environment.typography)) - 24
     const images = message.files?.filter(attached).length ?? 0
     const imageRows = Math.ceil(images / Math.max(1, Math.floor((contentWidth + 24 + 8) / (58 + 8))))
+    const pending = input.actions?.pending?.status(message.id)
     return {
       source: "pretext",
       height:
+        (pending === "steering" || pending === "stranded" ? 8 : 0) +
         (imageRows ? imageRows * (46 + 8) : presentation?.voice ? 8 : 0) +
         16 +
         28 +
