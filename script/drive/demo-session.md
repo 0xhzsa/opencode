@@ -32,4 +32,10 @@ open the session, toggle the debug bar and press DEMO.
 | Bg shell    | Starts a real background shell that keeps printing for about ten seconds |
 | Auto-play   | Loops a scripted mix of the above, including a steer and a queued prompt |
 
+Anything typed into the composer gets a random 5–10 second turn seeded by the conversation: reasoning, prose,
+lists and code between one to three real shell builds, often a patch and parallel reads, sometimes a background
+subagent or shell, then a summary. Typed text containing `short` or `code` gets those replies instead. Typed prompts
+use the speed of the latest Demo control. Routing a session on the simulated model opens the debug bar and its
+Demo panel.
+
 Speed scales the model's streaming delays and the shell scripts' pacing from 0.25× to 2×.
