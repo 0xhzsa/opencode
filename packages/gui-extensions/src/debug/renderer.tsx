@@ -11,6 +11,8 @@ const setup: Setup<typeof Debug> = (ctx) => {
   const bar = ctx.stores.bar
   const visible = () => bar.value.visible
   const motion = () => bar.value.motion
+  const Demo = motionTools ? lazy(() => import("./demo")) : undefined
+  const [demo, setDemo] = createSignal(false)
 
   const toggle = () => {
     bar.update((draft) => {
@@ -22,6 +24,10 @@ const setup: Setup<typeof Debug> = (ctx) => {
     bar.update((draft) => {
       draft.motion = !draft.motion
     })
+  }
+
+  const toggleDemo = () => {
+    setDemo((value) => !value)
   }
 
   ctx.add(
@@ -45,6 +51,7 @@ const setup: Setup<typeof Debug> = (ctx) => {
               diagnostics={import.meta.env.DEV}
               onClose={toggle}
               motion={Motion ? { open: motion(), toggle: toggleMotion } : undefined}
+              demo={Demo ? { open: demo(), toggle: toggleDemo } : undefined}
               inline
             />
           </Suspense>
@@ -54,6 +61,13 @@ const setup: Setup<typeof Debug> = (ctx) => {
           <Show when={visible() && motion()}>
             <Suspense>
               <Motion title={ctx.t("motion.title")} onClose={toggleMotion} />
+            </Suspense>
+          </Show>
+        )}
+        {Demo && (
+          <Show when={visible() && demo()}>
+            <Suspense>
+              <Demo />
             </Suspense>
           </Show>
         )}
