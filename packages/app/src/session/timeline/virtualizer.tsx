@@ -736,7 +736,12 @@ export function createTimelineVirtualizer(input: Input) {
 
     if (!row) return
     const key = TimelineRow.key(row)
-    const known = growth.target(key) ?? virtualizer.itemSizeCache.get(key)
+    // TanStack does not cache a measurement equal to its estimate. Treat that estimate as committed too,
+    // or a mixed pretext/DOM cold mount endlessly queues the same sizes before the browser can paint.
+    const known =
+      growth.target(key) ??
+      virtualizer.itemSizeCache.get(key) ??
+      (arrivals.has(key) ? undefined : virtualizer.measurementsCache[index]?.size)
 
     if ((known ?? (arrivals.has(key) ? undefined : fallbackItemSize)) === size) {
       pendingSizes.delete(index)

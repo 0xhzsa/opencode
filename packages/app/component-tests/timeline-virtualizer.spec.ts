@@ -33,8 +33,20 @@ story("precomputes the full extent of 5000 rows before revealing or jumping", as
 })
 
 story.beforeEach(async ({ mount }) => {
-  const component = await mount("opencode-composer-flow--mixed-attachments")
-  await expect(component.getByRole("textbox", { name: "Prompt", exact: true })).toBeVisible()
+  const component = await mount("components-markdown--complete-response")
+  await expect(component.locator('[data-component="markdown"]')).toHaveAttribute("data-markdown-ready", "")
+})
+
+story("reveals mixed modeled and measured rows without starving input", async ({ page }) => {
+  await page.evaluate(async (url) => {
+    const { mountTimelineVirtualizer } = await import(url)
+    mountTimelineVirtualizer({ count: 4, rowHeight: 44, modeled: 2, immediate: true })
+  }, fixture)
+  const root = page.getByTestId("timeline-virtualizer-fixture")
+  await root.getByRole("button", { name: "Complete Markdown", exact: true }).click()
+  await expect(root.locator("[data-timeline-virtual-content]")).toHaveCSS("visibility", "visible")
+  await root.getByRole("button", { name: "Hide viewport", exact: true }).click()
+  await expect(root.locator("[data-scrollable]")).toBeHidden()
 })
 
 story("spaces the first mobile message without changing desktop spacing", async ({ page }) => {

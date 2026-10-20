@@ -5,7 +5,12 @@ import { render } from "solid-js/web"
 import { LanguageProvider } from "../src/runtime/i18n/language"
 import { createTimelineVirtualizer } from "../src/session/timeline/virtualizer"
 
-export function mountTimelineVirtualizer(input: { count: number; rowHeight: number; immediate?: boolean }) {
+export function mountTimelineVirtualizer(input: {
+  count: number
+  rowHeight: number
+  immediate?: boolean
+  modeled?: number
+}) {
   const host = document.createElement("main")
   host.dataset.testid = "timeline-virtualizer-fixture"
   host.dataset.scrolls = "0"
@@ -38,7 +43,10 @@ export function mountTimelineVirtualizer(input: { count: number; rowHeight: numb
         messageLastRowIndex: () => indexes,
       },
       showHeader: () => false,
-      layout: () => ({ source: "dom", reason: "deferred fixture content" }),
+      layout: (row) =>
+        row._tag === "UserMessage" && indexes.get(row.userMessageID)! < (input.modeled ?? 0)
+          ? { source: "fixed", height: input.rowHeight }
+          : { source: "dom", reason: "deferred fixture content" },
       pinned: () => state.pinned,
       scroll: () => ({ overflow: false, jump: false }),
       setScrollRef: (element) => {
