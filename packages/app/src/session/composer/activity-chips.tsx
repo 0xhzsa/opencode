@@ -3,6 +3,7 @@ import { IconButton } from "@opencode/ui/icon-button"
 import { Menu } from "@opencode/ui/menu"
 import { motionTuning } from "@opencode/ui/motion-tuning"
 import { SessionProgressIndicatorV2 } from "@opencode/session-ui/v2/session-progress-indicator-v2"
+import { widthMorph } from "@opencode/ui/motion/solid"
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
@@ -179,6 +180,16 @@ export function SessionActivityChips(props: {
     () => capsule() ?? null,
   )
 
+  // Work can join or finish while the capsule stays visible. Keep its edge continuous as the count changes.
+  widthMorph({
+    ref: () => capsule()?.querySelector<HTMLElement>('[data-slot="session-activity-chip"]') ?? undefined,
+    content: () => capsule()?.querySelector<HTMLElement>(".session-activity-content") ?? undefined,
+    watch: counts,
+    spring: () => ({ duration: 0.25, bounce: 0 }),
+    // The trailing 8px of padding lives inside the masked content.
+    inset: 6.5,
+  })
+
   return (
     <Show when={presence.present()}>
       <div
@@ -201,16 +212,23 @@ export function SessionActivityChips(props: {
             data-orb={experiment.chip === "orb"}
             style={{ "--activity-chip-radius": experiment.corners === "capsule" ? "9999px" : "var(--radius-xl)" }}
             aria-label={label()}
-            class="pointer-events-auto flex h-7 min-w-0 max-w-full items-center gap-2 rounded-[12px] border-[0.5px] border-v2-border-border-muted bg-v2-background-bg-base ps-2.5 pe-2.5 text-[13px] font-[530] leading-text-compact tracking-[-0.04px] whitespace-nowrap tabular-nums text-v2-text-text-base shadow-[var(--v2-elevation-raised)] outline-none duration-150 ease-out motion-reduce:animate-none"
+            class="pointer-events-auto flex h-7 min-w-0 max-w-full items-center gap-2 rounded-[12px] border-[0.5px] border-v2-border-border-muted bg-v2-background-bg-base ps-2.5 pe-0.5 text-[13px] font-[530] leading-text-compact tracking-[-0.04px] whitespace-nowrap tabular-nums text-v2-text-text-base shadow-[var(--v2-elevation-raised)] outline-none duration-150 ease-out motion-reduce:animate-none"
             classList={{ "animate-in fade-in": enter() }}
           >
-            <ActivityGlyph />
-            <span data-slot="session-activity-summary" class="flex min-w-0 items-center gap-2 overflow-hidden">
-              {language.activitySummaryRich(counts(), (text) => (
-                <span class="truncate">
-                  <bdi>{text}</bdi>
-                </span>
-              ))}
+            <span
+              class="session-activity-content flex min-w-0 items-center gap-2 overflow-hidden pe-2"
+              style={{
+                "mask-image": `linear-gradient(to ${language.direction() === "rtl" ? "left" : "right"}, #000 calc(100% - 8px), transparent)`,
+              }}
+            >
+              <ActivityGlyph />
+              <span data-slot="session-activity-summary" class="flex min-w-0 items-center gap-2 overflow-hidden">
+                {language.activitySummaryRich(counts(), (text) => (
+                  <span class="truncate">
+                    <bdi>{text}</bdi>
+                  </span>
+                ))}
+              </span>
             </span>
           </Menu.Trigger>
           <Menu.Portal>
