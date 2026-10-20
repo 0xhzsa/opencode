@@ -1431,16 +1431,8 @@ export function createTimelineVirtualizer(input: Input) {
                 virtualizer.scrollToEnd()
               })
             }}
-<<<<<<< HEAD
             data-index={leaving() ? -1 : item().index}
-            style={{ "min-height": ready() ? undefined : `${initialItem.size}px` }}
-||||||| parent of ba5527bd24 (feat(app): measure timeline rows with pretext)
-            data-index={item().index}
-            style={{ "min-height": ready() ? undefined : `${initialItem.size}px` }}
-=======
-            data-index={item().index}
             style={{ "min-height": ready() || modeled() ? undefined : `${initialItem.size}px` }}
->>>>>>> ba5527bd24 (feat(app): measure timeline rows with pretext)
           >
             {props.renderRow(row, () => {
               setReady(true)
