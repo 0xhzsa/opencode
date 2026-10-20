@@ -7,6 +7,7 @@ type Action = (typeof actions)[number]
 
 // Each action is a real prompt the scripted model recognises by its `[demo:<action> <speed>×]` tag.
 const actions = [
+  "long",
   "paragraph",
   "code",
   "shell",
@@ -21,6 +22,7 @@ const actions = [
 ] as const
 
 const prompts: Record<Action, string> = {
+  long: "Walk through the harbor plan in detail",
   paragraph: "Describe the harbor at dawn",
   code: "Show the lantern scheduler",
   shell: "Run the tide checks",

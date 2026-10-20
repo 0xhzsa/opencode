@@ -164,10 +164,12 @@ function respond(action: string, step: number, speed: number, directory: string)
         Llm.pause(1_500 / speed),
         text("Both lanterns are in phase before the pilot boat leaves."),
       )
-    case "message":
+    case "short":
       return Stream.make(text("Sure. The harbor is quiet today."))
+    case "long":
+    case "message":
     case "steer":
-      return Stream.make(text("Got it, I'll include the tide tables as well."))
+      return longReply(step, speed, directory)
     case "burst":
       if (step === 0)
         return tools(
@@ -226,6 +228,32 @@ function child(speed: number) {
   )
 }
 
+// Tool boundaries let the real runner deliver steers before requesting the next section.
+// A newly delivered steer starts another long continuation instead of ending with an acknowledgement.
+function longReply(step: number, speed: number, directory: string) {
+  const text = (value: string) => Llm.text(value, { delay: 16 / speed, chunkSize: 3 })
+  const sections = [
+    `${paragraph}\n\n${sentences.slice(0, 6).join(" ")}\n\n${sentences.slice(6).join(" ")}`,
+    `${sentences.slice(4).join(" ")}\n\n${paragraph}\n\n${sentences.slice(0, 4).join(" ")}`,
+    `${paragraph}\n\n${sentences.slice(2, 9).join(" ")}\n\n${summaries.join(" ")}`,
+  ]
+  const output = text(sections[Math.min(step, sections.length - 1)]!)
+  if (step >= 2) return Stream.make(Llm.pause(600 / speed), output)
+  return Stream.make(
+    Llm.pause(600 / speed),
+    output,
+    Llm.toolCall({
+      index: 0,
+      id: `call_${crypto.randomUUID().replaceAll("-", "")}`,
+      name: step === 0 ? "read" : "shell",
+      input: step === 0
+        ? { path: `${directory}/docs/pilots.md` }
+        : { command: `sh scripts/tides.sh ${speed}`, description: "Check harbor tides", workdir: directory },
+    }),
+    Llm.finish("tool-calls"),
+  )
+}
+
 function reply(value: string, speed: number) {
   return Stream.make(Llm.text(value, { delay: 16 / speed, chunkSize: 3 }))
 }
@@ -269,9 +297,11 @@ function demoTurn(body: unknown) {
   }
   const pick = (action: string) => ({ action, speed: lastSpeed, step, seed: 0 })
   if (/<(subagent|shell) /.test(text)) return pick("notice")
-  if (/\bshort\b/i.test(text)) return pick("message")
+  if (/\bshort\b/i.test(text)) return pick("short")
   if (/\bcode\b/i.test(text)) return pick("code")
-  return { action: "random", speed: lastSpeed, step, seed: hash(JSON.stringify(messages.slice(0, last + 1))) }
+  if (/\brandom\b/i.test(text))
+    return { action: "random", speed: lastSpeed, step, seed: hash(JSON.stringify(messages.slice(0, last + 1))) }
+  return pick("long")
 }
 
 function userText(message: { content?: unknown }) {
