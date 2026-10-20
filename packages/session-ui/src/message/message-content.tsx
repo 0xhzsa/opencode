@@ -17,6 +17,7 @@ import { useData } from "../context"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { useI18n } from "@opencode/ui/context/i18n"
 import { Markdown } from "../components/markdown"
+import type { PreparedMarkdown } from "../components/markdown-prepared"
 import { linkSegments } from "../components/link-segments"
 import { sessionReferenceText, setupSessionLinks } from "../components/markdown-session-links"
 import { useMarkdown } from "../context/markdown"
@@ -265,15 +266,21 @@ function createPacedValue(getValue: () => string, live?: () => boolean) {
   return value
 }
 
-function PacedMarkdown(props: { text: string; cacheKey: string; streaming: boolean }) {
+function PacedMarkdown(props: { text: string; cacheKey: string; streaming: boolean; prepared?: PreparedMarkdown }) {
   const value = createPacedValue(
-    () => props.text,
+    () => (props.prepared ? "" : props.text),
     () => props.streaming,
   )
 
   return (
-    <Show when={value()}>
-      <Markdown text={value()} cacheKey={props.cacheKey} streaming={props.streaming} deferUntilReady />
+    <Show when={props.prepared?.text ?? value()}>
+      <Markdown
+        text={props.prepared?.text ?? value()}
+        prepared={props.prepared}
+        cacheKey={props.cacheKey}
+        streaming={props.streaming}
+        deferUntilReady
+      />
     </Show>
   )
 }
@@ -897,6 +904,7 @@ export function AssistantTextContent(props: {
   message: SessionMessageAssistant
   showCopy: boolean
   turnDurationMs?: number | null
+  preparedMarkdown?: PreparedMarkdown
 }) {
   const data = useData()
   const i18n = useI18n()
@@ -959,7 +967,12 @@ export function AssistantTextContent(props: {
     <Show when={props.text}>
       <div data-component="text-part" data-timeline-part-id={props.id}>
         <div data-slot="text-part-body">
-          <PacedMarkdown text={props.text} cacheKey={props.id} streaming={props.message.time.completed === undefined} />
+          <PacedMarkdown
+            text={props.text}
+            cacheKey={props.id}
+            streaming={props.message.time.completed === undefined}
+            prepared={props.preparedMarkdown}
+          />
         </div>
         <Show when={menu() && props.showCopy}>
           <MessageOptions
@@ -1014,6 +1027,7 @@ export function AssistantReasoningContent(props: {
   open?: boolean
   onOpenChange?: (open: boolean) => void
   onContentRendered?: () => void
+  preparedMarkdown?: PreparedMarkdown
 }) {
   const i18n = useI18n()
   const [state, setState] = createStore<{ open?: boolean }>({})
@@ -1075,7 +1089,12 @@ export function AssistantReasoningContent(props: {
           </div>
         }
       >
-        <PacedMarkdown text={props.content.text} cacheKey={props.id} streaming={props.streaming} />
+        <PacedMarkdown
+          text={props.content.text}
+          cacheKey={props.id}
+          streaming={props.streaming}
+          prepared={props.preparedMarkdown}
+        />
       </BasicTool>
     </div>
   )
