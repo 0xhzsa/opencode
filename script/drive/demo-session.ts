@@ -31,7 +31,7 @@ const preview = [
 const build = [
   "#!/bin/sh",
   "count=${1:-8}",
-  'delay=$(awk "BEGIN { print 0.12 / ${2:-1} }")',
+  'delay=$(awk "BEGIN { print 0.07 / ${2:-1} }")',
   "label=${3:-module}",
   "i=1",
   'while [ "$i" -le "$count" ]; do',
@@ -298,9 +298,9 @@ function randomTurn(seed: number, step: number, speed: number, directory: string
   const bursty = plan() < 0.5
   const stream = (value: string) =>
     bursty
-      ? Llm.text(value, { delay: int(30, 50) / speed, chunkSize: int(10, 24) })
-      : Llm.text(value, { delay: 10 / speed, chunkSize: 8 })
-  const pause = () => (bursty ? [Llm.pause(int(150, 500) / speed)] : [])
+      ? Llm.text(value, { delay: int(25, 40) / speed, chunkSize: int(12, 28) })
+      : Llm.text(value, { delay: 10 / speed, chunkSize: 10 })
+  const pause = () => (bursty ? [Llm.pause(int(100, 300) / speed)] : [])
   const call = (name: string, input: Record<string, string | boolean>, index = 0) =>
     Llm.toolCall({ index, id: `call_${crypto.randomUUID().replaceAll("-", "")}`, name, input })
   const prose = () =>
@@ -336,7 +336,7 @@ function randomTurn(seed: number, step: number, speed: number, directory: string
     return tools(
       stream(`Building the ${label}.`),
       call("shell", {
-        command: `sh scripts/build.sh ${int(6, 14)} ${speed} ${label}`,
+        command: `sh scripts/build.sh ${int(6, 12)} ${speed} ${label}`,
         description: `Build ${label}`,
         workdir: directory,
       }),
