@@ -1,10 +1,7 @@
-import { createMemo, createSignal, For, onCleanup, Show } from "solid-js"
+import { createMemo, createSignal, For, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
 import { createKeyed, useExtension } from "../sdk"
-
-// Drive's simulated provider (script/drive/demo-session.ts). The controls only act on a session that runs on it, so a
-// demo prompt never reaches a real model or a real conversation.
-const provider = "simulation"
+import { simulated } from "./simulated"
 
 type Action = (typeof actions)[number]
 
@@ -74,11 +71,7 @@ export default function Demo() {
   const ready = createMemo(() => {
     const current = target()
 
-    if (!current) return false
-    const model = current.server.data.session.get(current.id)?.model
-    const providers = current.server.data.location.provider.list(current.location)
-
-    return (model === undefined || model.providerID === provider) && !!providers?.some((item) => item.id === provider)
+    return !!current && simulated(current)
   })
 
   createKeyed(
@@ -157,9 +150,7 @@ export default function Demo() {
           />
           <span class="w-10 text-end">{speed().toFixed(2)}×</span>
         </label>
-        <Show when={!ready()}>
-          <p class="leading-text-tight opacity-70">{ctx.t("demo.unavailable")}</p>
-        </Show>
+        <p class="leading-text-tight opacity-70">{ctx.t(ready() ? "demo.hint" : "demo.unavailable")}</p>
         <div class="grid grid-cols-2 gap-1">
           <For each={actions}>
             {(action) => (

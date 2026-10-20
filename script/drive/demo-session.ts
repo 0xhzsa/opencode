@@ -28,6 +28,20 @@ const preview = [
   'printf "preview idle\\n"',
 ].join("\n")
 
+const build = [
+  "#!/bin/sh",
+  "count=${1:-8}",
+  'delay=$(awk "BEGIN { print 0.12 / ${2:-1} }")',
+  "label=${3:-module}",
+  "i=1",
+  'while [ "$i" -le "$count" ]; do',
+  '  printf "  %s %02d/%02d  compiled in %dms\\n" "$label" "$i" "$count" $((i * 37 % 90 + 8))',
+  '  sleep "$delay"',
+  "  i=$((i+1))",
+  "done",
+  'printf "\\n%s: %d built, 0 warnings\\n" "$label" "$count"',
+].join("\n")
+
 const harbor = [
   "export const lantern = {",
   '  name: "North Mole",',
@@ -90,6 +104,7 @@ export default OpenCodeDriver.use(
         "docs/pilots.md": "# Pilot steps\nBoard at the pilot steps two hours before high water.\n",
         "scripts/tides.sh": tides,
         "scripts/preview.sh": preview,
+        "scripts/build.sh": build,
       },
     },
   },
@@ -101,6 +116,7 @@ export default OpenCodeDriver.use(
         if (body.includes("You are a subagent spawned")) return child(rate(body))
         const turn = demoTurn(request.body)
         if (!turn) return reply("Noted. The harbor log is up to date.", 1)
+        if (turn.action === "random") return randomTurn(turn.seed, turn.step, turn.speed, directory)
         return respond(turn.action, turn.step, turn.speed, directory)
       })
       const session = yield* Effect.promise(() => createSession(artifacts, directory))
@@ -180,6 +196,8 @@ function respond(action: string, step: number, speed: number, directory: string)
           }),
         )
       return Stream.make(text("The survey runs in the background. I'll report back when it lands."))
+    case "notice":
+      return Stream.make(text("That finished. The results are in the harbor log."))
     case "background":
       if (step === 0)
         return tools(
@@ -231,20 +249,204 @@ function rate(body: string) {
   return match ? Number(match[1]) || 1 : 1
 }
 
+// Typed prompts carry no tag, so they stream at the speed of the latest Demo control.
+let lastSpeed = 1
+
 // The newest user message picks the action; assistant messages after it count the steps already taken this turn.
+// A Demo control's tag names its action, a background notice gets a short acknowledgement, "short" and "code" in
+// typed text pick those replies, and any other typed prompt gets a random turn seeded by the conversation so far.
 function demoTurn(body: unknown) {
   const messages = typeof body === "object" && body !== null && "messages" in body ? body.messages : undefined
   if (!Array.isArray(messages)) return
   const last = messages.findLastIndex((message) => message?.role === "user")
   if (last < 0) return
-  const match = JSON.stringify(messages[last]).match(/\[demo:([a-z]+) ([\d.]+)×\]/)
-  if (!match) return
-  return {
-    action: match[1],
-    speed: Number(match[2]) || 1,
-    step: messages.slice(last + 1).filter((message) => message?.role === "assistant").length,
+  const step = messages.slice(last + 1).filter((message) => message?.role === "assistant").length
+  const text = userText(messages[last])
+  const match = text.match(/\[demo:([a-z]+) ([\d.]+)×\]/)
+  if (match) {
+    lastSpeed = Number(match[2]) || 1
+    return { action: match[1], speed: lastSpeed, step, seed: 0 }
+  }
+  const pick = (action: string) => ({ action, speed: lastSpeed, step, seed: 0 })
+  if (/<(subagent|shell) /.test(text)) return pick("notice")
+  if (/\bshort\b/i.test(text)) return pick("message")
+  if (/\bcode\b/i.test(text)) return pick("code")
+  return { action: "random", speed: lastSpeed, step, seed: hash(JSON.stringify(messages.slice(0, last + 1))) }
+}
+
+function userText(message: { content?: unknown }) {
+  if (typeof message.content === "string") return message.content
+  if (!Array.isArray(message.content)) return ""
+  return message.content.map((part) => (typeof part?.text === "string" ? part.text : "")).join("\n")
+}
+
+function hash(value: string) {
+  let result = 2166136261
+  for (let index = 0; index < value.length; index++) result = Math.imul(result ^ value.charCodeAt(index), 16777619)
+  return result >>> 0
+}
+
+// A 5–10 s turn at 1×: reasoning, then three to five tool steps (one to three shells, often a patch and parallel
+// reads, sometimes a background subagent or shell) with prose, lists and code between them, then a summary. The
+// seed fixes the plan, so every request in the turn rebuilds the same one and plays its next step.
+function randomTurn(seed: number, step: number, speed: number, directory: string) {
+  const random = mulberry(seed)
+  const int = (min: number, max: number) => min + Math.floor(random() * (max - min + 1))
+  const one = <T>(items: readonly T[]) => items[int(0, items.length - 1)]
+  const bursty = random() < 0.5
+  const stream = (value: string) =>
+    bursty
+      ? Llm.text(value, { delay: int(30, 60) / speed, chunkSize: int(8, 20) })
+      : Llm.text(value, { delay: 12 / speed, chunkSize: 4 })
+  const pause = () => (bursty ? [Llm.pause(int(150, 600) / speed)] : [])
+  const call = (name: string, input: Record<string, string | boolean>, index = 0) =>
+    Llm.toolCall({ index, id: `call_${crypto.randomUUID().replaceAll("-", "")}`, name, input })
+  const prose = () =>
+    Array.from({ length: int(2, 4) }, () => one(sentences))
+      .join(" ")
+      .concat("\n\n")
+  const list = () =>
+    `${one(headings)}\n\n${Array.from({ length: int(3, 6) }, (_, index) => `${index + 1}. ${one(items)}`).join("\n")}\n\n`
+  const block = () => `${one(intros)}\n\n\`\`\`ts\n${one(snippets)}\n\`\`\`\n\n`
+  const piece = () => one([prose, prose, list, block])()
+
+  const kinds = [
+    ...Array.from({ length: int(1, 3) }, () => "shell"),
+    ...(random() < 0.7 ? ["patch"] : []),
+    ...(random() < 0.7 ? ["reads"] : []),
+    ...(random() < 0.35 ? [one(["subagent", "background"])] : []),
+  ]
+    .toSorted(() => random() - 0.5)
+    .slice(0, 5)
+  const plan = kinds.map((kind, index) => () => {
+    const lead = [
+      ...(index === 0 ? [Llm.reasoning(one(thoughts), { delay: 18 / speed, chunkSize: 5 }), ...pause()] : []),
+      ...Array.from({ length: int(1, 2) }, () => [stream(piece()), ...pause()]).flat(),
+    ]
+    if (kind === "shell") {
+      const label = one(["lanterns", "tides", "charts", "moorings", "beacons"])
+      return [
+        ...lead,
+        stream(`Building the ${label}.`),
+        call("shell", {
+          command: `sh scripts/build.sh ${int(6, 14)} ${speed} ${label}`,
+          description: `Build ${label}`,
+          workdir: directory,
+        }),
+      ]
+    }
+    if (kind === "patch")
+      return [...lead, stream("Retiming the North Mole lantern."), call("patch", { patchText: patch(directory) })]
+    if (kind === "reads")
+      return [
+        ...lead,
+        stream("Reading the harbor files."),
+        ...files.slice(0, int(2, files.length)).map((file, at) => call("read", { path: `${directory}/${file}` }, at)),
+      ]
+    if (kind === "subagent")
+      return [
+        ...lead,
+        call("subagent", {
+          agent: "surveyor",
+          description: "Survey the breakwater",
+          prompt: `[demo:child ${speed}×] Walk the breakwater and report any loose stones.`,
+          background: true,
+        }),
+      ]
+    return [
+      ...lead,
+      call("shell", {
+        command: `sh scripts/preview.sh ${speed}`,
+        description: "Lantern preview",
+        workdir: directory,
+        background: true,
+      }),
+    ]
+  })
+  if (step < plan.length) return Stream.make(...plan[step](), Llm.finish("tool-calls"))
+  return Stream.make(stream(`${one(summaries)}\n\n${random() < 0.5 ? list() : prose()}`))
+}
+
+function mulberry(seed: number) {
+  let state = seed
+  return () => {
+    state = (state + 0x6d2b79f5) | 0
+    let value = Math.imul(state ^ (state >>> 15), 1 | state)
+    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296
   }
 }
+
+const files = ["README.md", "src/harbor.ts", "src/tides.ts", "src/fleet.ts", "docs/pilots.md"]
+
+const thoughts = [
+  "Working out which lanterns drift out of phase before the spring tide, and what to rebuild first.",
+  "The pilot boat leaves two hours before high water, so the beacon map has to be current by then.",
+  "Checking the mooring charts against last week's survey before touching the lantern config.",
+]
+
+const sentences = [
+  "The North Mole lantern runs on a four second interval, and the Lantern Quay on six.",
+  "Fog usually lifts in layers here: masts first, then the net sheds, then the breakwater.",
+  "The tide tables in the pilot's hut lag the gauges by a few minutes every morning.",
+  "Two capstones near the East Buoy shifted during the last storm and need resetting.",
+  "Fishing boats slip their moorings while the lanterns along the mole are still turning.",
+  "The harbor master wants every beacon in phase before the pilot boat leaves.",
+  "Spring tides bring the water within a hand's width of the quay steps.",
+  "The beacon map rebuilds whenever a lantern's interval or colour changes.",
+  "Gannet and Kittiwake share the inner berth, so their mooring lines cross at low water.",
+  "The saltmarsh gate only opens in the hour either side of high water.",
+  "Most of the fleet is back before noon, when the wind turns onshore.",
+  "The amber lanterns read better through fog than the old white ones did.",
+]
+
+const headings = ["**Next steps**", "**What changed**", "**Before the spring tide**", "**Open questions**"]
+
+const items = [
+  "Reset the two capstones by the East Buoy at the next low tide.",
+  "Bring the Lantern Quay into phase with the North Mole.",
+  "Repaint the pilot steps before the equinox.",
+  "Check the saltmarsh gate hinges after the storm.",
+  "Move Shearwater to the outer berth for the week.",
+  "Re-run the tide checks once the new gauge is fitted.",
+  "Swap the last white lantern for amber.",
+  "Add the breakwater survey to the harbor log.",
+]
+
+const intros = ["The schedule helper now reads:", "Here is the phase check:", "The berth assignment looks like this:"]
+
+const snippets = [
+  [
+    "export function nextFlash(lantern: { intervalMs: number; offsetMs: number }, now: number) {",
+    "  const elapsed = (now - lantern.offsetMs) % lantern.intervalMs",
+    "  return now + lantern.intervalMs - elapsed",
+    "}",
+  ].join("\n"),
+  [
+    "export const inPhase = (a: Lantern, b: Lantern) =>",
+    "  a.intervalMs === b.intervalMs && a.offsetMs === b.offsetMs",
+    "",
+    "export function drift(lanterns: Lantern[]) {",
+    "  return lanterns.filter((lantern) => !inPhase(lantern, lanterns[0]))",
+    "}",
+  ].join("\n"),
+  [
+    "const berths = new Map([",
+    '  ["inner", ["Gannet", "Kittiwake"]],',
+    '  ["outer", ["Shearwater"]],',
+    "])",
+    "",
+    "export function berthOf(boat: string) {",
+    "  return [...berths].find(([, boats]) => boats.includes(boat))?.[0]",
+    "}",
+  ].join("\n"),
+]
+
+const summaries = [
+  "All the lanterns are rebuilt and in phase, and the tide checks pass.",
+  "The beacon map is current, the patch is in, and the builds are clean.",
+  "Everything the pilot boat needs is ready ahead of high water.",
+]
 
 // Drive's SDK client trails the server protocol, so the session is created over plain HTTP with the isolated
 // server's own registration.

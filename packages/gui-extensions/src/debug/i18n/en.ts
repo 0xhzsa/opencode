@@ -40,6 +40,7 @@ export default {
   "demo.tip": "Drive the open session through scripted states on OpenCode Drive's simulated model.",
   "demo.unavailable":
     "Open a session on OpenCode Drive's simulated model to use these controls. Start one with script/drive/demo-session.ts.",
+  "demo.hint": "Type anything for a random 5–10 s turn, or 'short' or 'code' for those replies.",
   "demo.speed": "Speed",
   "demo.action.paragraph": "Paragraph",
   "demo.action.code": "Code block",
