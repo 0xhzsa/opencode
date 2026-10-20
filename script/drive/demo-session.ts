@@ -290,81 +290,79 @@ function hash(value: string) {
 // reads, sometimes a background subagent or shell) with prose, lists and code between them, then a summary. The
 // seed fixes the plan, so every request in the turn rebuilds the same one and plays its next step.
 function randomTurn(seed: number, step: number, speed: number, directory: string) {
-  const random = mulberry(seed)
-  const int = (min: number, max: number) => min + Math.floor(random() * (max - min + 1))
+  // The plan comes from the turn's seed; each step's text from its own, so steps never repeat each other.
+  const plan = mulberry(seed)
+  const random = mulberry(seed ^ Math.imul(step + 1, 0x9e3779b9))
+  const int = (min: number, max: number, source = random) => min + Math.floor(source() * (max - min + 1))
   const one = <T>(items: readonly T[]) => items[int(0, items.length - 1)]
-  const bursty = random() < 0.5
+  const bursty = plan() < 0.5
   const stream = (value: string) =>
     bursty
-      ? Llm.text(value, { delay: int(30, 60) / speed, chunkSize: int(8, 20) })
-      : Llm.text(value, { delay: 12 / speed, chunkSize: 4 })
-  const pause = () => (bursty ? [Llm.pause(int(150, 600) / speed)] : [])
+      ? Llm.text(value, { delay: int(30, 50) / speed, chunkSize: int(10, 24) })
+      : Llm.text(value, { delay: 10 / speed, chunkSize: 8 })
+  const pause = () => (bursty ? [Llm.pause(int(150, 500) / speed)] : [])
   const call = (name: string, input: Record<string, string | boolean>, index = 0) =>
     Llm.toolCall({ index, id: `call_${crypto.randomUUID().replaceAll("-", "")}`, name, input })
   const prose = () =>
-    Array.from({ length: int(2, 4) }, () => one(sentences))
+    Array.from({ length: int(3, 5) }, () => one(sentences))
       .join(" ")
       .concat("\n\n")
   const list = () =>
     `${one(headings)}\n\n${Array.from({ length: int(3, 6) }, (_, index) => `${index + 1}. ${one(items)}`).join("\n")}\n\n`
   const block = () => `${one(intros)}\n\n\`\`\`ts\n${one(snippets)}\n\`\`\`\n\n`
   const piece = () => one([prose, prose, list, block])()
+  const lead = (first: boolean) => [
+    ...(first ? [Llm.reasoning(one(thoughts), { delay: 14 / speed, chunkSize: 6 }), ...pause()] : []),
+    ...Array.from({ length: int(1, 2) }, () => [stream(piece()), ...pause()]).flat(),
+  ]
 
   const kinds = [
-    ...Array.from({ length: int(1, 3) }, () => "shell"),
-    ...(random() < 0.7 ? ["patch"] : []),
-    ...(random() < 0.7 ? ["reads"] : []),
-    ...(random() < 0.35 ? [one(["subagent", "background"])] : []),
+    ...Array.from({ length: int(1, 3, plan) }, () => "shell"),
+    ...(plan() < 0.7 ? ["patch"] : []),
+    ...(plan() < 0.7 ? ["reads"] : []),
+    ...(plan() < 0.35 ? [plan() < 0.5 ? "subagent" : "background"] : []),
   ]
-    .toSorted(() => random() - 0.5)
+    .toSorted(() => plan() - 0.5)
     .slice(0, 5)
-  const plan = kinds.map((kind, index) => () => {
-    const lead = [
-      ...(index === 0 ? [Llm.reasoning(one(thoughts), { delay: 18 / speed, chunkSize: 5 }), ...pause()] : []),
-      ...Array.from({ length: int(1, 2) }, () => [stream(piece()), ...pause()]).flat(),
-    ]
-    if (kind === "shell") {
-      const label = one(["lanterns", "tides", "charts", "moorings", "beacons"])
-      return [
-        ...lead,
-        stream(`Building the ${label}.`),
-        call("shell", {
-          command: `sh scripts/build.sh ${int(6, 14)} ${speed} ${label}`,
-          description: `Build ${label}`,
-          workdir: directory,
-        }),
-      ]
-    }
-    if (kind === "patch")
-      return [...lead, stream("Retiming the North Mole lantern."), call("patch", { patchText: patch(directory) })]
-    if (kind === "reads")
-      return [
-        ...lead,
-        stream("Reading the harbor files."),
-        ...files.slice(0, int(2, files.length)).map((file, at) => call("read", { path: `${directory}/${file}` }, at)),
-      ]
-    if (kind === "subagent")
-      return [
-        ...lead,
-        call("subagent", {
-          agent: "surveyor",
-          description: "Survey the breakwater",
-          prompt: `[demo:child ${speed}×] Walk the breakwater and report any loose stones.`,
-          background: true,
-        }),
-      ]
-    return [
-      ...lead,
+  const kind = kinds[step]
+  if (kind === undefined) return Stream.make(stream(`${one(summaries)}\n\n${random() < 0.5 ? list() : prose()}`))
+  const outputs = lead(step === 0)
+  const tools = (...calls: Llm.Output[]) => Stream.make(...outputs, ...calls, Llm.finish("tool-calls"))
+  if (kind === "shell") {
+    const label = one(["lanterns", "tides", "charts", "moorings", "beacons"])
+    return tools(
+      stream(`Building the ${label}.`),
       call("shell", {
-        command: `sh scripts/preview.sh ${speed}`,
-        description: "Lantern preview",
+        command: `sh scripts/build.sh ${int(6, 14)} ${speed} ${label}`,
+        description: `Build ${label}`,
         workdir: directory,
+      }),
+    )
+  }
+  if (kind === "patch")
+    return tools(stream("Retiming the North Mole lantern."), call("patch", { patchText: patch(directory) }))
+  if (kind === "reads")
+    return tools(
+      stream("Reading the harbor files."),
+      ...files.slice(0, int(2, files.length)).map((file, at) => call("read", { path: `${directory}/${file}` }, at)),
+    )
+  if (kind === "subagent")
+    return tools(
+      call("subagent", {
+        agent: "surveyor",
+        description: "Survey the breakwater",
+        prompt: `[demo:child ${speed}×] Walk the breakwater and report any loose stones.`,
         background: true,
       }),
-    ]
-  })
-  if (step < plan.length) return Stream.make(...plan[step](), Llm.finish("tool-calls"))
-  return Stream.make(stream(`${one(summaries)}\n\n${random() < 0.5 ? list() : prose()}`))
+    )
+  return tools(
+    call("shell", {
+      command: `sh scripts/preview.sh ${speed}`,
+      description: "Lantern preview",
+      workdir: directory,
+      background: true,
+    }),
+  )
 }
 
 function mulberry(seed: number) {
