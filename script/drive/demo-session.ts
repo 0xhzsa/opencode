@@ -295,6 +295,12 @@ function randomTurn(seed: number, step: number, speed: number, directory: string
   const random = mulberry(seed ^ Math.imul(step + 1, 0x9e3779b9))
   const int = (min: number, max: number, source = random) => min + Math.floor(source() * (max - min + 1))
   const one = <T>(items: readonly T[]) => items[int(0, items.length - 1)]
+  const some = <T>(items: readonly T[], count: number) =>
+    items
+      .map((item) => ({ item, key: random() }))
+      .toSorted((a, b) => a.key - b.key)
+      .slice(0, count)
+      .map((entry) => entry.item)
   const bursty = plan() < 0.5
   const stream = (value: string) =>
     bursty
@@ -303,12 +309,11 @@ function randomTurn(seed: number, step: number, speed: number, directory: string
   const pause = () => (bursty ? [Llm.pause(int(100, 300) / speed)] : [])
   const call = (name: string, input: Record<string, string | boolean>, index = 0) =>
     Llm.toolCall({ index, id: `call_${crypto.randomUUID().replaceAll("-", "")}`, name, input })
-  const prose = () =>
-    Array.from({ length: int(3, 5) }, () => one(sentences))
-      .join(" ")
-      .concat("\n\n")
+  const prose = () => `${some(sentences, int(3, 5)).join(" ")}\n\n`
   const list = () =>
-    `${one(headings)}\n\n${Array.from({ length: int(3, 6) }, (_, index) => `${index + 1}. ${one(items)}`).join("\n")}\n\n`
+    `${one(headings)}\n\n${some(items, int(3, 6))
+      .map((item, index) => `${index + 1}. ${item}`)
+      .join("\n")}\n\n`
   const block = () => `${one(intros)}\n\n\`\`\`ts\n${one(snippets)}\n\`\`\`\n\n`
   const piece = () => one([prose, prose, list, block])()
   const lead = (first: boolean) => [
@@ -462,7 +467,13 @@ async function createSession(artifacts: string, directory: string) {
   const response = await fetch(`${registration.url}/api/session`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ title: "Timeline demo", location: { directory } }),
+    // An explicit agent and model, so the composer can send before it has resolved the defaults.
+    body: JSON.stringify({
+      title: "Timeline demo",
+      location: { directory },
+      agent: "build",
+      model: { providerID: "simulation", id: "gpt-sim-model" },
+    }),
   })
   const created = (await response.json()) as { data: { id: string } }
   return { id: created.data.id, server: registration }
