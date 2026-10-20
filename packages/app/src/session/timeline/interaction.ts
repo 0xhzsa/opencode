@@ -356,9 +356,14 @@ export function createSessionTimelineInteraction(session: SessionModel) {
       fill()
     },
   )
-  createResizeObserver(
-    () => state.refs.dock,
-    (_rect, _element, entry) => {
+  createEffect(() => {
+    const dock = state.refs.dock
+
+    if (!dock) return
+
+    // createResizeObserver deduplicates on rounded content-box dimensions,
+    // dropping the subpixel updates at the tail of the composer's spring.
+    const observer = new ResizeObserver(([entry]) => {
       // The activity pill floats above the region out of flow, so only the docks, queue and composer count here.
       const dpr = window.devicePixelRatio || 1
       const next = Math.round((entry.borderBoxSize[0]?.blockSize ?? 0) * dpr) / dpr
@@ -366,9 +371,10 @@ export function createSessionTimelineInteraction(session: SessionModel) {
       if (next === state.inset) return
       const delta = next - state.inset
 
-      // Measured before the new inset applies: a shrinking region also keeps a reader whose end it uncovers.
+      // Measured before the new inset applies: a shrinking region also keeps a reader whose end it uncovers. A
+      // following timeline keeps its own end, without landing rows that are still growing.
       const stick = scroller
-        ? pinned() || scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop < 10 + Math.max(0, -delta)
+        ? !pinned() && scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop < 10 + Math.max(0, -delta)
         : false
 
       setState("inset", next)
@@ -377,8 +383,11 @@ export function createSessionTimelineInteraction(session: SessionModel) {
 
       if (scroller) scheduleScrollState(scroller)
       fill()
-    },
-  )
+    })
+
+    observer.observe(dock, { box: "border-box" })
+    onCleanup(() => observer.disconnect())
+  })
   onCleanup(() => {
     if (historyContinuationFrame !== undefined) cancelAnimationFrame(historyContinuationFrame)
 

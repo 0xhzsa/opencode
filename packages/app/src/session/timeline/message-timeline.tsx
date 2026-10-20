@@ -1,7 +1,16 @@
-import { createEffect, createMemo, createSignal, on, onCleanup, Show, type Accessor, type JSX } from "solid-js"
+import {
+  createComputed,
+  createEffect,
+  createMemo,
+  createSignal,
+  on,
+  onCleanup,
+  Show,
+  type Accessor,
+  type JSX,
+} from "solid-js"
 import { createStore } from "solid-js/store"
 import { Predicate } from "effect"
-import { createAnimatedPresence } from "@/runtime/animated-presence"
 import type { SessionUserActions } from "@opencode/session-ui/actions"
 import { Button } from "@opencode/ui/button"
 import { Icon } from "@opencode/ui/icon"
@@ -119,8 +128,18 @@ export function MessageTimeline(props: MessageTimelineProps) {
     }
   }
 
+  // Motion state belongs to one session; another one starts from a fresh view.
   return (
-    <MessageTimelineView {...props} data={controller.data} action={controller.action} pending={controller.pending} />
+    <Show when={controller.data.sessionID()} keyed>
+      {(_id) => (
+        <MessageTimelineView
+          {...props}
+          data={controller.data}
+          action={controller.action}
+          pending={controller.pending}
+        />
+      )}
+    </Show>
   )
 }
 
@@ -368,15 +387,6 @@ function MessageTimelineView(
       .findLast((ref) => blocking.has(ref.partID))?.partID
   })
 
-  const [backgroundHintRef, setBackgroundHintRef] = createSignal<HTMLDivElement>()
-
-  const backgroundHintPresence = createAnimatedPresence(
-    backgroundHintPartID,
-    () => backgroundHintRef() ?? null,
-    sessionID,
-    1000,
-  )
-
   const showWorking = createMemo(() => {
     const id = sessionID()
 
@@ -438,42 +448,53 @@ function MessageTimelineView(
 
   // Undelivered input waits below the work the model has seen, so live status moves into the row above it.
   const activityRow = createMemo(() => projection.rows().some((row) => Predicate.isTagged(row, "Activity")))
+  // Set before the move renders, so the lane it moves to sees it.
+  let movedAt = -Infinity
+  createComputed(on(activityRow, () => (movedAt = performance.now()), { defer: true }))
 
-  // The lane keeps its height while empty, so Working and the hint come and go without moving the rows around it.
-  const activity = () => (
-    <div
-      classList={{
-        "min-w-0 w-full max-w-full": true,
-        "md:max-w-session md:mx-auto": props.centered,
-      }}
-    >
-      <div class={`flex h-9 items-center gap-2 pt-3 text-[13px] font-[530] leading-text-compact ${turnPadding()}`}>
-        <Show when={showWorking()}>
-          <div data-component="session-working" role="status">
-            <TextShimmer text={language.t("session.timeline.working")} active />
-          </div>
-        </Show>
-        <Show when={backgroundHintPresence.present()}>
-          <div
-            ref={setBackgroundHintRef}
-            data-component="session-background-hint-row"
-            class="duration-150 motion-reduce:animate-none"
-            classList={{
-              "animate-in fade-in": backgroundHintPresence.animate() && backgroundHintPresence.show(),
-              "animate-out fade-out fill-mode-forwards":
-                backgroundHintPresence.animate() && !backgroundHintPresence.show(),
-            }}
-          >
-            <BackgroundMoveHint onMove={props.background.move} />
-          </div>
-        </Show>
+  // Live status shows in one lane at a time. The lane it leaves fades it out where it was; the lane it moves to fades
+  // it in once that is done, so it never shows twice. The lane keeps its height while empty, so Working and the hint
+  // come and go without moving the rows around it.
+  function ActivityLane(lane: { here: () => boolean }) {
+    // Taking over from the other lane, status fades in once the copy there has faded out.
+    const delay = () => (performance.now() - movedAt < 100 ? 110 : undefined)
+    const working = createStatusFade(() => lane.here() && showWorking(), delay)
+    const hint = createStatusFade(() => lane.here() && !!backgroundHintPartID(), delay, 1000)
+    // Working keeps its width until a hint beside it leaves, so the hint never jumps sideways.
+    const holdWorking = createMemo<boolean>((held) => working.present() || Boolean(held && hint.present()))
+
+    return (
+      <div
+        classList={{
+          "min-w-0 w-full max-w-full": true,
+          "md:max-w-session md:mx-auto": props.centered,
+        }}
+      >
+        <div class={`flex h-9 items-center gap-2 pt-3 text-[13px] font-[530] leading-text-compact ${turnPadding()}`}>
+          <Show when={holdWorking()}>
+            <div
+              ref={working.ref}
+              data-component={working.present() ? "session-working" : undefined}
+              role={working.present() ? "status" : undefined}
+              aria-hidden={!working.present() || undefined}
+              classList={{ "invisible pointer-events-none": !working.present() }}
+            >
+              <TextShimmer text={language.t("session.timeline.working")} active />
+            </div>
+          </Show>
+          <Show when={hint.present()}>
+            <div ref={hint.ref} data-component="session-background-hint-row">
+              <BackgroundMoveHint onMove={props.background.move} />
+            </div>
+          </Show>
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   return (
     <VirtualizedTimeline
-      bottomSpacer={<Show when={!activityRow()}>{activity()}</Show>}
+      bottomSpacer={<ActivityLane here={() => !activityRow()} />}
       deferred={(row) => {
         if (!Predicate.isTagged(row, "AssistantPart") || row.group.type !== "part") return false
         const content = Timeline.resolveContent(messageByID().get(row.group.ref.messageID), row.group.ref.partID)
@@ -485,7 +506,7 @@ function MessageTimelineView(
           when={Predicate.isTagged(row(), "Activity")}
           fallback={<rowRenderer.Row row={row} onSizeChange={onSizeChange} />}
         >
-          {activity()}
+          <ActivityLane here={() => true} />
         </Show>
       )}
       header={
@@ -666,4 +687,70 @@ function MessageTimelineView(
       }
     />
   )
+}
+
+// Status fades in and out from whatever opacity it has reached, so a flicker or a quick return never cuts it short.
+// Present when it mounts, it starts at rest; `hold` keeps it at least that long once shown.
+function createStatusFade(show: Accessor<boolean>, delay: () => number | undefined, hold = 0) {
+  const [present, setPresent] = createSignal(show())
+  let element: HTMLElement | undefined
+  let fade: Animation | undefined
+  let shownAt = performance.now()
+  let entering = false
+
+  const run = (visible: boolean, wait = 0) => {
+    if (!element) return !visible && setPresent(false)
+    const from = entering ? "0" : getComputedStyle(element).opacity
+    entering = false
+    fade?.cancel()
+
+    const current = element.animate([{ opacity: from }, { opacity: visible ? 1 : 0 }], {
+      duration: visible ? 150 : 110,
+      delay: wait,
+      easing: visible ? "cubic-bezier(.2,.8,.2,1)" : "cubic-bezier(.4,0,1,1)",
+      fill: "both",
+    })
+
+    fade = current
+    current.finished.then(
+      () => fade === current && !visible && setPresent(false),
+      () => undefined,
+    )
+  }
+
+  createEffect(
+    on(
+      show,
+      (visible) => {
+        if (visible) shownAt = performance.now()
+
+        if (visible && !present()) {
+          entering = true
+
+          return setPresent(true)
+        }
+
+        const remaining = visible ? 0 : hold - (performance.now() - shownAt)
+
+        if (remaining <= 0) return run(visible)
+        const timer = setTimeout(() => run(false), remaining)
+        onCleanup(() => clearTimeout(timer))
+      },
+      { defer: true },
+    ),
+  )
+  onCleanup(() => fade?.cancel())
+
+  return {
+    present,
+    ref(value: HTMLElement) {
+      element = value
+      const wait = delay()
+
+      if (entering || (wait !== undefined && show())) {
+        entering = true
+        run(true, wait)
+      }
+    },
+  }
 }
