@@ -316,16 +316,19 @@ function randomTurn(seed: number, step: number, speed: number, directory: string
     ...Array.from({ length: int(1, 2) }, () => [stream(piece()), ...pause()]).flat(),
   ]
 
-  const kinds = [
+  const picked = [
     ...Array.from({ length: int(1, 3, plan) }, () => "shell"),
     ...(plan() < 0.7 ? ["patch"] : []),
     ...(plan() < 0.7 ? ["reads"] : []),
     ...(plan() < 0.35 ? [plan() < 0.5 ? "subagent" : "background"] : []),
   ]
+  // At least three tool steps, so even a short plan scrolls past a screen.
+  const kinds = [...picked, ...["patch", "reads"].filter((kind) => !picked.includes(kind))]
+    .slice(0, Math.max(3, picked.length))
     .toSorted(() => plan() - 0.5)
     .slice(0, 5)
   const kind = kinds[step]
-  if (kind === undefined) return Stream.make(stream(`${one(summaries)}\n\n${random() < 0.5 ? list() : prose()}`))
+  if (kind === undefined) return Stream.make(stream(`${one(summaries)}\n\n${prose()}${random() < 0.5 ? list() : ""}`))
   const outputs = lead(step === 0)
   const tools = (...calls: Llm.Output[]) => Stream.make(...outputs, ...calls, Llm.finish("tool-calls"))
   if (kind === "shell") {
