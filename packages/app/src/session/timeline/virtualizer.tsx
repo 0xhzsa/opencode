@@ -457,7 +457,7 @@ export function createTimelineVirtualizer(input: Input) {
   })
 
   // Read before the frame's writes. Follow intent survives layout changes that temporarily enlarge the DOM gap.
-  let viewport = 0
+  let growthViewport = 0
   // Space held under the last row so the end eases onto the composer instead of stopping there.
   let lift = 0
   let ride: { from: number; gap: number; to: number } | undefined
@@ -471,7 +471,7 @@ export function createTimelineVirtualizer(input: Input) {
   // in place for the whole frame, so the rows above glide.
   const growth = createRowGrowth({
     measure: () => {
-      viewport = layoutState.viewport
+      growthViewport = layoutState.viewport
     },
     resize: (key, size) => {
       const index = rowKeys().lastIndexOf(key)
@@ -514,7 +514,7 @@ export function createTimelineVirtualizer(input: Input) {
 
     holdSpace(grid(lift))
 
-    if (root && input.pinned()) pinEnd(viewport)
+    if (root && input.pinned()) pinEnd(growthViewport)
   }
 
   function pinEnd(viewport?: number) {
@@ -531,10 +531,14 @@ export function createTimelineVirtualizer(input: Input) {
   // translate, so row edges stay on the 1/64 px grid instead of trembling with the rounding.
   function writeScroll(root: HTMLDivElement, offset: number) {
     const exact = Math.max(0, Math.min(offset, endOffset()))
+    const previous = wholeTop
     wholeTop = Math.floor(exact)
     // Commit the extent before the offset, without asking layout to rediscover either value.
-    if (virtualContent) virtualContent.style.height = `${virtualizer.getTotalSize() - rendering.scrollAdjustment}px`
-    root.scrollTop = wholeTop
+    const height = `${virtualizer.getTotalSize() - rendering.scrollAdjustment}px`
+    const resized = virtualContent && virtualContent.style.height !== height
+    if (resized && virtualContent) virtualContent.style.height = height
+    // Rewriting scrollTop forces pending layout even when the logical offset did not move.
+    if (resized || previous !== wholeTop) root.scrollTop = wholeTop
     setLayoutState("offset", wholeTop)
 
     if (wholeTop === exact) return virtualContent?.style.removeProperty("translate")
@@ -790,7 +794,12 @@ export function createTimelineVirtualizer(input: Input) {
       if (coldPending) return
 
       if (!input.pinned()) return
-      if (following()) return pinEnd()
+      if (following()) {
+        // The shared growth frame commits the extent and scroll together. A second write here
+        // forces layout once per streamed delta before that frame has even advanced.
+        if (!growth.growing()) pinEnd()
+        return
+      }
       const root = listRoot()
 
       // Reopening a settled scroll-to-end operation can fight subsequent keyboard scrolling.

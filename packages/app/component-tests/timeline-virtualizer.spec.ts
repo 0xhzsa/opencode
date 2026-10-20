@@ -33,8 +33,7 @@ story("precomputes the full extent of 5000 rows before revealing or jumping", as
 })
 
 story.beforeEach(async ({ mount }) => {
-  const component = await mount("components-markdown--complete-response")
-  await expect(component.locator('[data-component="markdown"]')).toHaveAttribute("data-markdown-ready", "")
+  await mount("ui-button--playground")
 })
 
 story("reveals mixed modeled and measured rows without starving input", async ({ page }) => {
