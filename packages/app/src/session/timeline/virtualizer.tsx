@@ -349,7 +349,7 @@ export function createTimelineVirtualizer(input: Input) {
     initialMeasurementsCache: initialMeasurements,
     // A row arriving at a followed end grows in from nothing, so it never paints first at the estimate.
     estimateSize: (index) =>
-      modelHeight(getItemKey()(index)) ?? (arrivals.has(getItemKey()(index)) && following() ? 0 : fallbackItemSize),
+      arrivals.has(getItemKey()(index)) && following() ? 0 : (modelHeight(getItemKey()(index)) ?? fallbackItemSize),
     // A newly observed element gets a real ResizeObserver box before paint. Reuse
     // its snapshot on attachment, but later explicit measurements must read layout
     // so deferred/rewrapped content cannot keep stale, clipped heights (TanStack/virtual#1183).
