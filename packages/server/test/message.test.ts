@@ -6,7 +6,14 @@ import { it } from "../../core/test/lib/effect"
 import { ServerFetch } from "../src/fetch"
 
 const messages: SessionMessageInfo[] = [
-  { id: "msg_z", type: "user", text: "First request", time: { created: 300 } },
+  {
+    id: "msg_z",
+    type: "user",
+    text: "First request",
+    metadata: { displayText: "Visible first request", comments: [], attachments: [] },
+    files: [{ data: "AQID", mime: "image/png", source: { type: "inline" } }],
+    time: { created: 300 },
+  },
   {
     id: "msg_assistant",
     type: "assistant",
@@ -86,6 +93,25 @@ it.live("filters message types before paginating in either direction through the
         messages[8],
       ])
       expect((await fixture.api.message.list({ sessionID: fixture.sessionID, type: "shell" })).data).toEqual([])
+      const textOnly = await fixture.api.message.list({ ...input, order: "asc", includeFiles: false })
+      expect(textOnly.data).toEqual([
+        {
+          id: "msg_z",
+          type: "user",
+          text: "First request",
+          metadata: { displayText: "Visible first request", comments: [], attachments: [] },
+          time: { created: 300 },
+        },
+        messages[2],
+      ])
+      expect((await fixture.api.message.list({ ...input, order: "asc", includeFiles: true })).data).toEqual([
+        messages[0],
+        messages[2],
+      ])
+      if (!textOnly.cursor.next) throw new Error("Expected a text-only next cursor")
+      expect(
+        (await fixture.api.message.list({ ...input, cursor: textOnly.cursor.next, includeFiles: false })).data,
+      ).toEqual([messages[5], messages[7]])
       // Before excludes its anchor; the returned cursor continues further back through matching messages.
       const before = await fixture.api.message.list({ ...input, before: "msg_a" })
       expect(before.data.map((message) => message.id)).toEqual(["msg_x", "msg_b"])

@@ -846,6 +846,7 @@ const EndpointMessageList = (raw: RawClient["server.message"]) => (input: Messag
         cursor: input["cursor"],
         before: input["before"],
         type: input["type"],
+        includeFiles: input["includeFiles"],
       },
     }).pipe(Effect.mapError(mapClientError)),
   )

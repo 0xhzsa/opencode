@@ -66,7 +66,7 @@ export function TurnNavigator(props: TurnNavigatorProps) {
   // Newest first, so a capped index still meets the loaded tail.
   const loadIndex = async (cursor?: string, count = 0): Promise<[string, string][]> => {
     const page = await sdk.api.message.list(
-      { sessionID: props.sessionID, type: "user", limit: turnPageLimit, cursor },
+      { sessionID: props.sessionID, type: "user", includeFiles: false, limit: turnPageLimit, cursor },
       { signal: abort.signal },
     )
 

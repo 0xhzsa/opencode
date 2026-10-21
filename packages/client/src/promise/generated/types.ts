@@ -5769,6 +5769,7 @@ export type MessageListInput = {
       | "compaction"
       | "idle"
       | undefined
+    readonly includeFiles?: boolean | undefined
   }["limit"]
   readonly order?: {
     readonly limit?: number | undefined
@@ -5788,6 +5789,7 @@ export type MessageListInput = {
       | "compaction"
       | "idle"
       | undefined
+    readonly includeFiles?: boolean | undefined
   }["order"]
   readonly cursor?: {
     readonly limit?: number | undefined
@@ -5807,6 +5809,7 @@ export type MessageListInput = {
       | "compaction"
       | "idle"
       | undefined
+    readonly includeFiles?: boolean | undefined
   }["cursor"]
   readonly before?: {
     readonly limit?: number | undefined
@@ -5826,6 +5829,7 @@ export type MessageListInput = {
       | "compaction"
       | "idle"
       | undefined
+    readonly includeFiles?: boolean | undefined
   }["before"]
   readonly type?: {
     readonly limit?: number | undefined
@@ -5845,7 +5849,28 @@ export type MessageListInput = {
       | "compaction"
       | "idle"
       | undefined
+    readonly includeFiles?: boolean | undefined
   }["type"]
+  readonly includeFiles?: {
+    readonly limit?: number | undefined
+    readonly order?: "asc" | "desc" | undefined
+    readonly cursor?: string | undefined
+    readonly before?: string | undefined
+    readonly type?:
+      | "agent-switched"
+      | "model-switched"
+      | "location-switched"
+      | "user"
+      | "synthetic"
+      | "system"
+      | "skill"
+      | "shell"
+      | "assistant"
+      | "compaction"
+      | "idle"
+      | undefined
+    readonly includeFiles?: boolean | undefined
+  }["includeFiles"]
 }
 
 export type MessageListOutput = SessionMessagesResponse

@@ -47,6 +47,7 @@ export const MessageHandler = HttpApiBuilder.group(Api, "server.message", (handl
             limit: ctx.query.limit ?? DefaultMessagesLimit,
             order,
             type: ctx.query.type,
+            includeFiles: ctx.query.includeFiles,
             // Descending past an anchor yields exactly the messages before it.
             cursor: decoded
               ? { id: decoded.id, direction: decoded.direction }

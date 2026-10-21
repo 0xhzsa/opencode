@@ -45,6 +45,8 @@ export type MessagesInput = {
   limit?: number
   order?: "asc" | "desc"
   type?: SessionMessage.Type
+  /** Omit top-level user attachments for text-only indexes; normal history includes them. */
+  includeFiles?: boolean
   cursor?: {
     id: SessionMessage.ID
     direction: "previous" | "next"
@@ -161,7 +163,19 @@ const layer = Layer.effect(
             : lt(SessionMessageTable.seq, anchor.seq)
           : undefined
         const query = db
-          .select()
+          .select({
+            id: SessionMessageTable.id,
+            session_id: SessionMessageTable.session_id,
+            type: SessionMessageTable.type,
+            seq: SessionMessageTable.seq,
+            time_created: SessionMessageTable.time_created,
+            time_updated: SessionMessageTable.time_updated,
+            // Strip file bytes in SQLite before JSON parsing and schema validation in JS.
+            data:
+              input.includeFiles === false
+                ? sql`json_remove(${SessionMessageTable.data}, '$.files')`.mapWith(SessionMessageTable.data)
+                : SessionMessageTable.data,
+          })
           .from(SessionMessageTable)
           .where(
             and(

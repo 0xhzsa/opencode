@@ -1117,6 +1117,7 @@ export function make(options: ClientOptions) {
               cursor: input["cursor"],
               before: input["before"],
               type: input["type"],
+              includeFiles: input["includeFiles"],
             },
             successStatus: 200,
             declaredStatuses: [400, 401, 404, 500],

@@ -1,7 +1,7 @@
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Location } from "@opencode/schema/location"
-import { Schema, Struct } from "effect"
+import { Schema, SchemaGetter, Struct } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api"
 import { InvalidCursorError, SessionNotFoundError, UnknownError } from "../errors.js"
 
@@ -43,6 +43,17 @@ export const SessionMessagesQuery = Schema.Struct({
     description:
       "Filter by message type before pagination. When omitted, all message types are returned. Pass the same type when following cursors.",
   }),
+  includeFiles: Schema.Literals(["true", "false"]).pipe(
+    Schema.decodeTo(Schema.Boolean, {
+      decode: SchemaGetter.transform((value) => value === "true"),
+      encode: SchemaGetter.transform((value): "true" | "false" => (value ? "true" : "false")),
+    }),
+    Schema.optional,
+    Schema.annotate({
+      description:
+        "Include user message file attachments. Defaults to true. False omits the top-level files field for text-only indexes; tool results are unaffected. Pass the same value when following cursors.",
+    }),
+  ),
 }).annotate({ identifier: "SessionMessagesQuery" })
 
 const PublicLocationSwitched = Schema.Struct({

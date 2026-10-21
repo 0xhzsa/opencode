@@ -1400,6 +1400,7 @@ export type MessageListInput = {
     | "compaction"
     | "idle"
     | undefined
+  readonly includeFiles?: boolean | undefined
 }
 export type MessageListOutput = {
   readonly data: ReadonlyArray<SessionMessage.Info>
