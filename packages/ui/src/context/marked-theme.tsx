@@ -1,4 +1,4 @@
-import type { ThemeRegistrationResolved } from "@pierre/diffs"
+import type { ThemeRegistration } from "shiki"
 
 export const OpenCodeTheme = {
   name: "OpenCode",
@@ -369,4 +369,60 @@ export const OpenCodeTheme = {
     "variable.constant": "var(--syntax-constant)",
     "variable.defaultLibrary": "var(--syntax-unknown)",
   },
-} as unknown as ThemeRegistrationResolved
+} satisfies ThemeRegistration
+
+// The same palette as a Zed theme for Pierre Highlights, which styles its own token categories instead of TextMate
+// scopes. Each value names a CSS variable suffix, so `keyword: "syntax-keyword"` paints `var(--syntax-keyword)`.
+export const OpenCodeHighlightsTheme = {
+  name: "OpenCode",
+  appearance: "dark",
+  cssVariables: { prefix: "--", defaults: { foreground: "var(--text-base)" } },
+  style: {
+    "editor.background": "color-background-stronger",
+    "editor.foreground": "text-base",
+    syntax: {
+      comment: "syntax-comment",
+      hint: "syntax-comment",
+      attribute: "syntax-property",
+      boolean: "syntax-constant",
+      number: "syntax-constant",
+      constant: "syntax-constant",
+      label: "syntax-constant",
+      "string.escape": "syntax-constant",
+      "string.special.symbol": "syntax-constant",
+      "variable.special": "syntax-constant",
+      constructor: "syntax-type",
+      enum: "syntax-type",
+      namespace: "syntax-type",
+      type: "syntax-type",
+      "tag.component.jsx": "syntax-type",
+      "type.builtin": "syntax-primitive",
+      function: "syntax-primitive",
+      variant: "syntax-primitive",
+      "property.json_key": "syntax-primitive",
+      keyword: "syntax-keyword",
+      preproc: "syntax-keyword",
+      "keyword.operator": "syntax-operator",
+      operator: "syntax-operator",
+      string: "syntax-string",
+      tag: "syntax-string",
+      selector: "syntax-string",
+      "selector.class": "syntax-property",
+      "selector.id": "syntax-property",
+      "selector.pseudo": "syntax-property",
+      "string.regex": "syntax-regexp",
+      property: "syntax-property",
+      variable: "syntax-variable",
+      punctuation: "syntax-punctuation",
+      embedded: "syntax-punctuation",
+      "text.jsx": "syntax-punctuation",
+      title: { color: "syntax-info", font_weight: 700 },
+      emphasis: { font_style: "italic" },
+      "emphasis.strong": { color: "text-strong", font_weight: 700 },
+      link_text: "syntax-unknown",
+      link_uri: "syntax-unknown",
+      "diff.plus": "syntax-diff-add",
+      "diff.minus": "syntax-diff-delete",
+    },
+  },
+}

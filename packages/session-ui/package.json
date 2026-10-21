@@ -70,6 +70,7 @@
     "@opencode/ui": "workspace:*",
     "@opencode/util": "workspace:*",
     "@pierre/diffs": "catalog:",
+    "@pierre/highlights": "catalog:",
     "@shikijs/stream": "catalog:",
     "@solid-primitives/event-listener": "catalog:",
     "@solid-primitives/media": "catalog:",

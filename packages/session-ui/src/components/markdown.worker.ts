@@ -14,11 +14,21 @@ import {
 import type { MarkdownToken, MarkdownWorkerRequest, MarkdownWorkerResponse } from "./markdown-worker-protocol"
 import { createLatestWorkerQueue } from "./markdown-worker-queue"
 import { project, type Projection } from "./markdown-stream"
+import type { Lang } from "@pierre/highlights"
+import type { CodeHighlighter } from "../pierre/highlighter"
+
+type Highlights = typeof import("./markdown-highlights")
+
+type Tokenizer = {
+  push: (delta: string) => Promise<{ stable: MarkdownToken[]; unstable: MarkdownToken[] }>
+  dispose: () => void
+}
 
 type Stream = {
   language: string
+  highlighter: CodeHighlighter
   source: string
-  tokenizer: ShikiStreamTokenizer
+  tokenizer: Tokenizer
 }
 
 const streams = new Map<string, Stream>()
@@ -27,10 +37,15 @@ const projections = new Map<string, Projection>()
 
 let highlighter: ReturnType<typeof createHighlighter> | undefined
 
+let highlights: Promise<Highlights> | undefined
+
 const highlightQueue = createLatestWorkerQueue<Extract<MarkdownWorkerRequest, { type: "highlight" }>>({
   run: highlight,
   supersede: (request) => post({ type: "superseded", id: request.id, key: request.key }),
-  dispose: (key) => void streams.delete(key),
+  dispose: (key) => {
+    streams.get(key)?.tokenizer.dispose()
+    streams.delete(key)
+  },
 })
 
 const projectQueue = createLatestWorkerQueue<Extract<MarkdownWorkerRequest, { type: "project" }>>({
@@ -39,17 +54,27 @@ const projectQueue = createLatestWorkerQueue<Extract<MarkdownWorkerRequest, { ty
   dispose: (key) => void projections.delete(key),
 })
 
-const parser = createMarkdownParser(async (code, language) => {
-  const instance = await getHighlighter()
-  const name = language in bundledLanguages ? language : "text"
+const shikiParser = createMarkdownParser(shikiHtml)
 
-  if (!instance.getLoadedLanguages().includes(name))
-    await instance.loadLanguage(bundledLanguages[name as BundledLanguage])
+const highlightsParser = createMarkdownParser(async (code, language) => {
+  const lexer = await getHighlights()
+
+  if (lexer.supportsLanguage(language)) return lexer.highlightsHtml(code, language)
+
+  return shikiHtml(code, language)
+})
+
+async function shikiHtml(code: string, language: string) {
+  const instance = await getHighlighter()
+  // SAFETY: `name` is a key of bundledLanguages or "text", which Shiki always has.
+  const name = (language in bundledLanguages ? language : "text") as BundledLanguage
+
+  if (!instance.getLoadedLanguages().includes(name)) await instance.loadLanguage(bundledLanguages[name])
 
   return instance
-    .codeToHtml(code, { lang: name as BundledLanguage, theme: "OpenCode", tabindex: false })
+    .codeToHtml(code, { lang: name, theme: "OpenCode", tabindex: false })
     .replace("<code>", `<code class="language-${name}">`)
-})
+}
 
 self.onmessage = (event: MessageEvent<MarkdownWorkerRequest>) => {
   if (event.data.type === "dispose") {
@@ -76,6 +101,7 @@ self.onmessage = (event: MessageEvent<MarkdownWorkerRequest>) => {
 
 async function parse(request: Extract<MarkdownWorkerRequest, { type: "parse" }>) {
   try {
+    const parser = request.highlighter === "highlights" ? highlightsParser : shikiParser
     post({ type: "parse", id: request.id, html: await parser.parse(request.text) })
   } catch (error) {
     post({ type: "error", id: request.id, message: error instanceof Error ? error.message : String(error) })
@@ -99,14 +125,24 @@ async function runProject(request: Extract<MarkdownWorkerRequest, { type: "proje
 
 async function highlight(request: Extract<MarkdownWorkerRequest, { type: "highlight" }>) {
   try {
-    const instance = await getHighlighter()
-    const language = request.language in bundledLanguages ? request.language : "text"
+    const lexer = request.highlighter === "highlights" ? await getHighlights() : undefined
+    const requested = request.language
 
-    if (!instance.getLoadedLanguages().includes(language))
-      await instance.loadLanguage(bundledLanguages[language as BundledLanguage])
+    if (lexer?.supportsLanguage(requested)) {
+      await highlightWithHighlights(lexer, request, requested)
+
+      return
+    }
+
+    const instance = await getHighlighter()
+    // SAFETY: `language` is a key of bundledLanguages or "text", which Shiki always has.
+    const language = (request.language in bundledLanguages ? request.language : "text") as BundledLanguage
+
+    if (!instance.getLoadedLanguages().includes(language)) await instance.loadLanguage(bundledLanguages[language])
 
     if (request.complete) {
-      const result = instance.codeToTokens(request.text, { lang: language as BundledLanguage, theme: "OpenCode" })
+      const result = instance.codeToTokens(request.text, { lang: language, theme: "OpenCode" })
+      streams.get(request.key)?.tokenizer.dispose()
       streams.delete(request.key)
       post({
         type: "highlight",
@@ -125,28 +161,20 @@ async function highlight(request: Extract<MarkdownWorkerRequest, { type: "highli
       return
     }
 
-    const previous = streams.get(request.key)
-    const reset = !previous || previous.language !== language || !request.text.startsWith(previous.source)
+    await stream(request, language, "shiki", () => {
+      const tokenizer = new ShikiStreamTokenizer({ highlighter: instance, lang: language, theme: "OpenCode" })
 
-    const stream = reset
-      ? {
-          language,
-          source: "",
-          tokenizer: new ShikiStreamTokenizer({ highlighter: instance, lang: language, theme: "OpenCode" }),
-        }
-      : previous
+      return {
+        push: async (delta) => {
+          const result = await tokenizer.enqueue(delta)
 
-    const result = await stream.tokenizer.enqueue(request.text.slice(stream.source.length))
-    stream.source = request.text
-    streams.set(request.key, stream)
-    post({
-      type: "highlight",
-      id: request.id,
-      key: request.key,
-      language,
-      reset,
-      stable: result.stable.filter((token) => token.content.length > 0).map(token),
-      unstable: result.unstable.filter((token) => token.content.length > 0).map(token),
+          return {
+            stable: result.stable.filter((token) => token.content.length > 0).map(token),
+            unstable: result.unstable.filter((token) => token.content.length > 0).map(token),
+          }
+        },
+        dispose: () => undefined,
+      }
     })
   } catch (error) {
     post({
@@ -156,6 +184,82 @@ async function highlight(request: Extract<MarkdownWorkerRequest, { type: "highli
       message: error instanceof Error ? error.message : String(error),
     })
   }
+}
+
+async function highlightWithHighlights(
+  lexer: Highlights,
+  request: Extract<MarkdownWorkerRequest, { type: "highlight" }>,
+  language: Lang,
+) {
+  const convert = (value: { content: string; color?: string; fontStyle?: number }): MarkdownToken => [
+    value.content,
+    lexer.style(value),
+  ]
+
+  if (request.complete) {
+    const lines = lexer.highlightsTokens(request.text, language)
+    streams.get(request.key)?.tokenizer.dispose()
+    streams.delete(request.key)
+    post({
+      type: "highlight",
+      id: request.id,
+      key: request.key,
+      language,
+      reset: true,
+      stable: lines
+        .flatMap((line, index) => (index === lines.length - 1 ? line : [...line, { content: "\n" }]))
+        .filter((value) => value.content.length > 0)
+        .map(convert),
+      unstable: [],
+    })
+
+    return
+  }
+
+  await stream(request, language, "highlights", () => {
+    const tokenizer = lexer.createHighlightsStream(language)
+
+    return {
+      push: async (delta) => {
+        const result = tokenizer.push(delta)
+
+        return {
+          stable: result.stable.filter((value) => value.content.length > 0).map(convert),
+          unstable: result.unstable.filter((value) => value.content.length > 0).map(convert),
+        }
+      },
+      dispose: tokenizer.dispose,
+    }
+  })
+}
+
+// Feeds the request's new suffix to the block's tokenizer, starting a fresh one when the text no longer extends what
+// it has seen or the language or highlighter changed.
+async function stream(
+  request: Extract<MarkdownWorkerRequest, { type: "highlight" }>,
+  language: string,
+  highlighter: CodeHighlighter,
+  create: () => Tokenizer,
+) {
+  const previous = streams.get(request.key)
+
+  const reset =
+    !previous ||
+    previous.language !== language ||
+    previous.highlighter !== highlighter ||
+    !request.text.startsWith(previous.source)
+
+  if (reset) previous?.tokenizer.dispose()
+
+  const current = reset ? { language, highlighter, source: "", tokenizer: create() } : previous
+  const result = await current.tokenizer.push(request.text.slice(current.source.length))
+  current.source = request.text
+  streams.set(request.key, current)
+  post({ type: "highlight", id: request.id, key: request.key, language, reset, ...result })
+}
+
+function getHighlights() {
+  return (highlights ??= import("./markdown-highlights"))
 }
 
 function getHighlighter() {

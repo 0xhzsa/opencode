@@ -1,11 +1,20 @@
 import type { Projection } from "./markdown-stream"
+import type { CodeHighlighter } from "../pierre/highlighter"
 
 export type MarkdownToken = [content: string, style: string]
 
 export type MarkdownWorkerRequest =
-  | { type: "parse"; id: number; text: string }
+  | { type: "parse"; id: number; text: string; highlighter?: CodeHighlighter }
   | { type: "project"; id: number; key: string; text: string; live: boolean }
-  | { type: "highlight"; id: number; key: string; text: string; language: string; complete?: boolean }
+  | {
+      type: "highlight"
+      id: number
+      key: string
+      text: string
+      language: string
+      complete?: boolean
+      highlighter?: CodeHighlighter
+    }
   | { type: "dispose"; key: string }
 
 export type MarkdownWorkerResponse =

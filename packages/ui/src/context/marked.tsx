@@ -1,5 +1,5 @@
 import { getSharedHighlighter } from "@pierre/diffs"
-import { bundledLanguages, type BundledLanguage } from "shiki"
+import { bundledLanguages } from "shiki"
 import { createSimpleContext } from "./helper"
 import { createMarkdownParser } from "./marked-parser"
 import { registerOpenCodeTheme } from "./marked-theme-register"
@@ -20,12 +20,8 @@ export const { use: useMarked, provider: MarkedProvider } = createSimpleContext(
 
       const name = language in bundledLanguages ? language : "text"
 
-      if (!highlighter.getLoadedLanguages().includes(name)) await highlighter.loadLanguage(name as BundledLanguage)
+      await highlighter.loadLanguages([name])
 
-      return highlighter.codeToHtml(code, {
-        lang: name,
-        theme: "OpenCode",
-        tabindex: false,
-      })
+      return highlighter.codeToHtml(code, { lang: name, theme: "OpenCode" })
     }),
 })

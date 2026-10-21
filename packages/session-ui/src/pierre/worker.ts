@@ -1,6 +1,7 @@
 import { WorkerPoolManager } from "@pierre/diffs/worker"
 import ShikiWorkerUrl from "@pierre/diffs/worker/worker.js?worker&url"
 import { registerOpenCodeTheme } from "@opencode/ui/context/marked-theme-register"
+import { codeHighlighter, type CodeHighlighter } from "./highlighter"
 
 registerOpenCodeTheme()
 
@@ -8,7 +9,7 @@ export function workerFactory(): Worker {
   return new Worker(ShikiWorkerUrl, { type: "module" })
 }
 
-function createPool(lineDiffType: "none" | "word-line") {
+function createPool(lineDiffType: "none" | "word-line", highlighter: CodeHighlighter) {
   const pool = new WorkerPoolManager(
     {
       workerFactory,
@@ -25,7 +26,7 @@ function createPool(lineDiffType: "none" | "word-line") {
       // Pierre renders with the pool's options, not the viewer's, whenever the pool works. The "none" pool only
       // serves diffs above the large-file threshold, so it carries the plain-text fallback the viewer requests.
       ...(lineDiffType === "none" && { maxLineDiffLength: 0, tokenizeMaxLineLength: 1 }),
-      preferredHighlighter: "shiki-wasm",
+      preferredHighlighter: highlighter === "highlights" ? "highlights" : "shiki-wasm",
     },
   )
 
@@ -34,22 +35,23 @@ function createPool(lineDiffType: "none" | "word-line") {
   return pool
 }
 
-let plain: WorkerPoolManager | undefined
-
-let diff: WorkerPoolManager | undefined
+// One pool per diff mode and highlighter: a worker loads a single highlighter type, so switching highlighters
+// moves viewers to another pool rather than reconfiguring this one.
+const pools = new Map<string, WorkerPoolManager>()
 
 export function getWorkerPool(lineDiffType: "none" | "word-line" = "word-line"): WorkerPoolManager | undefined {
   if (typeof window === "undefined") return
 
-  if (lineDiffType === "none") {
-    if (!plain) plain = createPool("none")
+  const highlighter = codeHighlighter()
+  const key = `${lineDiffType}:${highlighter}`
+  const existing = pools.get(key)
 
-    return plain
-  }
+  if (existing) return existing
 
-  if (!diff) diff = createPool("word-line")
+  const pool = createPool(lineDiffType, highlighter)
+  pools.set(key, pool)
 
-  return diff
+  return pool
 }
 
 export function getWorkerPools() {

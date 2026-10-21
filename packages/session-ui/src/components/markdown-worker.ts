@@ -7,6 +7,7 @@ import {
 } from "./markdown-worker-protocol"
 import { createWorkerTransport } from "./markdown-worker-transport"
 import type { Projection } from "./markdown-stream"
+import { codeHighlighter } from "../pierre/highlighter"
 
 type HighlightPending = {
   key: string
@@ -79,7 +80,7 @@ export function parseMarkdown(text: string, signal: AbortSignal) {
   return new Promise<string>((resolve, reject) => {
     parses.set(id, { resolve, reject })
     signal.addEventListener("abort", abort, { once: true })
-    instance.postMessage({ type: "parse", id, text } satisfies MarkdownWorkerRequest)
+    instance.postMessage({ type: "parse", id, text, highlighter: codeHighlighter() } satisfies MarkdownWorkerRequest)
   }).finally(() => {
     signal.removeEventListener("abort", abort)
     parses.delete(id)
@@ -117,7 +118,7 @@ export function highlightStreamingCode(key: string, text: string, language: stri
 
   return new Promise<MarkdownWorkerState>((resolve, reject) => {
     pending.set(id, { key, complete, resolve, reject })
-    transport.send({ type: "highlight", id, key, text, language, complete })
+    transport.send({ type: "highlight", id, key, text, language, complete, highlighter: codeHighlighter() })
   })
 }
 
