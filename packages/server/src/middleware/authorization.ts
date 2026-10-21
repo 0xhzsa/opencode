@@ -8,6 +8,7 @@ import { PAIRING_CONNECT_PATH } from "@opencode/protocol/groups/server"
 import { Effect, Layer, Redacted } from "effect"
 import { Base64 } from "effect/encoding"
 import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
+import { createHash } from "node:crypto"
 
 const AUTH_TOKEN_QUERY = "auth_token"
 const WWW_AUTHENTICATE = 'Basic realm="Secure Area"'
@@ -69,6 +70,22 @@ function authorizedSessionCookie(request: HttpServerRequest.HttpServerRequest, c
   if (origin !== undefined && URL.parse(origin)?.host !== request.headers.host) return false
   return ServerAuth.verifySession(token, config)
 }
+
+// Voice control belongs to one pairing, not everyone who knows the server password.
+// Legacy tokens have no per-pairing nonce; those callers must pair again for voice.
+export const pairedCaller = Effect.fn("ServerAuth.pairedCaller")(function* (config: ServerAuth.Info) {
+  const request = yield* HttpServerRequest.HttpServerRequest
+  const credential = yield* credentialFromRequest(request)
+  const token = credential.username === config.username ? Redacted.value(credential.password) : ""
+  const session = ServerAuth.verifySession(token, config)
+    ? token
+    : authorizedSessionCookie(request, config)
+      ? request.cookies[ServerAuth.sessionCookieName(request.headers.host)]
+      : undefined
+  if (!session || session.split(".").length !== 3)
+    return yield* new UnauthorizedError({ message: "Pair this device with the server to use voice" })
+  return createHash("sha256").update(session).digest("hex")
+})
 
 export const authorizationLayer = Layer.effect(
   Authorization,

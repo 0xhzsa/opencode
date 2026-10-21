@@ -118,6 +118,8 @@ import type {
   VoiceModelsOutput,
   VoiceSessionInput,
   VoiceSessionOutput,
+  VoiceInstructionsInput,
+  VoiceInstructionsOutput,
   ProviderListInput,
   ProviderListOutput,
   ProviderGetInput,
@@ -885,8 +887,21 @@ const EndpointVoiceModels = (raw: RawClient["server.voice"]) => () =>
 const EndpointVoiceSession = (raw: RawClient["server.voice"]) => (input: VoiceSessionInput) =>
   preserveEffect<VoiceSessionOutput>()(
     raw["voice.session"]({
-      payload: { model: input["model"], session: input["session"], transport: input["transport"] },
+      payload: {
+        model: input["model"],
+        session: input["session"],
+        transport: input["transport"],
+        route: input["route"],
+      },
     }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointVoiceInstructions = (raw: RawClient["server.voice"]) => (input: VoiceInstructionsInput) =>
+  preserveEffect<VoiceInstructionsOutput>()(
+    raw["voice.instructions"]({ params: { id: input["id"] }, payload: { instructions: input["instructions"] } }).pipe(
       Effect.mapError(mapClientError),
       Effect.map((value) => value.data),
     ),
@@ -895,6 +910,7 @@ const EndpointVoiceSession = (raw: RawClient["server.voice"]) => (input: VoiceSe
 const adaptGroupVoice = (raw: RawClient["server.voice"]) => ({
   models: EndpointVoiceModels(raw),
   session: EndpointVoiceSession(raw),
+  instructions: EndpointVoiceInstructions(raw),
 })
 
 const EndpointProviderList = (raw: RawClient["server.provider"]) => (input?: ProviderListInput) =>

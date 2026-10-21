@@ -1,7 +1,7 @@
 export * as ServerAuth from "./auth"
 
 import { Context, Layer, Option, Redacted } from "effect"
-import { createHmac, timingSafeEqual } from "node:crypto"
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 
 export type DecodedCredentials = {
   readonly username: string
@@ -40,17 +40,19 @@ export function authorized(credentials: DecodedCredentials, config: Info) {
 export function issueSession(config: Info, now = Date.now()) {
   if (Option.isNone(config.password)) return
   const expires = String(Math.floor(now / 1000) + SESSION_TTL_SECONDS)
-  return `${expires}.${sign(config.password.value, expires)}`
+  // Distinct pairings need distinct identities, even when issued in the same second.
+  const payload = `${expires}.${randomBytes(16).toString("base64url")}`
+  return `${payload}.${sign(config.password.value, payload)}`
 }
 
 export function verifySession(token: string, config: Info, now = Date.now()) {
   if (Option.isNone(config.password)) return false
   const parts = token.split(".")
-  if (parts.length !== 2) return false
+  if (parts.length !== 2 && parts.length !== 3) return false
   const expires = Number(parts[0])
   if (!Number.isSafeInteger(expires) || expires * 1000 <= now) return false
-  const expected = Buffer.from(sign(config.password.value, parts[0]))
-  const actual = Buffer.from(parts[1])
+  const expected = Buffer.from(sign(config.password.value, parts.slice(0, -1).join(".")))
+  const actual = Buffer.from(parts.at(-1) ?? "")
   return actual.length === expected.length && timingSafeEqual(actual, expected)
 }
 

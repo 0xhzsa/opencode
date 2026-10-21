@@ -1,14 +1,94 @@
 import { expect } from "bun:test"
 import { RequestExecutor } from "@opencode/ai/route"
 import { Credential } from "@opencode/core/credential"
+import { Config } from "@opencode/core/config"
+import { Document, Info } from "@opencode/schema/config"
 import { Integration } from "@opencode/core/integration"
 import { Voice } from "@opencode/core/voice"
+import { VoiceCalls } from "@opencode/core/voice-calls"
 import { Effect, Layer } from "effect"
-import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/http"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { TestClock } from "effect/testing"
 import { testEffect } from "./lib/effect"
 
 const it = testEffect(Layer.empty)
+const voiceLayer = Voice.layer.pipe(Layer.provide(VoiceCalls.layer))
+
+const consoleValue = Credential.OAuth.make({
+  type: "oauth",
+  methodID: Integration.MethodID.make("device"),
+  access: "console-access",
+  refresh: "console-refresh",
+  expires: 1760000999_000,
+  metadata: { orgID: "org-team", orgName: "Team", accountID: "user-one", server: "https://opencode.ai/console" },
+})
+const offer: Voice.SessionInput = {
+  model: "gpt-live-1",
+  session: { instructions: "Hello", model: "ignored" },
+  transport: { type: "webrtc", sdp: "offer", dcid: 4 },
+}
+const consoleRoute: Voice.Route = { type: "console", workspace: { id: "org-team", name: "Team" } }
+
+function consoleFixture(options: { key?: boolean; console?: boolean; preference?: "key" | "console" } = {}) {
+  const state: { value: Credential.Value | undefined; status: number; fail: boolean } = {
+    value: options.console === false ? undefined : consoleValue,
+    status: 200,
+    fail: false,
+  }
+  const requests: HttpClientRequest.HttpClientRequest[] = []
+  const http = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.sync(() => {
+        requests.push(request)
+        return HttpClientResponse.fromWeb(
+          request,
+          state.status === 200
+            ? request.url.endsWith("/instructions")
+              ? Response.json({ ok: true })
+              : Response.json({
+                  session: { id: "call-one", secret: "not-returned" },
+                  transport: { sdp: "answer" },
+                  token: "not-returned",
+                })
+            : new Response("secret error body", { status: state.status }),
+        )
+      }),
+    ),
+  )
+  const dependencies = Layer.mergeAll(
+    http,
+    RequestExecutor.layer.pipe(Layer.provide(http)),
+    Config.testLayer(
+      options.preference
+        ? [
+            new Document({
+              type: "document",
+              info: Info.make({ experimental: { voice: { route: options.preference } } }),
+            }),
+          ]
+        : [],
+    ),
+    mockIntegration(
+      (id) =>
+        id === "opencode"
+          ? state.value
+            ? [credential("console", "oauth")]
+            : []
+          : id === "openai" && options.key
+            ? [credential("active", "key")]
+            : [],
+      (connection) =>
+        connection.type === "credential" && connection.id === "console"
+          ? state.fail
+            ? Effect.fail(new Integration.AuthorizationError({ cause: new Error("secret refresh failure") }))
+            : Effect.succeed(state.value)
+          : Effect.succeed(Credential.Key.make({ type: "key", key: "provider-key" })),
+    ),
+  )
+  const local = Voice.layer.pipe(Layer.provide(dependencies))
+  return { state, requests, local, layer: local.pipe(Layer.provide(VoiceCalls.layer)) }
+}
 
 const credential = (id: string, method: "key" | "oauth") => ({
   type: "credential" as const,
@@ -34,7 +114,7 @@ const mockIntegration = (
     revision: () => 0,
     get: (id) => Effect.succeed({ id, name: id, methods: [], connections: connections(id) }),
     connection: {
-      active: unused,
+      active: (id) => Effect.succeed(connections(id)[0]),
       resolve,
       key: unused,
       external: unused,
@@ -53,20 +133,28 @@ it.effect("uses the first key or env connection Integration lists and never a Ch
     const auths: string[] = []
     const call = (model: string, connections: Integration.Info["connections"]) =>
       Effect.flatMap(Voice.Service, (voice) =>
-        voice.session({
-          model,
-          transport:
-            model.startsWith("grok-") || model.startsWith("gemini-")
-              ? { type: "websocket" }
-              : { type: "webrtc", sdp: "v=0" },
-        }),
+        voice.session(
+          {
+            model,
+            transport:
+              model.startsWith("grok-") || model.startsWith("gemini-")
+                ? { type: "websocket" }
+                : { type: "webrtc", sdp: "v=0" },
+          },
+          "phone",
+        ),
       ).pipe(
         Effect.provide(
-          Voice.layer.pipe(
+          voiceLayer.pipe(
             Layer.provide(
-              Layer.merge(
+              Layer.mergeAll(
+                Config.testLayer(),
+                Layer.succeed(
+                  HttpClient.HttpClient,
+                  HttpClient.make(() => Effect.die("Unexpected Console request")),
+                ),
                 mockIntegration(
-                  () => connections,
+                  (id) => (id === "opencode" ? [] : connections),
                   (connection) =>
                     connection.type === "credential" && connection.method === "oauth"
                       ? Effect.die("a ChatGPT sign-in was resolved")
@@ -108,13 +196,13 @@ it.effect("uses the first key or env connection Integration lists and never a Ch
     const grok = yield* call("grok-voice-3.0", [{ type: "env", name: "XAI_API_KEY" }])
     const gemini = yield* call("gemini-3.8-live", [{ type: "env", name: "GEMINI_API_KEY" }])
     expect(auths).toEqual(["Bearer sk-active", "Bearer sk-stored", "Bearer xai-env-key", "gemini-env-key"])
-    expect(grok).toEqual({
+    expect(grok.transport).toEqual({
       type: "websocket",
       url: "wss://api.x.ai/v1/realtime?model=grok-voice-3.0",
       token: "ek_xai",
       expiresAt: 1760000999,
     })
-    expect(gemini).toEqual({
+    expect(gemini.transport).toEqual({
       type: "websocket",
       url: "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained",
       token: "auth_tokens/ek_gemini",
@@ -136,9 +224,14 @@ it.effect("lists voice models with availability and default without resolving cr
     const list = (connections: Partial<Record<string, Integration.Info["connections"]>>) =>
       Effect.flatMap(Voice.Service, (voice) => voice.models()).pipe(
         Effect.provide(
-          Voice.layer.pipe(
+          voiceLayer.pipe(
             Layer.provide(
-              Layer.merge(
+              Layer.mergeAll(
+                Config.testLayer(),
+                Layer.succeed(
+                  HttpClient.HttpClient,
+                  HttpClient.make(() => Effect.die("Unexpected Console request")),
+                ),
                 mockIntegration((id) => connections[id] ?? []),
                 Layer.mock(RequestExecutor.Service, {}),
               ),
@@ -153,7 +246,7 @@ it.effect("lists voice models with availability and default without resolving cr
         xai: [{ type: "env", name: "XAI_API_KEY" }],
         google: [credential("gemini", "key")],
       }),
-    ).toEqual({
+    ).toMatchObject({
       models: [
         { model: "gpt-live-1", provider: "openai", transports: ["webrtc"], available: false },
         { model: "gpt-realtime-2.1", provider: "openai", transports: ["webrtc", "websocket"], available: false },
@@ -164,7 +257,7 @@ it.effect("lists voice models with availability and default without resolving cr
     })
 
     const none = yield* list({ openai: [credential("chatgpt", "oauth")] })
-    expect(none).toEqual({
+    expect(none).toMatchObject({
       models: [
         { model: "gpt-live-1", provider: "openai", transports: ["webrtc"], available: false },
         { model: "gpt-realtime-2.1", provider: "openai", transports: ["webrtc", "websocket"], available: false },
@@ -175,3 +268,160 @@ it.effect("lists voice models with availability and default without resolving cr
     expect("default" in none).toBe(false)
   }),
 )
+
+it.effect("chooses key before Console, honors explicit payer selection, and explains unavailable routes", () =>
+  Effect.gen(function* () {
+    for (const scenario of [
+      { key: true, expected: "key" },
+      { key: false, expected: "console" },
+      { key: true, preference: "console" as const, expected: "console" },
+      { key: false, preference: "key" as const, expected: undefined },
+      { key: true, console: false, preference: "console" as const, expected: undefined },
+      { key: false, console: false, expected: undefined },
+    ] as const) {
+      const fixture = consoleFixture(scenario)
+      yield* Effect.gen(function* () {
+        const voice = yield* Voice.Service
+        const models = yield* voice.models()
+        expect(models.models[0].route?.type).toBe(scenario.expected)
+        expect(models.models[0].available).toBe(Boolean(scenario.expected))
+        if (!scenario.expected) {
+          expect(models.models[0].unavailableReason).toBeString()
+          expect((yield* voice.session(offer, "phone").pipe(Effect.flip))._tag).toBe("Voice.UnavailableError")
+          expect(fixture.requests).toHaveLength(0)
+          return
+        }
+        const call = yield* voice.session(offer, "phone")
+        expect(call.route.type).toBe(scenario.expected)
+        expect(fixture.requests[0].url).toBe(
+          scenario.expected === "key"
+            ? "https://api.openai.com/v1/live/sessions"
+            : "https://opencode.ai/inference/openai/v1/live/sessions",
+        )
+      }).pipe(Effect.provide(fixture.layer))
+    }
+  }),
+)
+
+it.effect("brokers SDP and instructions with the original workspace and pairing, without exposing credentials", () => {
+  const fixture = consoleFixture()
+  return Effect.gen(function* () {
+    const voice = yield* Voice.Service
+    const models = yield* voice.models()
+    expect(models.models[0].route).toEqual(consoleRoute)
+    expect(models.models[1].available).toBe(false)
+    const call = yield* voice.session({ ...offer, route: consoleRoute }, "phone-one")
+    expect(call).toEqual({
+      transport: { type: "webrtc", sdp: "answer" },
+      route: consoleRoute,
+      call: { id: "call-one" },
+    })
+    expect(fixture.requests[0].headers.authorization).toBe("Bearer console-access")
+    expect(fixture.requests[0].headers["x-opencode-org-id"]).toBe("org-team")
+    const request = yield* HttpClientRequest.toWeb(fixture.requests[0])
+    expect(yield* Effect.promise(() => request.json())).toEqual({
+      session: { instructions: "Hello", model: "gpt-live-1" },
+      transport: offer.transport,
+    })
+    const update = { id: "call-one", instructions: "New instructions" }
+    expect((yield* voice.instructions(update, "phone-two").pipe(Effect.flip))._tag).toBe("Voice.ForbiddenError")
+    expect((yield* voice.instructions({ ...update, id: "missing" }, "phone-one").pipe(Effect.flip))._tag).toBe(
+      "Voice.ForbiddenError",
+    )
+    expect(fixture.requests).toHaveLength(1)
+    fixture.state.value = { ...consoleValue, access: "rotated-access" }
+    yield* voice.instructions(update, "phone-one")
+    expect(fixture.requests[1].url).toBe("https://opencode.ai/inference/openai/v1/live/sessions/call-one/instructions")
+    expect(fixture.requests[1].headers.authorization).toBe("Bearer rotated-access")
+    expect(fixture.requests[1].headers["x-opencode-org-id"]).toBe("org-team")
+    const instructions = yield* HttpClientRequest.toWeb(fixture.requests[1])
+    expect(yield* Effect.promise(() => instructions.json())).toEqual({ instructions: update.instructions })
+    yield* TestClock.adjust("24 hours")
+    expect((yield* voice.instructions(update, "phone-one").pipe(Effect.flip))._tag).toBe("Voice.ForbiddenError")
+  }).pipe(Effect.provide(fixture.layer))
+})
+
+it.effect("never falls back after provider or Console refusal, refresh failure, or an advertised payer change", () =>
+  Effect.gen(function* () {
+    for (const preference of ["key", "console"] as const) {
+      const fixture = consoleFixture({ key: true, preference })
+      fixture.state.status = 403
+      yield* Effect.gen(function* () {
+        const voice = yield* Voice.Service
+        const error = yield* voice.session(offer, "phone").pipe(Effect.flip)
+        expect(error._tag).toBe("Voice.UnavailableError")
+        expect(fixture.requests).toHaveLength(1)
+        expect(fixture.requests[0].headers.authorization).toBe(
+          preference === "key" ? "Bearer provider-key" : "Bearer console-access",
+        )
+        if (preference === "console") expect(error.message).not.toContain("secret error body")
+      }).pipe(Effect.provide(fixture.layer))
+    }
+    const fixture = consoleFixture({ key: true, preference: "console" })
+    fixture.state.fail = true
+    yield* Effect.gen(function* () {
+      const voice = yield* Voice.Service
+      expect((yield* voice.session(offer, "phone").pipe(Effect.flip)).message).toBe(
+        "Reconnect OpenCode Console on the server",
+      )
+      expect((yield* voice.models()).models[0].unavailableReason).toContain("Reconnect")
+      fixture.state.fail = false
+      expect((yield* voice.session({ ...offer, route: { type: "key" } }, "phone").pipe(Effect.flip)).message).toContain(
+        "payer changed",
+      )
+      expect(
+        (yield* voice
+          .session({ ...offer, route: { type: "console", workspace: { id: "other", name: "Other" } } }, "phone")
+          .pipe(Effect.flip)).message,
+      ).toContain("payer changed")
+      expect(fixture.requests).toHaveLength(0)
+    }).pipe(Effect.provide(fixture.layer))
+  }),
+)
+
+it.effect("rejects missing workspaces and changed or removed call credentials", () => {
+  const fixture = consoleFixture()
+  return Effect.gen(function* () {
+    const voice = yield* Voice.Service
+    yield* voice.session(offer, "phone")
+    for (const metadata of [
+      { ...consoleValue.metadata, orgID: "other" },
+      { ...consoleValue.metadata, accountID: "other" },
+      { ...consoleValue.metadata, server: "https://other.example/console" },
+    ]) {
+      fixture.state.value = { ...consoleValue, metadata }
+      expect(
+        (yield* voice.instructions({ id: "call-one", instructions: "Hello" }, "phone").pipe(Effect.flip)).message,
+      ).toContain("connection changed")
+    }
+    fixture.state.value = { ...consoleValue, metadata: {} }
+    expect((yield* voice.models()).models[0].unavailableReason).toContain("workspace")
+    fixture.state.value = undefined
+    expect((yield* voice.instructions({ id: "call-one", instructions: "Hello" }, "phone").pipe(Effect.flip))._tag).toBe(
+      "Voice.UnavailableError",
+    )
+    expect(fixture.requests).toHaveLength(1)
+  }).pipe(Effect.provide(fixture.layer))
+})
+
+it.effect("rejects WebSocket Console calls before sending anything", () => {
+  const fixture = consoleFixture()
+  return Effect.gen(function* () {
+    const voice = yield* Voice.Service
+    expect((yield* voice.session({ ...offer, transport: { type: "websocket" } }, "phone").pipe(Effect.flip))._tag).toBe(
+      "Voice.InvalidRequestError",
+    )
+    expect(fixture.requests).toHaveLength(0)
+  }).pipe(Effect.provide(fixture.layer))
+})
+
+it.effect("retains call ownership when location services are rebuilt", () => {
+  const fixture = consoleFixture()
+  return Effect.gen(function* () {
+    yield* Effect.flatMap(Voice.Service, (voice) => voice.session(offer, "phone")).pipe(Effect.provide(fixture.local))
+    yield* Effect.flatMap(Voice.Service, (voice) =>
+      voice.instructions({ id: "call-one", instructions: "Updated" }, "phone"),
+    ).pipe(Effect.provide(Layer.fresh(fixture.local)))
+    expect(fixture.requests).toHaveLength(2)
+  }).pipe(Effect.provide(VoiceCalls.layer))
+})

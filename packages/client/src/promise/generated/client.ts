@@ -112,6 +112,8 @@ import type {
   VoiceModelsOutput,
   VoiceSessionInput,
   VoiceSessionOutput,
+  VoiceInstructionsInput,
+  VoiceInstructionsOutput,
   ProviderListInput,
   ProviderListOutput,
   ProviderGetInput,
@@ -1179,9 +1181,26 @@ export function make(options: ClientOptions) {
           {
             method: "POST",
             path: `/api/experimental/voice/session`,
-            body: { model: input["model"], session: input["session"], transport: input["transport"] },
+            body: {
+              model: input["model"],
+              session: input["session"],
+              transport: input["transport"],
+              route: input["route"],
+            },
             successStatus: 200,
-            declaredStatuses: [400, 401, 404, 503],
+            declaredStatuses: [400, 401, 403, 404, 503],
+            empty: false,
+          },
+          requestOptions,
+        ).then((value) => value.data),
+      instructions: (input: VoiceInstructionsInput, requestOptions?: RequestOptions) =>
+        request<{ readonly data: VoiceInstructionsOutput }>(
+          {
+            method: "POST",
+            path: `/api/experimental/voice/session/${encodeURIComponent(input.id)}/instructions`,
+            body: { instructions: input["instructions"] },
+            successStatus: 200,
+            declaredStatuses: [400, 401, 403, 404, 503],
             empty: false,
           },
           requestOptions,

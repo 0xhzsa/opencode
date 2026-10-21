@@ -5,6 +5,14 @@ import { NonNegativeInt, optional } from "../schema.js"
 import { ConfigPolicy } from "./policy.js"
 
 export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
+  voice: Schema.Struct({
+    route: Schema.Literals(["key", "console"]).pipe(optional),
+  })
+    .pipe(optional)
+    .annotate({
+      description:
+        "Voice payer. When omitted, use a provider key first, otherwise Console for GPT-Live. An explicit route never falls back to another payer.",
+    }),
   portable_shell_scanner: Schema.Boolean.pipe(optional).annotate({
     description: "Enable the experimental portable shell permission scanner. Defaults to false.",
   }),
