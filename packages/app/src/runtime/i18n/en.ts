@@ -159,6 +159,8 @@ export const dict = {
   "provider.connect.models.title": "Connected to {{provider}}",
   "provider.connect.models.description": "Choose a model to start with. You can switch models anytime.",
   "provider.connect.models.available": "Available models",
+  "provider.connect.models.noGo": "No Go subscription on this account",
+  "provider.connect.models.subscribe": "Subscribe",
   "provider.connect.chatgptWelcome.title": "ChatGPT connected",
   "provider.connect.chatgptWelcome.description": "Eligible requests in OpenCode can use your ChatGPT plan.",
   "provider.connect.chatgptWelcome.usage": "Manage usage in ChatGPT settings",

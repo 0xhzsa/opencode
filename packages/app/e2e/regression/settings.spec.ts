@@ -1179,6 +1179,62 @@ test("providers: connecting OpenCode Go keeps the Console row in place", async (
   await expect(connected).not.toHaveAttribute("data-flashed")
 })
 
+test("providers: signing in to OpenCode Go without a subscription says why there are no Go models", async ({
+  page,
+  context,
+}) => {
+  await context.route("https://auth.example.test/**", (route) => route.fulfill({ body: "Sign in" }))
+  await context.route("https://opencode.ai/go", (route) => route.fulfill({ body: "OpenCode Go" }))
+
+  // The Console only returns `opencode-go` for accounts with a Go subscription; this one has none.
+  const state = { authorized: false }
+  const free = { "big-pickle": { id: "big-pickle", name: "Big Pickle", cost: { input: 0, output: 0 } } }
+
+  const { settings } = await open(page, {
+    provider: () =>
+      state.authorized
+        ? {
+            all: [{ id: "opencode", integrationID: "opencode", name: "New User / OpenCode", models: free }],
+            connected: ["opencode"],
+            default: {},
+          }
+        : NO_PROVIDER,
+    integrations: () => [
+      {
+        id: "opencode",
+        name: "OpenCode Console",
+        methods: [{ id: "device", type: "oauth", label: "OpenCode Console account" }],
+        connections: state.authorized
+          ? [{ type: "credential", id: "cred_console", label: "New User", method: "oauth" }]
+          : [],
+      },
+      { id: "opencode-go", name: "OpenCode Go", methods: [{ type: "key" }], connections: [] },
+    ],
+    onIntegrationOAuth: () => ({ url: "https://auth.example.test/device?user_code=GOGO-1234" }),
+    onIntegrationOAuthStatus: () => {
+      state.authorized = true
+
+      return "complete"
+    },
+  })
+
+  await settings.getByRole("tab", { name: "Providers", exact: true }).click()
+  await settings
+    .locator(".settings-provider-row", { hasText: "OpenCode Go" })
+    .getByRole("button", { name: "Connect", exact: true })
+    .click()
+  const signIn = page.waitForEvent("popup")
+  await page.getByRole("button", { name: "Continue in the browser", exact: true }).click()
+  await signIn
+
+  const connected = page.getByRole("dialog", { name: "Connected to OpenCode Go" })
+  await expect(connected.getByRole("radio", { name: "Big Pickle", exact: true })).toBeVisible()
+  await expect(connected.getByText("No Go subscription on this account", { exact: true })).toBeVisible()
+  const subscribe = page.waitForEvent("popup")
+  await connected.getByRole("button", { name: "Subscribe", exact: true }).click()
+  await expect(await subscribe).toHaveURL("https://opencode.ai/go")
+})
+
 test("providers: switching Console accounts keeps the list until the new workspace loads", async ({ page }) => {
   const accounts = [
     { type: "credential", id: "cred_clara", label: "Clara", method: "oauth" },

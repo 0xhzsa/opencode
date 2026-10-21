@@ -61,6 +61,8 @@ import "./models.css"
 
 const CUSTOM_ID = "_custom"
 
+const GO_URL = "https://opencode.ai/go"
+
 type IntegrationForm = NonNullable<ProviderConnectMethod["form"]>[number]
 
 type StringForm = Extract<IntegrationForm, { type: "string" }>
@@ -514,11 +516,17 @@ function ProviderConnection(props: {
       }
 
       dialog.close()
+      const noGo = props.provider === "opencode-go" && noGoSubscription()
       showToast({
         variant: "success",
         icon: "circle-check",
         title: language.t("provider.connect.toast.connected.title", { provider: provider().name }),
-        description: language.t("provider.connect.toast.connected.description", { provider: provider().name }),
+        description: noGo
+          ? language.t("provider.connect.models.noGo")
+          : language.t("provider.connect.toast.connected.description", { provider: provider().name }),
+        actions: noGo
+          ? [{ label: language.t("provider.connect.models.subscribe"), onClick: subscribeToGo }]
+          : undefined,
       })
     },
   })
@@ -555,6 +563,12 @@ function ProviderConnection(props: {
   })
 
   const managedProviders = createMemo(() => (isConsole ? consoleProviderGroup(connectionProviders()) : undefined))
+
+  // The Console only grants `opencode-go` to accounts with a Go subscription, so a signed-in account without one gets no
+  // Go models and nothing else would say why.
+  const noGoSubscription = () => isConsole && !connectionProviders().some((provider) => provider.id === "opencode-go")
+
+  const subscribeToGo = () => platform.openExternal(GO_URL)
 
   // The server loads the Console workspace's providers after the grant lands, so the first refresh
   // can still show only the free catalog. Poll briefly for the workspace providers before moving on.
@@ -1501,6 +1515,17 @@ function ProviderConnection(props: {
               </div>
             </Show>
           </div>
+          <Show when={noGoSubscription()}>
+            <p
+              data-component="no-go-subscription"
+              class="flex flex-wrap items-center gap-x-2 pt-3 text-[13px] leading-5 text-v2-text-text-muted"
+            >
+              <span>{language.t("provider.connect.models.noGo")}</span>
+              <Button variant="ghost-muted" onClick={subscribeToGo}>
+                {language.t("provider.connect.models.subscribe")}
+              </Button>
+            </p>
+          </Show>
         </div>
         <div
           data-component="first-provider-model-footer"
