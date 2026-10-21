@@ -17,6 +17,40 @@ const grid = (value: number) => Math.round(value * 64) / 64
 
 const softEdge = 28
 
+// How a streaming row's newest line lands. Smooth, as shipped, scrolls each line in under a long feather; the others
+// trade some of that smoothness for less time masked.
+export const streamingEdge = motionTuning.choice("timeline.streamingEdge", {
+  label: "Streaming edge",
+  group: "Timeline",
+  value: "smooth",
+  labels: { smooth: "Smooth", snappy: "Snappier", lines: "Instant lines", adaptive: "Adaptive" },
+})
+
+type Edge = { catchUp: number; feather: number; floor: number; fadeOut: number; spring: number }
+
+const edges = {
+  smooth: { catchUp: 1, feather: softEdge, floor: 18, fadeOut: 1.8, spring: 1 },
+  snappy: { catchUp: 2.2, feather: 16, floor: 10, fadeOut: 3, spring: 0.6 },
+  lines: { catchUp: 6, feather: 10, floor: 0, fadeOut: 6, spring: 0.3 },
+} satisfies Record<string, Edge>
+
+/** The streaming edge for a row whose backlog has averaged `pace` px: Adaptive goes from Smooth to Instant lines as a
+ * fast stream builds a backlog past a line or two. */
+export function streamingEdgeFor(pace: number, style = streamingEdge()): Edge {
+  if (style !== "adaptive") return edges[style]
+  const t = Math.max(0, Math.min(1, (pace - 20) / 60))
+  if (t === 0) return edges.smooth
+  if (t === 1) return edges.lines
+  const mix = (a: number, b: number) => a + (b - a) * t
+  return {
+    catchUp: mix(edges.smooth.catchUp, edges.lines.catchUp),
+    feather: mix(edges.smooth.feather, edges.lines.feather),
+    floor: mix(edges.smooth.floor, edges.lines.floor),
+    fadeOut: mix(edges.smooth.fadeOut, edges.lines.fadeOut),
+    spring: mix(edges.smooth.spring, edges.lines.spring),
+  }
+}
+
 export const workingHandoffDuration = 0.34
 
 const ease = (t: number) => t * t * (3 - 2 * t)
@@ -94,6 +128,8 @@ type Growth = {
   freshRow: boolean
   streaming: boolean
   cruiseStep: number
+  /** The row's backlog, averaged over about a third of a second: how far a stream runs ahead of its growth. */
+  pace: number
   entering: boolean
   enterSpan: number
   enterProgress: number
@@ -131,7 +167,10 @@ export function createRowGrowth(input: {
       lastTake = 0
       return
     }
-    spring.tune(growthSpring())
+    const streamingRow = [...growths.values()].find((growth) => growth.streaming)
+    const streamEdge = streamingRow ? streamingEdgeFor(streamingRow.pace) : undefined
+    const tuned = growthSpring()
+    spring.tune(streamEdge ? { ...tuned, duration: tuned.duration * streamEdge.spring } : tuned)
     const before = grid(spring.value)
     const beforeRaw = spring.value
     const nextValue = spring.step(dt)
@@ -168,6 +207,8 @@ export function createRowGrowth(input: {
         return
       }
       const slowWorking = input.movesWorking?.(key) ?? false
+      if (growth.streaming) growth.pace += (rem - growth.pace) * Math.min(1, dt * 3)
+      const edge = growth.streaming ? streamingEdgeFor(growth.pace) : edges.smooth
       if (growth.freshRow) {
         growth.freshRow = false
         lastTake = 0
@@ -186,10 +227,13 @@ export function createRowGrowth(input: {
       const baseCap = (slowWorking ? 7.5 : lastTake < 7.5 / scale ? 11.5 : fastCap) / scale
       const targetCap = growth.streaming
         ? rem <= 36
-          ? Math.max(1.25 / scale, Math.min(baseCap, (rem * 0.085 + 0.65) / scale))
-          : Math.min(baseCap, (3.71 + (rem - 36) * 0.14) / scale)
+          ? Math.max(1.25 / scale, Math.min(baseCap, ((rem * 0.085 + 0.65) * edge.catchUp) / scale))
+          : Math.min(baseCap, ((3.71 + (rem - 36) * 0.14) * edge.catchUp) / scale)
         : baseCap
-      const rampUp = lastTake > 0 ? Math.min(lastTake * 2.2, lastTake + (2.8 * dtFactor) / scale) : startStep
+      const rampUp =
+        lastTake > 0
+          ? Math.min(lastTake * 2.2, lastTake + (2.8 * Math.min(3, edge.catchUp) * dtFactor) / scale)
+          : startStep
       const rampDown = lastTake > targetCap ? Math.max(targetCap, lastTake - (3.0 * dtFactor) / scale) : targetCap
       let maxTake = Math.max(
         growth.streaming && lastTake > 0 ? Math.min(targetCap, 1.15 / scale) : startStep,
@@ -262,11 +306,11 @@ export function createRowGrowth(input: {
             paintEdge(wrapper, growth, 0)
           } else {
             const leftToGrow = Math.max(0, growth.target - shown)
-            const wantFade = Math.min(softEdge, Math.max(growth.streaming ? 18 : 0, leftToGrow * 1.5))
+            const wantFade = Math.min(edge.feather, Math.max(growth.streaming ? edge.floor : 0, leftToGrow * 1.5))
             growth.maskValue =
               wantFade >= growth.maskValue
                 ? Math.min(wantFade, growth.maskValue + 5)
-                : Math.max(wantFade, growth.maskValue - 1.8)
+                : Math.max(wantFade, growth.maskValue - edge.fadeOut)
             paintEdge(wrapper, growth, Math.min(shown, growth.maskValue))
           }
           if (growth.entering) paintArrival(wrapper, growth, shown)
@@ -391,11 +435,12 @@ export function createRowGrowth(input: {
         value: from,
         target: to,
         opaque: Math.max(0, from),
-        maskValue: streaming ? 16 : Math.min(softEdge, rem),
+        maskValue: streaming ? Math.min(16, streamingEdgeFor(rem).feather) : Math.min(softEdge, rem),
         maskPx: 0,
         freshRow: true,
         streaming,
         cruiseStep: 0,
+        pace: rem,
         entering: entering && from === 0,
         enterSpan: Math.min(28, Math.max(12, to)),
         enterProgress: 0,
