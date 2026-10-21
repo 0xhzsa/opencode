@@ -92,7 +92,7 @@ function DialogConnectedModels(props: {
   const noGoSubscription = createMemo(() => {
     const scoped = props.providerID ? providers().get(props.providerID) : undefined
     if (props.providerID && scoped?.integrationID !== "opencode" && props.providerID !== "opencode") return false
-    if (providers().has("opencode-go")) return false
+    if (models().some((model) => model.providerID === "opencode-go")) return false
     const consoleIntegration = data.location.integration.list(location.ref)?.find((item) => item.id === "opencode")
     const active = consoleIntegration ? credentialConnections(consoleIntegration)[0] : undefined
     return Boolean(active && !active.status)

@@ -1194,7 +1194,11 @@ test("providers: signing in to OpenCode Go without a subscription says why there
     provider: () =>
       state.authorized
         ? {
-            all: [{ id: "opencode", integrationID: "opencode", name: "New User / OpenCode", models: free }],
+            // The catalog still lists OpenCode Go, unconnected and without models.
+            all: [
+              { id: "opencode", integrationID: "opencode", name: "New User / OpenCode", models: free },
+              { id: "opencode-go", name: "OpenCode Go", models: {} },
+            ],
             connected: ["opencode"],
             default: {},
           }

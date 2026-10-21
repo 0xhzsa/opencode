@@ -566,7 +566,8 @@ function ProviderConnection(props: {
 
   // The Console only grants `opencode-go` to accounts with a Go subscription, so a signed-in account without one gets no
   // Go models and nothing else would say why.
-  const noGoSubscription = () => isConsole && !connectionProviders().some((provider) => provider.id === "opencode-go")
+  const noGoSubscription = () =>
+    isConsole && !(data.location.model.list(location()) ?? []).some((model) => model.providerID === "opencode-go")
 
   const subscribeToGo = () => platform.openExternal(GO_URL)
 
@@ -1449,6 +1450,17 @@ function ProviderConnection(props: {
         <p class="shrink-0 pb-5 text-[13px] leading-5 text-v2-text-text-muted">
           {language.t("provider.connect.models.description")}
         </p>
+        <Show when={noGoSubscription()}>
+          <p
+            data-component="no-go-subscription"
+            class="-mt-3 flex shrink-0 flex-wrap items-center gap-x-2 pb-4 text-[13px] leading-5 text-v2-text-text-muted"
+          >
+            <span>{language.t("provider.connect.models.noGo")}</span>
+            <Button variant="ghost-muted" onClick={subscribeToGo}>
+              {language.t("provider.connect.models.subscribe")}
+            </Button>
+          </p>
+        </Show>
         <div
           data-component="first-provider-model-scroll"
           class="settings-panel settings-models min-h-0 flex-1 overflow-y-auto pb-4"
@@ -1515,17 +1527,6 @@ function ProviderConnection(props: {
               </div>
             </Show>
           </div>
-          <Show when={noGoSubscription()}>
-            <p
-              data-component="no-go-subscription"
-              class="flex flex-wrap items-center gap-x-2 pt-3 text-[13px] leading-5 text-v2-text-text-muted"
-            >
-              <span>{language.t("provider.connect.models.noGo")}</span>
-              <Button variant="ghost-muted" onClick={subscribeToGo}>
-                {language.t("provider.connect.models.subscribe")}
-              </Button>
-            </p>
-          </Show>
         </div>
         <div
           data-component="first-provider-model-footer"
