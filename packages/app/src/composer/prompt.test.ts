@@ -1,10 +1,40 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionMessageUser } from "@opencode/client/promise"
-import { extractPromptContext, extractPromptFromMessage } from "./prompt"
+import { extractPromptContext, extractPromptFromMessage, hydratePromptMessage } from "./prompt"
 import { buildPromptRequest } from "./request"
 import { contextItemKey } from "./schema"
 
 describe("extractPromptFromMessage", () => {
+  test("restores original attachment bytes before editing or resubmitting a projected prompt", async () => {
+    const original: SessionMessageUser = {
+      id: "msg_original", type: "user", text: "keep these", time: { created: 1 },
+      files: [
+        { name: "image.png", mime: "image/png", data: "AQID", source: { type: "inline" } },
+        { name: "note.txt", mime: "text/plain", data: "YWJj", source: { type: "inline" } },
+        { name: "empty.txt", mime: "text/plain", data: "", source: { type: "inline" } },
+      ],
+    }
+    const projected: SessionMessageUser = {
+      ...original,
+      files: original.files!.map((file, index) => ({
+        ...file, data: "", source: { type: "uri", uri: `opencode-attachment:ses_test/msg_original/${index}` },
+      })),
+    }
+    expect(() => extractPromptFromMessage(projected)).toThrow("Resolve attachments")
+    const restored = await hydratePromptMessage(projected, async (id) => {
+      expect(id).toBe("msg_original")
+      return original
+    })
+    expect(extractPromptFromMessage(restored)).toMatchObject([
+      { type: "text", content: "keep these" },
+      { type: "image", filename: "image.png", blob: { url: "data:image/png;base64,AQID" } },
+      { type: "image", filename: "note.txt", blob: { url: "data:text/plain;base64,YWJj" } },
+      { type: "image", filename: "empty.txt", blob: { url: "data:text/plain;base64," } },
+    ])
+    await expect(hydratePromptMessage(projected, async () => undefined)).rejects.toThrow("unavailable")
+    await expect(hydratePromptMessage(projected, async () => ({ ...original, files: [] }))).rejects.toThrow("unavailable")
+    await expect(hydratePromptMessage(projected, async () => projected)).rejects.toThrow("unavailable")
+  })
   test("restores a renamed session and preserves file offsets when resubmitted", () => {
     const id = "ses_0123456789abcdefghijklmnop"
     const text = `@session:${id} @a.ts`

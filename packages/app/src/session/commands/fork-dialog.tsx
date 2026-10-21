@@ -12,7 +12,7 @@ import { showToast } from "@/shell/notifications/toast"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useServerSDK } from "@/runtime/server/client"
 import { base64Encode } from "@opencode/util/encode"
-import { extractPromptContext, extractPromptFromMessage } from "@/composer/prompt"
+import { extractPromptContext, extractPromptFromMessage, hydratePromptMessage } from "@/composer/prompt"
 import { useWorkspaceLocation } from "@/workspaces/location"
 import { useServer } from "@/runtime/server/current"
 import { sessionHref } from "@/shell/routes/session"
@@ -60,7 +60,7 @@ export const DialogFork: Component = () => {
     return result.reverse()
   })
 
-  const handleSelect = (item: ForkableMessage | undefined) => {
+  const handleSelect = async (item: ForkableMessage | undefined) => {
     if (!item) return
 
     const sessionID = params.id
@@ -69,15 +69,23 @@ export const DialogFork: Component = () => {
     const message = data.session.message.get(sessionID, item.id)
 
     if (message?.type !== "user") return
+    const directory = location().directory
+    const original = await hydratePromptMessage(message, (messageID) =>
+      serverSDK.api.session.message.get({ sessionID, messageID }),
+    ).catch(() => {
+      showToast({ title: language.t("common.requestFailed") })
+    })
 
-    const restored = extractPromptFromMessage(message, {
-      directory: location().directory,
+    if (!original) return
+
+    const restored = extractPromptFromMessage(original, {
+      directory,
       attachmentName: language.t("common.attachment"),
       sessionTitle: (id) => data.session.get(id)?.title,
     })
 
-    const context = extractPromptContext(message, { directory: location().directory })
-    const dir = base64Encode(location().directory)
+    const context = extractPromptContext(original, { directory })
+    const dir = base64Encode(directory)
 
     serverSDK.api.session
       .fork({ sessionID, before: item.id })

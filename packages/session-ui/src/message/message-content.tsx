@@ -47,6 +47,7 @@ import type {
 import type { SessionUserActions, SessionUserAttachmentReference, SessionUserComment } from "../actions"
 import { agentLabel } from "./agent-label"
 import { attached, typeLabel } from "../components/message-file"
+import { AttachmentReference } from "@opencode/client/attachment-reference"
 
 export async function writeClipboard(text: string): Promise<boolean> {
   const body = typeof document === "undefined" ? undefined : document.body
@@ -273,7 +274,6 @@ export function CurrentUserMessageDisplay(props: {
   run?: UserRun
 }) {
   const data = useData()
-  const dialog = useDialog()
   const i18n = useI18n()
 
   const [state, setState] = createStore({ copied: false, reverting: false, updating: false })
@@ -460,44 +460,7 @@ export function CurrentUserMessageDisplay(props: {
           )}
         </For>
         <Index each={attachments()}>
-          {(file) => {
-            const url = () => {
-              const source = file().source
-
-              return source.type === "uri" ? source.uri : `data:${file().mime};base64,${file().data}`
-            }
-
-            const name = () => file().name ?? i18n.t("ui.message.attachment.alt")
-            const image = () => file().mime.startsWith("image/")
-
-            return (
-              <Show
-                when={!image()}
-                fallback={
-                  <div
-                    data-slot="user-message-attachment"
-                    data-type="image"
-                    data-clickable="true"
-                    onClick={(event) => {
-                      const origin = event.currentTarget
-                      dialog.show(() => <ImagePreview src={url()} alt={name()} origin={origin} />)
-                    }}
-                  >
-                    <img data-slot="user-message-attachment-image" src={url()} alt={name()} />
-                  </div>
-                }
-              >
-                <AttachmentCard
-                  title={getFilename(name())}
-                  hover={name()}
-                  clickable={!!props.actions?.openAttachment}
-                  onClick={() => props.actions?.openAttachment?.(file())}
-                >
-                  {typeLabel(name(), file().mime, i18n.t("ui.common.file"))}
-                </AttachmentCard>
-              </Show>
-            )
-          }}
+          {(file) => <UserMessageAttachment file={file()} actions={props.actions} />}
         </Index>
       </div>
     </Show>
@@ -572,6 +535,80 @@ export function CurrentUserMessageDisplay(props: {
         </div>
       </Show>
     </div>
+  )
+}
+
+function UserMessageAttachment(props: { file: PromptFileAttachment; actions?: SessionUserActions }) {
+  const data = useData()
+  const dialog = useDialog()
+  const i18n = useI18n()
+  const [state, setState] = createStore<{ source?: string; file?: PromptFileAttachment }>({})
+  const pending = new Map<PromptFileAttachment, Promise<PromptFileAttachment>>()
+  const lifetime = { active: true }
+  onCleanup(() => { lifetime.active = false })
+  const source = () => props.file.source.type === "uri" ? props.file.source.uri : undefined
+  const file = () => AttachmentReference.is(props.file)
+    ? state.source === source() ? state.file : undefined
+    : props.file
+  const url = () => {
+    const value = file()
+    return value && (value.source.type === "uri" ? value.source.uri : `data:${value.mime};base64,${value.data}`)
+  }
+  const name = () => props.file.name ?? i18n.t("ui.message.attachment.alt")
+  const load = () => {
+    const loaded = file()
+    if (loaded) return Promise.resolve(loaded)
+    const input = props.file
+    const existing = pending.get(input)
+    if (existing) return existing
+    if (!data.readAttachment) return Promise.reject(new Error("Attachment reader is unavailable"))
+    const key = source()
+    const request = data.readAttachment(input).then((value) => {
+      if (lifetime.active && props.file === input) setState({ source: key, file: value })
+      return value
+    }).finally(() => pending.delete(input))
+    pending.set(input, request)
+    return request
+  }
+
+  return (
+    <Show when={!props.file.mime.startsWith("image/")} fallback={
+      <div
+        data-slot="user-message-attachment"
+        data-type="image"
+        data-clickable="true"
+        ref={(element) => createEffect(() => {
+          if (!AttachmentReference.is(props.file)) return
+          const observer = new IntersectionObserver((entries) => {
+            if (!entries.some((entry) => entry.isIntersecting)) return
+            observer.disconnect()
+            void load().catch(() => undefined)
+          }, { rootMargin: "200px" })
+          observer.observe(element)
+          onCleanup(() => observer.disconnect())
+        })}
+        onClick={(event) => {
+          const origin = event.currentTarget
+          const input = props.file
+          void load().then((value) => {
+            if (props.file !== input || !origin.isConnected) return
+            const src = value.source.type === "uri" ? value.source.uri : `data:${value.mime};base64,${value.data}`
+            dialog.show(() => <ImagePreview src={src} alt={name()} origin={origin} />)
+          }).catch(() => undefined)
+        }}
+      >
+        <img data-slot="user-message-attachment-image" src={url()} alt={name()} />
+      </div>
+    }>
+      <AttachmentCard
+        title={getFilename(name())}
+        hover={name()}
+        clickable={!!props.actions?.openAttachment}
+        onClick={() => { void load().then((value) => props.actions?.openAttachment?.(value)).catch(() => undefined) }}
+      >
+        {typeLabel(name(), props.file.mime, i18n.t("ui.common.file"))}
+      </AttachmentCard>
+    </Show>
   )
 }
 

@@ -5,7 +5,7 @@ import { useServerSDK } from "@/runtime/server/client"
 import { useWorkspaceLocation } from "@/workspaces/location"
 import { useLanguage } from "@/runtime/i18n/language"
 
-import { extractPromptContext, extractPromptFromMessage } from "@/composer/prompt"
+import { extractPromptContext, extractPromptFromMessage, hydratePromptMessage } from "@/composer/prompt"
 import { promptLength } from "@/composer/prompt-parts"
 import { showToast } from "@/shell/notifications/toast"
 import type { SessionModel } from "./model"
@@ -52,12 +52,19 @@ export function createSessionRevert(input: {
     if (!sessionID) return
     const owner = input.session.ownership.capture()
     const target = prompt.capture()
+    const original = await hydratePromptMessage(message, (messageID) =>
+      server.api.session.message.get({ sessionID, messageID }),
+    ).catch(() => {
+      showToast({ title: language.t("common.requestFailed") })
+    })
+
+    if (!original) return
 
     // An undelivered prompt has no history to rewind. Withdraw it like the TUI
     // instead of interrupting the work it is waiting behind.
     if (data.session.input.has(sessionID, message.id)) {
       if (!(await request(() => server.api.session.inbox.cancel({ sessionID, inboxID: message.id })))) return
-      restore(target, message)
+      restore(target, original)
       owner.run(() => input.setActiveMessage(previous))
 
       return
@@ -73,7 +80,7 @@ export function createSessionRevert(input: {
     if (!(await request(() => server.api.session.revert.stage({ sessionID, messageID: message.id })))) return
     // Like the TUI, pending inputs are left alone: the revert hides them, committing it drops them,
     // and redo delivers them.
-    restore(target, message)
+    restore(target, original)
     owner.run(() => input.setActiveMessage(previous))
   }
 

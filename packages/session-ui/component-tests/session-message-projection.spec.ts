@@ -141,6 +141,26 @@ story("renders aliased and long custom model notices", async ({ mount, page }) =
   await expect.poll(() => long.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
 })
 
+story("hydrates user attachments before preview or opening", async ({ page, mount }) => {
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0WQAAAAASUVORK5CYII="
+  const requests: string[] = []
+  await page.route("**/attachment-fixture/*", async (route) => {
+    const name = route.request().url().split("/").at(-1)!
+    requests.push(name)
+    await route.fulfill({ json: { name, mime: name === "pixel.png" ? "image/png" : "text/plain", data: name === "pixel.png" ? png : "YWJj", source: { type: "inline" } } })
+  })
+  const view = await mount("attachment-hydration--deferred")
+  const image = view.getByRole("img", { name: "pixel.png" })
+  await expect(image).toHaveAttribute("src", `data:image/png;base64,${png}`)
+  await expect.poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(1)
+  expect(requests).toEqual(["pixel.png"])
+  await view.locator('[data-component="attachment-card"]').filter({ hasText: "note.txt" }).click()
+  await expect(view.getByLabel("Opened attachment")).toHaveText("note.txt:YWJj")
+  await image.click()
+  await expect(page.getByRole("dialog").getByRole("img")).toHaveAttribute("src", `data:image/png;base64,${png}`)
+  expect(requests).toEqual(["pixel.png", "note.txt"])
+})
+
 // Moved from packages/app/e2e/regression/session-timeline-projection.spec.ts
 story("renders user image, file attachment, file reference, and agent reference", async ({ mount }) => {
   const timeline = await mount("current-session-timeline-rows--conversation", { args: { scenario: "attachments" } })

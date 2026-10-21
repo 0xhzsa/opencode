@@ -1112,6 +1112,7 @@ export function make(options: ClientOptions) {
             method: "GET",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/message`,
             query: {
+              attachments: input["attachments"],
               limit: input["limit"],
               order: input["order"],
               cursor: input["cursor"],

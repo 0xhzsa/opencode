@@ -21,6 +21,10 @@ const MessageTypes = {
 } satisfies Record<SessionMessage.Type, true>
 
 export const SessionMessagesQuery = Schema.Struct({
+  attachments: Schema.optional(Schema.Literals(["inline", "reference"])).annotate({
+    description:
+      "Defaults to inline. Reference replaces inline user attachment bytes with opencode-attachment: URIs; resolve them with session.message.get before display or reuse. Pass the same mode on each page.",
+  }),
   limit: Schema.optional(
     Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(200)),
   ).annotate({

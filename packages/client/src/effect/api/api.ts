@@ -1383,6 +1383,7 @@ export interface SessionApi<E = never> {
 
 export type MessageListInput = {
   readonly sessionID: Session.ID
+  readonly attachments?: "inline" | "reference" | undefined
   readonly limit?: number | undefined
   readonly order?: "asc" | "desc" | undefined
   readonly cursor?: string | undefined

@@ -1,5 +1,6 @@
 import type {
   FileDiffInfo,
+  PromptFileAttachment,
   JsonValue,
   SessionInfo,
   SessionMessageUser,
@@ -63,6 +64,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
     agents?: boolean
     shellRunning?: (id: string) => boolean
     shellOutput?: (input: ShellOutputInput) => Promise<ShellOutputOutput>
+    readAttachment?: (file: PromptFileAttachment) => Promise<PromptFileAttachment>
     turnDiff?: TurnDiffSource
     onNavigateToSession?: NavigateToSessionFn
     onSessionHref?: SessionHrefFn
@@ -88,6 +90,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
       sessionHref: props.onSessionHref,
       shellRunning: props.shellRunning,
       shellOutput: props.shellOutput,
+      readAttachment: props.readAttachment,
       turnDiff: props.turnDiff,
       prompt: props.onPrompt,
       promptMetadata: props.promptMetadata,

@@ -10,6 +10,7 @@ import { useData } from "@/runtime/server/current"
 import { useServerSDK } from "@/runtime/server/client"
 import { useTabs, type Tab } from "@/shell/tabs/tabs"
 import { readLocalImage } from "@/runtime/server/image"
+import { createAttachmentReader } from "@/runtime/server/attachment"
 import { useLanguage } from "@/runtime/i18n/language"
 import { showToast } from "@/shell/notifications/toast"
 import { selectSessionUserMessages, selectVisibleSessionUserMessages } from "@/session/session-domain"
@@ -29,6 +30,7 @@ export function SessionUIProvider(
   const tabs = useTabs()
   const language = useLanguage()
   const settings = useSettings()
+  const readAttachment = createAttachmentReader(() => serverSDK.api)
   const directory = () => props.directory
 
   const readImage = createMemo<ReadMarkdownImage>(() => {
@@ -117,6 +119,10 @@ export function SessionUIProvider(
         agents={useLocal().agent.visible()}
         shellRunning={(id) => !!data.shell.get(id)}
         shellOutput={(input) => serverSDK.api.shell.output(input)}
+        readAttachment={(file) => readAttachment(file).catch((error) => {
+          showToast({ title: language.t("common.requestFailed") })
+          throw error
+        })}
         turnDiff={{
           get: (input) => turnDiffs()?.get(input),
           load: (input) => turnDiffs()?.load(input, () => serverSDK.api.session.diff(input)),

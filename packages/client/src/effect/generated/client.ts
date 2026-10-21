@@ -841,6 +841,7 @@ const EndpointMessageList = (raw: RawClient["server.message"]) => (input: Messag
     raw["session.messages"]({
       params: { sessionID: input["sessionID"] },
       query: {
+        attachments: input["attachments"],
         limit: input["limit"],
         order: input["order"],
         cursor: input["cursor"],

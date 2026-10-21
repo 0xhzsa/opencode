@@ -5751,7 +5751,28 @@ export type SessionViewOutput = void
 
 export type MessageListInput = {
   readonly sessionID: { readonly sessionID: string }["sessionID"]
+  readonly attachments?: {
+    readonly attachments?: "inline" | "reference" | undefined
+    readonly limit?: number | undefined
+    readonly order?: "asc" | "desc" | undefined
+    readonly cursor?: string | undefined
+    readonly before?: string | undefined
+    readonly type?:
+      | "agent-switched"
+      | "model-switched"
+      | "location-switched"
+      | "user"
+      | "synthetic"
+      | "system"
+      | "skill"
+      | "shell"
+      | "assistant"
+      | "compaction"
+      | "idle"
+      | undefined
+  }["attachments"]
   readonly limit?: {
+    readonly attachments?: "inline" | "reference" | undefined
     readonly limit?: number | undefined
     readonly order?: "asc" | "desc" | undefined
     readonly cursor?: string | undefined
@@ -5771,6 +5792,7 @@ export type MessageListInput = {
       | undefined
   }["limit"]
   readonly order?: {
+    readonly attachments?: "inline" | "reference" | undefined
     readonly limit?: number | undefined
     readonly order?: "asc" | "desc" | undefined
     readonly cursor?: string | undefined
@@ -5790,6 +5812,7 @@ export type MessageListInput = {
       | undefined
   }["order"]
   readonly cursor?: {
+    readonly attachments?: "inline" | "reference" | undefined
     readonly limit?: number | undefined
     readonly order?: "asc" | "desc" | undefined
     readonly cursor?: string | undefined
@@ -5809,6 +5832,7 @@ export type MessageListInput = {
       | undefined
   }["cursor"]
   readonly before?: {
+    readonly attachments?: "inline" | "reference" | undefined
     readonly limit?: number | undefined
     readonly order?: "asc" | "desc" | undefined
     readonly cursor?: string | undefined
@@ -5828,6 +5852,7 @@ export type MessageListInput = {
       | undefined
   }["before"]
   readonly type?: {
+    readonly attachments?: "inline" | "reference" | undefined
     readonly limit?: number | undefined
     readonly order?: "asc" | "desc" | undefined
     readonly cursor?: string | undefined
