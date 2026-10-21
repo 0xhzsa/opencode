@@ -3,14 +3,27 @@ import { growthSpring } from "./row-growth"
 
 type Rect = { x: number; y: number; w: number; h: number }
 
-type Flight = { text: HTMLElement; layer: HTMLElement; from: Rect; expire: ReturnType<typeof setTimeout> }
+type Flight = {
+  text: HTMLElement
+  layer: HTMLElement
+  from: Rect
+  expire: ReturnType<typeof setTimeout>
+  source?: HTMLElement
+}
 
 // The sent text rises from behind the composer, clipped to its timeline's visible viewport. The real bubble stays
 // hidden until the flight lands on it.
 const waiting = new Map<string, Flight>()
 
-/** Holds a copy of the composer's text where it is, before the composer clears, for the bubble that `id` becomes. */
-export function prepareSendFlight(id: string, editor: HTMLElement | undefined) {
+// A bubble that mounted before its flight was prepared, as when a queued prompt's row leaves the queue a moment after
+// its message reaches the timeline. A flight prepared soon after still lands on it.
+const unclaimed = new Map<string, { bubble: HTMLElement; at: number }>()
+
+/**
+ * Holds a copy of the composer's text, or a queued prompt's row, where it is for the bubble that `id` becomes. A
+ * `source` hides as the copy takes off from it.
+ */
+export function prepareSendFlight(id: string, editor: HTMLElement | undefined, source?: HTMLElement) {
   if (!editor?.isConnected || prefersReducedMotion()) return
   const range = document.createRange()
   range.selectNodeContents(editor)
@@ -57,6 +70,7 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined) {
   waiting.set(id, {
     text,
     layer,
+    source,
     from: { x: box.left, y: box.top, w: box.width, h: box.height },
     expire: setTimeout(() => {
       waiting.delete(id)
@@ -69,13 +83,24 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined) {
         .finished.finally(() => layer.remove())
     }, 700),
   })
+
+  const early = unclaimed.get(id)
+  unclaimed.delete(id)
+  if (early && performance.now() - early.at < 400 && early.bubble.isConnected) landSendFlight(id, early.bubble)
 }
 
 /** Flies the waiting copy for `id` onto `bubble`. Returns false when nothing was waiting for it. */
 export function landSendFlight(id: string, bubble: HTMLElement) {
   const flight = waiting.get(id)
 
-  if (!flight) return false
+  if (!flight) {
+    const now = performance.now()
+    unclaimed.forEach((entry, key) => now - entry.at >= 400 && unclaimed.delete(key))
+    unclaimed.set(id, { bubble, at: now })
+
+    return false
+  }
+  unclaimed.delete(id)
   waiting.delete(id)
   clearTimeout(flight.expire)
 
@@ -119,6 +144,7 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
   host.append(copy)
   flight.text.before(host)
   bubble.style.opacity = "0"
+  flight.source?.style.setProperty("visibility", "hidden")
 
   const spring = Spring.fromDuration(0, growthSpring()).set(1)
   let rect = bubble.getBoundingClientRect()

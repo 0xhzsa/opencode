@@ -1008,6 +1008,41 @@ for (const [action, status] of [
   })
 }
 
+test("a queued prompt flies from its row onto its bubble as it leaves for the timeline, like a sent message", async ({
+  page,
+}) => {
+  const mock = createQueueMock(
+    ["fly me into the timeline", "remove me quietly"],
+    [{ id: "msg_queue_delivered", type: "user", text: "First prompt", time: { created: 1 } }],
+  )
+  const view = await openQueue(page, mock)
+  await expect(view.rows).toHaveCount(2)
+  // Records each flight copy that paints: the bubble copy carries the prompt's text.
+  await page.evaluate(() => {
+    const seen: string[] = []
+    Object.assign(window, { flights: seen })
+    new MutationObserver((records) =>
+      records.forEach((record) =>
+        record.addedNodes.forEach((node) => {
+          if (node instanceof HTMLElement && node.matches("[data-flight]")) seen.push(node.textContent ?? "")
+        }),
+      ),
+    ).observe(document.body, { childList: true, subtree: true })
+  })
+  const flights = () => page.evaluate(() => ("flights" in window ? (window.flights as string[]) : []))
+
+  await view.rows.nth(0).getByRole("button", { name: "Steer" }).click()
+  await expect(userRow(page, mock.rows[0].id)).toContainText("fly me into the timeline")
+  await expect.poll(flights).toEqual(["fly me into the timeline"])
+
+  // A removed prompt never reaches the timeline, so nothing flies.
+  await view.rows.nth(0).locator('[data-action="session-queue-remove"]').click()
+  await expect(view.rows).toHaveCount(0)
+  await page.waitForTimeout(800)
+  expect(await flights()).toEqual(["fly me into the timeline"])
+  await expect(page.locator("[data-send-flight]")).toHaveCount(0)
+})
+
 test("waiting steers group under one Steering label, each keeping its own actions beside its bubble @quarantine", async ({
   page,
 }) => {
