@@ -23,7 +23,7 @@ export function createApiForServer(input: {
   server: ServerConnection.HttpBase
   fetch?: typeof globalThis.fetch
 }): OpenCodeClient {
-  const api = OpenCode.make({
+  return OpenCode.make({
     baseUrl: input.server.url,
     fetch: input.fetch,
     headers: input.server.password
@@ -34,14 +34,6 @@ export function createApiForServer(input: {
         }
       : undefined,
   })
-
-  return {
-    ...api,
-    message: {
-      ...api.message,
-      list: (query, options) => api.message.list({ attachments: "reference", ...query }, options),
-    },
-  }
 }
 
 /**

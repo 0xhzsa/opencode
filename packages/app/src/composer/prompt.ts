@@ -1,4 +1,10 @@
-import type { FileAttachmentPart, ImageAttachmentPart, PathAttachmentPart, Prompt } from "@/composer/state"
+import type {
+  ComposerState,
+  FileAttachmentPart,
+  ImageAttachmentPart,
+  PathAttachmentPart,
+  Prompt,
+} from "@/composer/state"
 import { createLegacyBlobReference } from "@/runtime/persistence/drafts"
 import type { SessionMessageInfo, SessionMessageUser } from "@opencode/client/promise"
 import { AttachmentReference } from "@opencode/client/attachment-reference"
@@ -66,6 +72,15 @@ function selectionFromFileUrl(url: string): Extract<Inline, { type: "file" }>["s
 // A user message or a pending inbox item: the materialized transcript row shares the inbox payload's shape.
 export type PromptSource = Pick<SessionMessageUser, "id" | "text" | "files" | "agents" | "skills" | "metadata">
 
+/** Check the captured draft again after asynchronous preparation, before replacing it. */
+export function unchangedDraft(target: ReturnType<ComposerState["capture"]>) {
+  const snapshot = () =>
+    JSON.stringify([target.current(), target.context.items(), target.model.current(), target.mode.current()])
+  const before = snapshot()
+
+  return () => snapshot() === before
+}
+
 /** Resolve before any destructive edit/revert/fork action, not after changing the draft. */
 export async function hydratePromptMessage(
   message: SessionMessageUser,
@@ -75,8 +90,10 @@ export async function hydratePromptMessage(
   const original = await read(message.id)
 
   if (
-    original?.type !== "user" || original.id !== message.id ||
-    original.files?.length !== message.files.length || original.files?.some(AttachmentReference.is)
+    original?.type !== "user" ||
+    original.id !== message.id ||
+    original.files?.length !== message.files.length ||
+    original.files?.some(AttachmentReference.is)
   )
     throw new Error("Original prompt is unavailable")
 

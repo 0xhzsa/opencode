@@ -5,7 +5,7 @@ import { useServerSDK } from "@/runtime/server/client"
 import { useWorkspaceLocation } from "@/workspaces/location"
 import { useLanguage } from "@/runtime/i18n/language"
 
-import { extractPromptContext, extractPromptFromMessage, hydratePromptMessage } from "@/composer/prompt"
+import { extractPromptContext, extractPromptFromMessage, hydratePromptMessage, unchangedDraft } from "@/composer/prompt"
 import { promptLength } from "@/composer/prompt-parts"
 import { showToast } from "@/shell/notifications/toast"
 import type { SessionModel } from "./model"
@@ -19,6 +19,7 @@ export function createSessionRevert(input: {
   const data = useData()
   const location = useWorkspaceLocation()
   const language = useLanguage()
+  let staging = false
 
   const request = async <A>(action: () => Promise<A>) =>
     action()
@@ -49,39 +50,47 @@ export function createSessionRevert(input: {
   const stage = async (message: SessionMessageUser, previous: SessionMessageUser | undefined) => {
     const sessionID = input.session.identity.params.id
 
-    if (!sessionID) return
+    if (!sessionID || staging) return
     const owner = input.session.ownership.capture()
     const target = prompt.capture()
-    const original = await hydratePromptMessage(message, (messageID) =>
-      server.api.session.message.get({ sessionID, messageID }),
-    ).catch(() => {
-      showToast({ title: language.t("common.requestFailed") })
-    })
+    const unchanged = unchangedDraft(target)
+    const current = () => owner.current() && prompt.capture() === target && unchanged()
+    staging = true
 
-    if (!original) return
+    try {
+      const original = await hydratePromptMessage(message, (messageID) =>
+        server.attachments.message({ sessionID, messageID }),
+      ).catch(() => {
+        showToast({ title: language.t("common.requestFailed") })
+      })
 
-    // An undelivered prompt has no history to rewind. Withdraw it like the TUI
-    // instead of interrupting the work it is waiting behind.
-    if (data.session.input.has(sessionID, message.id)) {
-      if (!(await request(() => server.api.session.inbox.cancel({ sessionID, inboxID: message.id })))) return
+      if (!original || !current()) return
+
+      // An undelivered prompt has no history to rewind. Withdraw it like the TUI
+      // instead of interrupting the work it is waiting behind.
+      if (data.session.input.has(sessionID, message.id)) {
+        if (!(await request(() => server.api.session.inbox.cancel({ sessionID, inboxID: message.id }))) || !current())
+          return
+        restore(target, original)
+        owner.run(() => input.setActiveMessage(previous))
+
+        return
+      }
+
+      // Interrupt acknowledges before execution settles. Recheck the draft after every await:
+      // typing during hydration or server work must never be overwritten by this restore.
+      if (!(await request(() => server.api.session.interrupt({ sessionID }))) || !current()) return
+
+      if (!(await request(() => server.api.session.wait({ sessionID }))) || !current()) return
+
+      if (!(await request(() => server.api.session.revert.stage({ sessionID, messageID: message.id }))) || !current())
+        return
+      // Pending inputs remain until the revert commits, or redo delivers them.
       restore(target, original)
       owner.run(() => input.setActiveMessage(previous))
-
-      return
+    } finally {
+      staging = false
     }
-
-    // Interrupt acknowledges before the execution settles, and staging a busy Session fails. The
-    // local status can lag the server either way, so always settle first; both are idle no-ops.
-    // Like the TUI, stop at the first failure instead of waiting on work that was never interrupted.
-    if (!(await request(() => server.api.session.interrupt({ sessionID })))) return
-
-    if (!(await request(() => server.api.session.wait({ sessionID })))) return
-
-    if (!(await request(() => server.api.session.revert.stage({ sessionID, messageID: message.id })))) return
-    // Like the TUI, pending inputs are left alone: the revert hides them, committing it drops them,
-    // and redo delivers them.
-    restore(target, original)
-    owner.run(() => input.setActiveMessage(previous))
   }
 
   const to = async (messageID: string) => {

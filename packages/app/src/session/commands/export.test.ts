@@ -1,8 +1,18 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionInfo, SessionMessageInfo } from "@opencode/client/promise"
-import type { ServerApi } from "@/runtime/server/api"
+import { createApiForServer } from "@/runtime/server/api"
 import type { Platform } from "@/runtime/platform/platform"
 import { fetchSessionExport, saveSessionExport, sessionExportFilename } from "./export"
+
+const info: SessionInfo = {
+  id: "ses_1",
+  title: "Test Session",
+  projectID: "project_test",
+  cost: 0,
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  time: { created: 1, updated: 1 },
+  location: { directory: "/fixture" },
+}
 
 describe("sessionExportFilename", () => {
   test.each([
@@ -15,32 +25,45 @@ describe("sessionExportFilename", () => {
 })
 
 describe("fetchSessionExport", () => {
-  test("fetches every native message page without exporting cursors", async () => {
-    const info = { id: "ses_1", title: "Test Session" } as SessionInfo
-    const first = { id: "msg_1", type: "model-selected" } as unknown as SessionMessageInfo
-    const second = { id: "msg_2", type: "user" } as SessionMessageInfo
-    const calls: unknown[] = []
+  test.each(["app", "context"])("%s export preserves original bytes on every page", async (surface) => {
+    const first: SessionMessageInfo = {
+      id: "msg_1",
+      type: "user",
+      text: "one",
+      time: { created: 1 },
+      files: [{ name: "one.txt", mime: "text/plain", data: "YWJj", source: { type: "inline" } }],
+    }
 
-    const api = {
-      session: { get: async () => info },
-      message: {
-        list: async (input: { cursor?: string }) => {
-          calls.push(input)
+    const second: SessionMessageInfo = { ...first, id: "msg_2", text: "two" }
+    const calls: Record<string, string>[] = []
 
-          if (!input.cursor) return { data: [first], cursor: { next: "page-2" } }
+    const api = createApiForServer({
+      server: { url: "http://fixture" },
+      fetch: async (input) => {
+        const url = new URL(input instanceof Request ? input.url : String(input))
 
-          return { data: [second], cursor: {} }
-        },
+        if (!url.pathname.endsWith("/message")) return Response.json({ data: info })
+        calls.push(Object.fromEntries(url.searchParams))
+        const message = url.searchParams.has("cursor") ? second : first
+
+        return Response.json({
+          data: [{ ...message, files: url.searchParams.get("attachments") === "inline" ? message.files : [] }],
+          cursor: url.searchParams.has("cursor") ? {} : { next: "page-2" },
+        })
       },
-    } as unknown as Pick<ServerApi, "session" | "message">
+    })
 
-    const result = await fetchSessionExport({ sessionID: "ses_1", api })
+    const context = await import("../../../../gui-extensions/src/context/export")
+    const result = await (surface === "app" ? fetchSessionExport : context.fetchSessionExport)({
+      sessionID: "ses_1",
+      api,
+    })
 
     expect(result).toEqual({ info, messages: [first, second] })
     expect(result).not.toHaveProperty("cursor")
     expect(calls).toEqual([
-      { sessionID: "ses_1", limit: 200, order: "asc", attachments: "inline" },
-      { sessionID: "ses_1", limit: 200, cursor: "page-2", attachments: "inline" },
+      { limit: "200", order: "asc", attachments: "inline" },
+      { limit: "200", cursor: "page-2", attachments: "inline" },
     ])
   })
 })
@@ -57,7 +80,7 @@ describe("saveSessionExport", () => {
       },
     }
 
-    expect(await saveSessionExport("session.json", { id: "ses_1" }, platform)).toBe(saved)
-    expect(writes).toEqual([["session.json", '{\n  "id": "ses_1"\n}']])
+    expect(await saveSessionExport("session.json", { info, messages: [] }, platform)).toBe(saved)
+    expect(writes).toEqual([["session.json", JSON.stringify({ info, messages: [] }, null, 2)]])
   })
 })

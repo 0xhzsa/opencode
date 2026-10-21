@@ -4939,6 +4939,23 @@
             "required": true
           },
           {
+            "name": "attachments",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": ["inline", "reference"]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Defaults to inline. Reference replaces inline user attachment bytes with opencode-attachment: URIs; resolve them with session.message.get before display or reuse. Pass the same mode on each page."
+            },
+            "required": false
+          },
+          {
             "name": "limit",
             "in": "query",
             "schema": {
@@ -4984,6 +5001,22 @@
                   "type": "null"
                 }
               ]
+            },
+            "required": false
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Session.Message.ID"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Return only messages that precede this message in the timeline, newest first. Cannot be combined with cursor or ascending order; the returned cursors continue from the page."
             },
             "required": false
           },
@@ -12848,6 +12881,14 @@
               ]
             },
             "required": false
+          },
+          {
+            "name": "untracked",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Vcs.Untracked"
+            },
+            "required": false
           }
         ],
         "security": [],
@@ -14971,6 +15012,10 @@
           "status": {
             "type": "string",
             "enum": ["added", "deleted", "modified"]
+          },
+          "more": {
+            "type": "boolean",
+            "enum": [true]
           }
         },
         "required": ["file", "patch", "additions", "deletions", "status"],
@@ -18331,6 +18376,16 @@
               }
             ]
           },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "urls": {
             "type": "array",
             "items": {
@@ -20443,6 +20498,10 @@
       "Vcs.Mode": {
         "type": "string",
         "enum": ["working", "branch", "committed"]
+      },
+      "Vcs.Untracked": {
+        "type": "string",
+        "enum": ["files", "folders"]
       },
       "VcsInitNotSupportedErrorEncoded": {
         "type": "object",

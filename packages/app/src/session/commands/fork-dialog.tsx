@@ -1,4 +1,4 @@
-import { Component, createMemo, For, Show } from "solid-js"
+import { Component, createMemo, For, Show, onCleanup } from "solid-js"
 import { useNavigate, useParams } from "@solidjs/router"
 import { useData } from "@/runtime/server/current"
 import { useComposerState } from "@/composer/persistence"
@@ -12,7 +12,7 @@ import { showToast } from "@/shell/notifications/toast"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useServerSDK } from "@/runtime/server/client"
 import { base64Encode } from "@opencode/util/encode"
-import { extractPromptContext, extractPromptFromMessage, hydratePromptMessage } from "@/composer/prompt"
+import { extractPromptContext, extractPromptFromMessage, hydratePromptMessage, unchangedDraft } from "@/composer/prompt"
 import { useWorkspaceLocation } from "@/workspaces/location"
 import { useServer } from "@/runtime/server/current"
 import { sessionHref } from "@/shell/routes/session"
@@ -38,6 +38,11 @@ export const DialogFork: Component = () => {
   const dialog = useDialog()
   const language = useLanguage()
   const server = useServer()
+  let pending = false
+  let active = true
+  onCleanup(() => {
+    active = false
+  })
 
   const messages = createMemo((): ForkableMessage[] => {
     const sessionID = params.id
@@ -61,7 +66,7 @@ export const DialogFork: Component = () => {
   })
 
   const handleSelect = async (item: ForkableMessage | undefined) => {
-    if (!item) return
+    if (!item || pending) return
 
     const sessionID = params.id
 
@@ -70,37 +75,49 @@ export const DialogFork: Component = () => {
 
     if (message?.type !== "user") return
     const directory = location().directory
-    const original = await hydratePromptMessage(message, (messageID) =>
-      serverSDK.api.session.message.get({ sessionID, messageID }),
-    ).catch(() => {
-      showToast({ title: language.t("common.requestFailed") })
-    })
+    const target = prompt.capture()
+    const unchanged = unchangedDraft(target)
+    const key = server.key
+    const current = () =>
+      active && params.id === sessionID && server.key === key && prompt.capture() === target && unchanged()
+    pending = true
 
-    if (!original) return
-
-    const restored = extractPromptFromMessage(original, {
-      directory,
-      attachmentName: language.t("common.attachment"),
-      sessionTitle: (id) => data.session.get(id)?.title,
-    })
-
-    const context = extractPromptContext(original, { directory })
-    const dir = base64Encode(directory)
-
-    serverSDK.api.session
-      .fork({ sessionID, before: item.id })
-      .then((forked) => {
-        data.session.remember(forked)
-        dialog.close()
-        const target = prompt.capture({ dir, id: forked.id })
-        target.set(restored)
-        target.context.replace([...context.comments, ...context.files])
-        navigate(sessionHref(server.key, forked.id))
+    try {
+      const original = await hydratePromptMessage(message, (messageID) =>
+        serverSDK.attachments.message({ sessionID, messageID }),
+      ).catch(() => {
+        showToast({ title: language.t("common.requestFailed") })
       })
-      .catch((cause: unknown) => {
-        const message = cause instanceof Error ? cause.message : String(cause)
-        showToast({ title: language.t("common.requestFailed"), description: message })
+
+      if (!original || !current()) return
+
+      const restored = extractPromptFromMessage(original, {
+        directory,
+        attachmentName: language.t("common.attachment"),
+        sessionTitle: (id) => data.session.get(id)?.title,
       })
+
+      const context = extractPromptContext(original, { directory })
+      const dir = base64Encode(directory)
+
+      await serverSDK.api.session
+        .fork({ sessionID, before: item.id })
+        .then((forked) => {
+          if (!current()) return
+          data.session.remember(forked)
+          dialog.close()
+          const target = prompt.capture({ dir, id: forked.id })
+          target.set(restored)
+          target.context.replace([...context.comments, ...context.files])
+          navigate(sessionHref(server.key, forked.id))
+        })
+        .catch((cause: unknown) => {
+          const message = cause instanceof Error ? cause.message : String(cause)
+          showToast({ title: language.t("common.requestFailed"), description: message })
+        })
+    } finally {
+      pending = false
+    }
   }
 
   const list = useFilteredList({

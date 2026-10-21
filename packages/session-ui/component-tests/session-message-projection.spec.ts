@@ -144,13 +144,28 @@ story("renders aliased and long custom model notices", async ({ mount, page }) =
 story("hydrates user attachments before preview or opening", async ({ page, mount }) => {
   const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0WQAAAAASUVORK5CYII="
   const requests: string[] = []
+  const release = Promise.withResolvers<void>()
   await page.route("**/attachment-fixture/*", async (route) => {
     const name = route.request().url().split("/").at(-1)!
     requests.push(name)
-    await route.fulfill({ json: { name, mime: name === "pixel.png" ? "image/png" : "text/plain", data: name === "pixel.png" ? png : "YWJj", source: { type: "inline" } } })
+
+    if (name === "pixel.png") await release.promise
+    await route.fulfill({
+      json: {
+        name,
+        mime: name === "pixel.png" ? "image/png" : "text/plain",
+        data: name === "pixel.png" ? png : "YWJj",
+        source: { type: "inline" },
+      },
+    })
   })
   const view = await mount("attachment-hydration--deferred")
   const image = view.getByRole("img", { name: "pixel.png" })
+  await expect(image).toHaveAttribute("aria-busy", "true")
+  await expect(image).toHaveAttribute("draggable", "false")
+  await expect(view.locator("img")).toHaveCount(0)
+  await view.getByRole("button", { name: "Replace attachment proxies" }).click()
+  release.resolve()
   await expect(image).toHaveAttribute("src", `data:image/png;base64,${png}`)
   await expect.poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(1)
   expect(requests).toEqual(["pixel.png"])
@@ -159,6 +174,35 @@ story("hydrates user attachments before preview or opening", async ({ page, moun
   await image.click()
   await expect(page.getByRole("dialog").getByRole("img")).toHaveAttribute("src", `data:image/png;base64,${png}`)
   expect(requests).toEqual(["pixel.png", "note.txt"])
+})
+
+story("retries passive attachment failures on re-entry and reports only explicit failures", async ({ page, mount }) => {
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0WQAAAAASUVORK5CYII="
+  let images = 0
+  await page.route("**/attachment-fixture/*", async (route) => {
+    const image = route.request().url().endsWith("pixel.png")
+
+    if (image) images++
+
+    if (!image || images === 1) return route.fulfill({ status: 503, body: "offline" })
+
+    return route.fulfill({ json: { name: "pixel.png", mime: "image/png", data: png, source: { type: "inline" } } })
+  })
+  const failed = page.waitForResponse(
+    (response) => response.url().endsWith("attachment-fixture/pixel.png") && response.status() === 503,
+  )
+  const view = await mount("attachment-hydration--deferred")
+  await failed
+  const image = view.getByRole("img", { name: "pixel.png" })
+  await expect(image).toHaveAttribute("aria-busy", "true")
+  await view.getByRole("button", { name: "Move image away" }).click()
+  await expect(image).not.toBeInViewport()
+  await view.getByRole("button", { name: "Bring image back" }).click()
+  await expect(image).toHaveAttribute("src", `data:image/png;base64,${png}`)
+  await expect(view.getByLabel("Attachment errors")).toHaveText("0")
+  await view.locator('[data-component="attachment-card"]').filter({ hasText: "note.txt" }).click()
+  await expect(view.getByLabel("Attachment errors")).toHaveText("1")
+  expect(images).toBe(2)
 })
 
 // Moved from packages/app/e2e/regression/session-timeline-projection.spec.ts

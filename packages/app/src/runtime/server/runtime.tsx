@@ -190,7 +190,15 @@ function createServerController(
   const sdk = createServerSdkContext(conn, scope)
 
   const source = createData({
-    api: () => sdk.api,
+    // Only the desktop/web transcript store opts into references. The public SDK, extensions,
+    // exports, and other clients continue to receive original bytes by default.
+    api: () => ({
+      ...sdk.api,
+      message: {
+        ...sdk.api.message,
+        list: (query, options) => sdk.api.message.list({ attachments: "reference", ...query }, options),
+      },
+    }),
     initialMessageLimit: () => (timelinePreset(settings.general.timelineDetail())?.id === "compact" ? 40 : 20),
     event: {
       on: sdk.event.on,
