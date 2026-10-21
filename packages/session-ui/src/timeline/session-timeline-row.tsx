@@ -1220,7 +1220,7 @@ export function createSessionTimelineRowRenderer(input: {
 
   function layout(row: TimelineRow.TimelineRow, environment: TimelineLayoutEnvironment): TimelineRowLayout {
     if (row._tag === "TurnGap") return { source: "fixed", height: 24 }
-    if (row._tag === "Activity") return { source: "fixed", height: 0 }
+    if (row._tag === "Activity") return { source: "fixed", height: 36 }
     const width =
       (input.centered?.() && environment.desktop ? Math.min(744, environment.width) : environment.width) -
       (environment.desktop ? 48 : 32)

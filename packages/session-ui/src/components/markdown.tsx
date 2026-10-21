@@ -1112,7 +1112,7 @@ function updateBlock(
   if (block.mode === "live") {
     next.replaceChildren()
     renderedMarkdown.set(next, {
-      renderer: createMarkdownRenderer(next, source.innerHTML, true),
+      renderer: createMarkdownRenderer(next, source.innerHTML, true, true),
       raw: block.raw,
     })
   }
@@ -1210,6 +1210,7 @@ function updateCodeBlock(
 
   const wrapper = document.createElement("div")
   wrapper.setAttribute("data-component", "markdown-code")
+  if (!block.complete) wrapper.setAttribute("data-markdown-enter", "")
   applyCodeMetadata(wrapper, block.language)
   const pre = document.createElement("pre")
   pre.className = "highlights"

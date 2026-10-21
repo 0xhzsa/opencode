@@ -379,7 +379,7 @@ export function createTimelineVirtualizer(input: Input) {
         return grid(box.blockSize)
       }
 
-      if (initial) {
+      if (initial && !addedKeys.has(rowKeys()[instance.indexFromElement(element)]!)) {
         const size = instance.itemSizeCache.get(instance.options.getItemKey(instance.indexFromElement(element)))
 
         if (size !== undefined || coldPending) return size ?? fallbackItemSize
@@ -485,18 +485,17 @@ export function createTimelineVirtualizer(input: Input) {
     },
     below: (key) => rowKeys().lastIndexOf(key) >= shift().rows,
     settle: (state) => {
-      rideEnd(state.pending)
-
       if (!state.held) endGap = false
 
       if (state.held !== shift().size) setShift((value) => ({ rows: state.held ? value.rows : 0, size: state.held }))
+      rideEnd(state.pending, state.held)
       moveGhosts()
     },
   })
 
   // Growing past the composer, the end follows the rows' own progress onto it: the space below it closes as they
   // finish growing, rather than the end travelling down and stopping dead at the composer's edge.
-  const rideEnd = (pending: number) => {
+  const rideEnd = (pending: number, held = shift().size) => {
     const root = listRoot()
     const total = virtualizer.getTotalSize()
     const target = total + pending
@@ -512,7 +511,7 @@ export function createTimelineVirtualizer(input: Input) {
 
     if (ride) lift = ride.gap * (1 - Math.min(1, Math.max(0, (total - ride.from) / Math.max(1, ride.to - ride.from))))
 
-    holdSpace(grid(lift))
+    holdSpace(grid(lift + held))
 
     if (root && input.pinned()) pinEnd(growthViewport)
   }
@@ -600,13 +599,19 @@ export function createTimelineVirtualizer(input: Input) {
       virtualizer.itemSizeCache.set(key, 0)
     }
 
-    if (arriving) {
-      const element = virtualizer.elementsCache.get(key)
+    growth.grow(
+      key,
+      shown,
+      size,
+      arriving
+        ? () => {
+            const element = virtualizer.elementsCache.get(key)
+            const currentIndex = rowKeys().lastIndexOf(key)
 
-      if (element && !textMessage(rows()[index])) enter(element, { duration: 200 })
-    }
-
-    growth.grow(key, shown, size)
+            if (element && currentIndex >= 0 && !textMessage(rows()[currentIndex])) enter(element, { duration: 200 })
+          }
+        : undefined,
+    )
   }
 
   const grows = (index: number, shown: number, size: number) => {
@@ -655,10 +660,12 @@ export function createTimelineVirtualizer(input: Input) {
 
     if (drop < 1) return
     endGap = false
-    setShift((value) => ({
+    const nextSize = shift().size + drop
+    setShift({
       rows: previous.slice(0, first).filter((key) => remaining.has(key)).length,
-      size: value.size + drop,
-    }))
+      size: nextSize,
+    })
+    holdSpace(grid(lift + nextSize))
     growth.hold(drop)
     queueMicrotask(() => {
       if (input.pinned()) pinEnd()
@@ -676,8 +683,7 @@ export function createTimelineVirtualizer(input: Input) {
     wrapper.setAttribute("aria-hidden", "true")
     wrapper.inert = true
     wrapper.style.pointerEvents = "none"
-    wrapper.style.top = `${parseFloat(wrapper.style.top) - drop}px`
-    ghosts.set(wrapper, { key: above, top: anchor.start - topOffset() - shift().size - drop })
+    ghosts.set(wrapper, { key: above, top: anchor.start - topOffset() })
     const fade = wrapper.animate([{ opacity: getComputedStyle(wrapper).opacity }, { opacity: 0 }], {
       duration: 110,
       easing: "cubic-bezier(.4,0,1,1)",
@@ -694,7 +700,7 @@ export function createTimelineVirtualizer(input: Input) {
     ghosts.forEach((anchor, ghost) => {
       const index = rowKeys().lastIndexOf(anchor.key)
       const item = virtualizer.measurementsCache[index]
-      const top = item && item.start - topOffset() - (index < shift().rows ? shift().size : 0)
+      const top = item && item.start - topOffset()
 
       if (top === undefined || top === anchor.top) return
       ghost.style.top = `${parseFloat(ghost.style.top) + top - anchor.top}px`
@@ -728,7 +734,7 @@ export function createTimelineVirtualizer(input: Input) {
     })
   })
 
-  const pendingSizes = new Map<number, { key: string; size: number }>()
+  const pendingSizes = new Map<string, number>()
   let resizeScheduled = false
   // Read the whole measurement delivery before committing reactive row sizes.
   // Otherwise each row can render and force layout before the next is measured.
@@ -746,12 +752,12 @@ export function createTimelineVirtualizer(input: Input) {
       (arrivals.has(key) ? undefined : virtualizer.measurementsCache[index]?.size)
 
     if ((known ?? (arrivals.has(key) ? undefined : fallbackItemSize)) === size) {
-      pendingSizes.delete(index)
+      pendingSizes.delete(key)
 
       return
     }
 
-    pendingSizes.set(index, { key, size })
+    pendingSizes.set(key, size)
 
     if (resizeScheduled) return
     resizeScheduled = true
@@ -767,11 +773,11 @@ export function createTimelineVirtualizer(input: Input) {
       // not a layout-forcing scroll adjustment for every measured row.
       batchingColdSizes = coldPending && input.pinned()
       batch(() => {
-        sizes.forEach(([index, value]) => {
-          const row = rows()[index]
+        sizes.forEach(([key, size]) => {
+          const index = rowKeys().lastIndexOf(key)
 
-          if (!row || TimelineRow.key(row) !== value.key) return
-          commitSize(index, value.key, value.size)
+          if (index < 0) return
+          commitSize(index, key, size)
 
           // TanStack recalculates its range after each resize. Advance the
           // logical fold before deciding whether the next row needs anchoring.
@@ -1032,8 +1038,10 @@ export function createTimelineVirtualizer(input: Input) {
         // where it is rather than sinking with the composer only to be lifted by the reply. The space it frees is held
         // under the last row for rows arriving below to rise into, and closes once nothing grows.
         if (freed > 0 && following() && growth.growing() && (!shift().size || endGap)) {
-          setShift((value) => ({ rows: endGap ? value.rows : rows().length, size: value.size + freed }))
+          const nextSize = shift().size + freed
+          setShift((value) => ({ rows: endGap ? value.rows : rows().length, size: nextSize }))
           endGap = true
+          holdSpace(grid(lift + nextSize))
           growth.hold(freed)
         }
 
@@ -1372,8 +1380,7 @@ export function createTimelineVirtualizer(input: Input) {
 
       const edges = createMemo<{ top: number; bottom: number }>((previous) => {
         if (leaving() && previous) return previous
-        const top =
-          item().start - topOffset() - rendering.scrollAdjustment - (item().index < shift().rows ? shift().size : 0)
+        const top = item().start - topOffset() - rendering.scrollAdjustment
 
         return { top: grid(top), bottom: grid(top + item().size) }
       })
@@ -1385,7 +1392,11 @@ export function createTimelineVirtualizer(input: Input) {
       createEffect(() => {
         if (!layoutState.fontsReady) return
         // Opening a modeled compact row can expose a renderer-specific DOM fallback.
-        if (!modeled()) return virtualizer.measureElement(element)
+        if (!modeled()) {
+          if (virtualizer.elementsCache.get(rowProps.rowKey) === element && !observedElements.has(element))
+            virtualizer.elementsCache.delete(rowProps.rowKey)
+          return virtualizer.measureElement(element)
+        }
         virtualizer.elementsCache.set(rowProps.rowKey, element)
         observedElements.add(element)
         settleColdBottom()
@@ -1406,12 +1417,15 @@ export function createTimelineVirtualizer(input: Input) {
             left: "calc((100% - var(--panel-hold-width, 100%)) / 2)",
             width: "var(--panel-hold-width, 100%)",
             height: `${edges().bottom - edges().top}px`,
-            "overflow-x": "clip",
+            overflow: "clip",
+            // Let user-message pending badges and hover outlines breathe horizontally without unclipping vertical growth.
+            "overflow-clip-margin": "0px 16px",
           }}
         >
           <div
             ref={(value) => {
               element = value
+              if (modeled()) virtualizer.elementsCache.set(rowProps.rowKey, value)
               const mounted = row()
 
               if (Predicate.isTagged(mounted, "UserMessage"))

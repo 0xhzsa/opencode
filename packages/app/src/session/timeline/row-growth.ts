@@ -15,7 +15,7 @@ export const growthSpring = motionTuning.spring("timeline.growth", {
 
 const grid = (value: number) => Math.round(value * 64) / 64
 
-type Growth = { spring: Spring; start: number }
+type Growth = { value: number; target: number; enter?: () => void }
 
 /**
  * Rows whose displayed height eases toward their measured height, and a gap left by a row near the end that closes on
@@ -30,35 +30,69 @@ export function createRowGrowth(input: {
   settle: (state: { pending: number; held: number }) => void
 }) {
   const growths = new Map<string, Growth>()
-  const fresh = new Set<string>()
+  let spring: Spring | undefined
+  let fresh = false
   let held: Spring | undefined
   let closing = false
   let quiet = 0
   let stop: (() => void) | undefined
 
-  const advance = (key: string, growth: Growth, dt: number) => {
-    const before = grid(growth.spring.value)
-    const value = growth.spring.step(dt)
-    const target = growth.spring.target
+  const advance = (dt: number) => {
+    if (!spring || !growths.size) {
+      spring = undefined
+      return
+    }
+    const before = grid(spring.value)
+    const beforeRaw = spring.value
+    const nextValue = spring.step(dt)
+    const target = spring.target
     // A growth bent toward a nearer target keeps its speed and would pass it, then come back: it lands there instead.
-    const resting = growth.spring.resting || (target - before) * (target - value) <= 0
-    const shown = resting ? growth.spring.target : grid(value)
-    const wrapper = input.resize(key, shown)
+    const done = spring.resting || (target - before) * (target - nextValue) <= 0
+    let budget = done ? Infinity : Math.max(0, nextValue - beforeRaw)
 
-    if (wrapper === false || resting) growths.delete(key)
+    growths.forEach((growth, key) => {
+      const prevShown = grid(growth.value)
+      const rem = growth.target - growth.value
+      const take = rem <= 0 ? 0 : Math.min(rem, budget)
+      if (take > 0) budget -= take
+      const nextRowValue = rem <= 0 ? growth.value : growth.value + take
+      const rowDone =
+        done || (growth.target - prevShown) * (growth.target - nextRowValue) <= 0 || growth.target - nextRowValue <= 1e-4
+      growth.value = nextRowValue
+      const shown = rowDone ? growth.target : grid(growth.value)
+      if (!rowDone && take <= 0) return
 
-    if (held && wrapper !== false && input.below(key))
-      held.value = Math.max(0, held.value - Math.max(0, shown - before))
+      const enter = growth.enter
+      if (enter) {
+        growth.enter = undefined
+        enter()
+      }
+      const wrapper = input.resize(key, shown)
+
+      if (wrapper === false) {
+        const unconsumed = Math.max(0, growth.target - growth.value)
+        growths.delete(key)
+        if (unconsumed > 0) spring?.set(spring.target - unconsumed)
+      } else if (rowDone) {
+        if (growth.value < growth.target && spring) spring.value += growth.target - growth.value
+        growths.delete(key)
+      }
+
+      if (held && wrapper !== false && input.below(key))
+        held.value = Math.max(0, held.value - Math.max(0, shown - prevShown))
+    })
+
+    if (done || !growths.size) spring = undefined
   }
 
   const settle = () => {
     let pending = 0
-    growths.forEach((growth) => (pending += growth.spring.target - grid(growth.spring.value)))
+    growths.forEach((growth) => (pending += Math.max(0, growth.target - grid(growth.value))))
     input.settle({ pending, held: held ? Math.max(0, grid(held.value)) : 0 })
   }
 
   const step = (dt: number) => {
-    batch(() => growths.forEach((growth, key) => advance(key, growth, dt)))
+    batch(() => advance(dt))
     // Wait briefly before closing what growth left of the gap so pauses between streamed chunks do not start and stop it.
     quiet = growths.size ? 0 : quiet + dt
 
@@ -81,33 +115,41 @@ export function createRowGrowth(input: {
   }
 
   const kick = () => {
-    const keys = [...fresh]
-    fresh.clear()
+    if (!fresh) return
+    fresh = false
     input.measure()
-    batch(() =>
-      keys.forEach((key) => {
-        const growth = growths.get(key)
-
-        if (growth) advance(key, growth, 1 / 60)
-      }),
-    )
+    batch(() => advance(1 / 60))
     settle()
   }
 
   return {
     growing: () => growths.size > 0,
-    target: (key: string) => growths.get(key)?.spring.target,
-    grow(key: string, from: number, to: number) {
+    target: (key: string) => growths.get(key)?.target,
+    grow(key: string, from: number, to: number, enter?: () => void) {
+      const wasGrowing = growths.size > 0
       const running = growths.get(key)
-      const growth = running ?? { spring: Spring.fromDuration(from, growthSpring()), start: from }
-      growth.spring.set(to)
-      growths.set(key, growth)
+      if (running) {
+        const delta = to - running.target
+        running.target = to
+        if (enter && !running.enter) running.enter = enter
+        spring?.set(spring.target + delta)
+        return
+      }
+      const delta = to - from
+      if (delta <= 0) {
+        enter?.()
+        input.resize(key, to)
+        return
+      }
+      growths.set(key, { value: from, target: to, enter })
+      if (!spring) spring = Spring.fromDuration(0, growthSpring())
+      spring.set(spring.target + delta)
       stop ??= frameLoop.addMeasured(input.measure, step)
 
-      if (running) return
-
-      if (!fresh.size) queueMicrotask(kick)
-      fresh.add(key)
+      if (!wasGrowing && !fresh) {
+        fresh = true
+        queueMicrotask(kick)
+      }
     },
     hold(size: number) {
       held ??= Spring.fromDuration(0, growthSpring())
@@ -116,18 +158,26 @@ export function createRowGrowth(input: {
       stop ??= frameLoop.addMeasured(input.measure, step)
     },
     land(key: string, size: number) {
-      growths.delete(key)
+      const running = growths.get(key)
+      if (running) {
+        const rem = Math.max(0, running.target - running.value)
+        growths.delete(key)
+        if (spring) spring.set(spring.target - rem)
+        if (!growths.size) spring = undefined
+      }
       input.resize(key, size)
     },
     finish() {
-      fresh.clear()
+      fresh = false
       stop?.()
       stop = undefined
+      spring = undefined
       held = undefined
       closing = false
       batch(() =>
         growths.forEach((growth, key) => {
-          input.resize(key, growth.spring.target)
+          growth.enter?.()
+          input.resize(key, growth.target)
         }),
       )
       growths.clear()

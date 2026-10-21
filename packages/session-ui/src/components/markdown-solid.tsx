@@ -14,9 +14,9 @@ type MarkdownNode =
   | { key: string; type: "text"; text: string }
   | { key: string; type: "word"; text: string; animate?: true }
 
-export function createMarkdownRenderer(root: HTMLDivElement, html: string, words: boolean) {
-  const [nodes, setNodes] = createStore(parseMarkdownNodes(html, words))
-  let ready = false
+export function createMarkdownRenderer(root: HTMLDivElement, html: string, words: boolean, animate = false) {
+  const [nodes, setNodes] = createStore(parseMarkdownNodes(html, words, animate))
+  let ready = animate
 
   const dispose = render(
     () => <For each={nodes}>{(node) => <MarkdownDomNode node={node} animate={() => ready} />}</For>,
