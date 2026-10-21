@@ -14,7 +14,7 @@ import { ExtensionSlot } from "@/runtime/extension/render"
 import { useCommand } from "@/shell/commands/command"
 import { useLanguage } from "@/runtime/i18n/language"
 import { CollapsedSidebarToggle } from "@/shell/sidebar-toggle"
-import { createPanelMotion, guardClosingFocus } from "@/shell/panel-motion"
+import { createPanelMotion, releaseClosedFocus } from "@/shell/panel-motion"
 
 export default function Layout(props: ParentProps) {
   const platform = usePlatform()
@@ -38,15 +38,11 @@ export default function Layout(props: ParentProps) {
 
   const verticalTabs = () => preferences.appearance.tabLayout() !== "horizontal" && !mobile()
 
-  const sidebarMotion = createPanelMotion({
-    open: preferences.appearance.sidebarOpen,
-    element: () => state.tabsPanel,
-    offset: -10,
-  })
+  createPanelMotion({ open: preferences.appearance.sidebarOpen, element: () => state.tabsPanel, offset: -10 })
 
-  guardClosingFocus({
+  releaseClosedFocus({
     root: () => state.tabsAside,
-    closing: () => !preferences.appearance.sidebarOpen() && sidebarMotion.present(),
+    open: preferences.appearance.sidebarOpen,
     // The toggle that reopens the sidebar, outside it.
     target: () =>
       [...document.querySelectorAll<HTMLElement>('button[aria-controls="vertical-tabs-sidebar"]')].find(
@@ -99,13 +95,12 @@ export default function Layout(props: ParentProps) {
               class="relative z-10 h-full min-h-0 shrink-0"
               style={{ width: preferences.appearance.sidebarOpen() ? `${state.tabsWidth}px` : "0px" }}
             >
-              {/* Keeps its width over main while a close fades it out. Skipped rather than display: none or inert, so
-                  neither direction restyles the sidebar's contents and a reopen reuses their layout. */}
+              {/* Skipped rather than display: none or inert, so neither direction restyles the sidebar's contents and
+                  a reopen reuses their layout. */}
               <div
                 ref={(element) => setState("tabsPanel", element)}
-                class="absolute inset-y-0 start-0 overflow-hidden [contain:layout_style_paint]"
-                classList={{ "[content-visibility:hidden]": !sidebarMotion.present() }}
-                style={{ width: `${sidebarMotion.present() ? state.tabsWidth : 0}px` }}
+                class="absolute inset-0 overflow-hidden [contain:layout_style_paint]"
+                classList={{ "[content-visibility:hidden]": !preferences.appearance.sidebarOpen() }}
               >
                 <div
                   ref={(element) => setState("tabsMount", element)}
@@ -114,11 +109,6 @@ export default function Layout(props: ParentProps) {
                     width: `${state.tabsWidth}px`,
                     "padding-bottom": "max(10px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))",
                   }}
-                />
-                {/* Takes the pointer while the sidebar closes, without restyling its contents. */}
-                <div
-                  class="absolute inset-0 z-20"
-                  classList={{ hidden: preferences.appearance.sidebarOpen() || !sidebarMotion.present() }}
                 />
               </div>
               <Show when={preferences.appearance.sidebarOpen()}>

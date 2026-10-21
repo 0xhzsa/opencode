@@ -29,7 +29,7 @@ import {
   type SessionPanelMenuItem,
 } from "@opencode/gui-extensions/sdk"
 import { useCommand } from "@/shell/commands/command"
-import { guardClosingFocus } from "@/shell/panel-motion"
+import { releaseClosedFocus } from "@/shell/panel-motion"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useLayout } from "@/shell/state/layout"
 import { useSessionLayout } from "@/session/session-layout"
@@ -51,7 +51,6 @@ export function SideRegion(props: {
   screen: SessionScreen
   region: Region
   sidebar: PanelSidebar
-  present?: boolean
   size: Sizing
   drag: PaneDrag
 }) {
@@ -61,10 +60,9 @@ export function SideRegion(props: {
 
   const isDesktop = createMediaQuery("(min-width: 768px)")
   const tabsOpen = createMemo(() => isDesktop() && view().side.opened())
-  const tabsVisible = createMemo(() => tabsOpen() || !!props.present)
   // Once shown, the contents stay mounted while the region is hidden, so reopening doesn't rebuild them mid-flight.
-  const contentMounted = createMemo<boolean>((mounted) => mounted || tabsVisible(), false)
-  const panelWidth = createMemo(() => (tabsVisible() ? "auto" : "0px"))
+  const contentMounted = createMemo<boolean>((mounted) => mounted || tabsOpen(), false)
+  const panelWidth = createMemo(() => (tabsOpen() ? "auto" : "0px"))
 
   const menu = createSessionPanelMenu()
   const primary = createMemo(() => menu().find((item) => item.primary))
@@ -99,9 +97,9 @@ export function SideRegion(props: {
 
   const lowerHeight = createMemo(() => Math.round(column.height * (1 - view().split.ratio())))
 
-  guardClosingFocus({
+  releaseClosedFocus({
     root,
-    closing: () => !tabsOpen() && tabsVisible(),
+    open: tabsOpen,
     target: () => document.querySelector<HTMLElement>('[data-slot="session-review-toggle"] button') ?? undefined,
   })
 
@@ -114,12 +112,9 @@ export function SideRegion(props: {
         aria-label={language.t("session.panel.reviewAndFiles")}
         aria-hidden={!tabsOpen()}
         class="relative h-full shrink-0 min-w-0 flex overflow-hidden bg-v2-background-bg-base rounded-[10px] shadow-[var(--v2-elevation-raised)] outline-none"
-        classList={{ "flex-1": tabsVisible() }}
+        classList={{ "flex-1": tabsOpen() }}
         style={{ width: panelWidth() }}
       >
-        {/* Takes the pointer while the panel closes. Inherited pointer-events or inert would restyle every element in
-            the panel when they flip; once closed, the screen skips the region with content-visibility instead. */}
-        <div class="absolute inset-0 z-50" classList={{ hidden: tabsOpen() || !tabsVisible() }} />
         <Show when={contentMounted()}>
           <div
             data-slot="session-review-content"
@@ -165,7 +160,7 @@ export function SideRegion(props: {
                       screen={props.screen}
                       sidebar={props.sidebar}
                       shown={tabsOpen}
-                      present={tabsVisible}
+                      present={tabsOpen}
                       animate={() => !props.size.active()}
                       placeholder={index() === 0}
                       actions={index() === 0}

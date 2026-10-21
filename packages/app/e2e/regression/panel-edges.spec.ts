@@ -42,7 +42,7 @@ async function trace(page: Page, toggle: () => Promise<void>, edge: string, pane
 }
 
 for (const direction of ["ltr", "rtl"] as const) {
-  test(`a click fades the panel in place while the content beside it moves in one frame (${direction})`, async ({
+  test(`a click opens a panel with a fade and closes it at once, the content moving in one frame (${direction})`, async ({
     page,
   }) => {
     await mockStressTimeline(page)
@@ -68,19 +68,27 @@ for (const direction of ["ltr", "rtl"] as const) {
     // Each panel shifts toward its own edge: the sidebar toward the start, the side panel toward the end.
     const start = direction === "ltr" ? -1 : 1
 
+    const chat = '[data-slot="session-chat-panel"]'
+
+    // The sidebar starts open and the side panel closed.
     const runs = [
-      { toggle: sidebarToggle, edge: sidebar, panel: sidebarPanel, shift: 10 * start },
-      { toggle: sidebarToggle, edge: sidebar, panel: sidebarPanel, shift: 10 * start },
-      { toggle: reviewToggle, edge: '[data-slot="session-chat-panel"]', panel: sidePanel, shift: -12 * start },
-      { toggle: reviewToggle, edge: '[data-slot="session-chat-panel"]', panel: sidePanel, shift: -12 * start },
+      { toggle: sidebarToggle, edge: sidebar, panel: sidebarPanel, shift: 10 * start, opens: false },
+      { toggle: sidebarToggle, edge: sidebar, panel: sidebarPanel, shift: 10 * start, opens: true },
+      { toggle: reviewToggle, edge: chat, panel: sidePanel, shift: -12 * start, opens: true },
+      { toggle: reviewToggle, edge: chat, panel: sidePanel, shift: -12 * start, opens: false },
     ]
 
     for (const run of runs) {
       const frames = await trace(page, () => run.toggle.click({ force: true }), run.edge, run.panel)
       // The layout jumps straight from where it was to where it lands.
       expect(new Set(frames.map((frame) => Math.round(frame.edge))).size).toBeLessThanOrEqual(2)
-      // The panel fades over several frames from 0.15 (the fade curve overshoots its end by a hair) and shifts at
-      // most its offset toward its edge.
+
+      if (!run.opens) {
+        expect(frames.every((frame) => frame.opacity === 1 && frame.shift === 0)).toBe(true)
+        continue
+      }
+
+      // An opening panel fades over several frames from 0.15 and shifts in from at most its offset toward its edge.
       const opacities = frames.map((frame) => frame.opacity).filter((opacity) => opacity < 1)
       expect(new Set(opacities).size).toBeGreaterThan(2)
       expect(Math.min(...opacities)).toBeGreaterThan(0.14)

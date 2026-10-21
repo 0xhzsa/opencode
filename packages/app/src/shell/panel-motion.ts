@@ -1,18 +1,16 @@
 import { createEffect, createSignal, on, onCleanup, type Accessor } from "solid-js"
 import { prefersReducedMotion, Spring } from "@opencode/ui/motion"
 
-// Panels in flight, across the app. Native views, which can't fade with the DOM, stay hidden while any panel moves.
+// Panels opening, across the app. Native views, which can't fade with the DOM, stay hidden until the panel lands.
 const [flights, setFlights] = createSignal(0)
 
 export const panelsMoving = () => flights() > 0
 
-// Layout changes at once; only the panel moves, by a few pixels toward its edge, and fades. Both run as Web Animations
-// on transform and opacity, so the compositor plays them through main-thread work like mounting the panel.
+// Layout changes at once; an opening panel shifts in a few pixels from its edge and fades up. Both run as Web
+// Animations on transform and opacity, so the compositor plays them through main-thread work like mounting the panel.
 const shift = springEasing(0.24)
 
 const fade = { duration: 180, easing: "cubic-bezier(0.44, 0.75, 0.63, 1.03)" }
-
-const faded = 0.15
 
 // Shortcuts toggle panels many times a day, so a toggle from the keyboard skips the motion.
 let keyboard = false
@@ -23,9 +21,9 @@ if (typeof window !== "undefined") {
 }
 
 /**
- * Fades an edge panel in and out while it shifts `offset` pixels toward its edge (negative for the inline-start edge;
- * mirrored in RTL). `present` stays true until a close settles, so the panel can stay visible while it leaves.
- * `whenSettled` defers work until the motion lands; `sync` shows a state at once, for changes the user makes by hand.
+ * Opens an edge panel by shifting it `offset` pixels in from its edge (negative for the inline-start edge; mirrored in
+ * RTL) while it fades up from 0.15. Closing is instant and cancels an opening in flight. `whenSettled` defers work
+ * until the opening lands.
  */
 export function createPanelMotion(input: {
   open: Accessor<boolean>
@@ -34,21 +32,13 @@ export function createPanelMotion(input: {
   /** A change shows the new state without motion, e.g. switching to another session's layout. */
   identity?: Accessor<unknown>
 }) {
-  const [present, setPresent] = createSignal(input.open())
   let animations: Animation[] = []
   let landed: (() => void)[] = []
-  // A state `sync` asked to show at once, for when the change hasn't reached this motion yet, e.g. inside a batch.
-  let snapTo: boolean | undefined
 
-  const stop = () => {
+  const settle = () => {
     if (animations.length > 0) setFlights((count) => count - 1)
     animations.forEach((animation) => animation.cancel())
     animations = []
-  }
-
-  const settle = () => {
-    if (!input.open()) setPresent(false)
-    stop()
     const queued = landed
     landed = []
     queued.forEach((run) => run())
@@ -58,29 +48,20 @@ export function createPanelMotion(input: {
     on(
       () => [input.open(), input.identity?.()] as const,
       ([open, identity], previous) => {
-        // Work queued for the previous direction no longer applies.
-        landed = []
-        const now = snapTo === open || keyboard || prefersReducedMotion()
-        snapTo = undefined
-
-        if (open) setPresent(true)
-
+        // Work queued for an opening that a close interrupted no longer applies.
+        if (!open) landed = []
+        settle()
         const element = input.element()
 
-        if (previous === undefined || previous[1] !== identity || now || !element?.animate) return settle()
+        const instant = !previous || previous[1] !== identity || keyboard || prefersReducedMotion()
+
+        if (!open || instant || !element?.animate) return
 
         const x = input.offset * (element.matches(":dir(rtl)") ? -1 : 1)
-        const away = { transform: `translateX(${x}px)`, opacity: `${faded}` }
-        const rest = { transform: "none", opacity: "1" }
-        const target = open ? rest : away
-        // A reversal mid-flight starts from where the panel is now.
-        const start = animations.length > 0 ? getComputedStyle(element) : open ? away : rest
-
-        stop()
         setFlights((count) => count + 1)
         animations = [
-          element.animate({ transform: [start.transform, target.transform] }, { ...shift, fill: "both" }),
-          element.animate({ opacity: [start.opacity, target.opacity] }, { ...fade, fill: "both" }),
+          element.animate({ transform: [`translateX(${x}px)`, "none"] }, shift),
+          element.animate({ opacity: [0.15, 1] }, fade),
         ]
         const current = animations
         void Promise.all(current.map((animation) => animation.finished)).then(
@@ -91,14 +72,9 @@ export function createPanelMotion(input: {
     ),
   )
 
-  onCleanup(stop)
+  onCleanup(settle)
 
   return {
-    present,
-    sync: (open: boolean) => {
-      if (animations.length > 0 && input.open() === open) return settle()
-      snapTo = open
-    },
     whenSettled: (run: () => void) => {
       if (animations.length > 0) return void landed.push(run)
       run()
@@ -121,32 +97,26 @@ function springEasing(duration: number) {
 }
 
 /**
- * Keeps focus out of a closing panel without `inert`, which would restyle every element in it: focus inside moves to
- * `target` when the close starts and whenever it enters during the flight. A settled panel is skipped, so nothing in
- * it can take focus.
+ * Moves focus out of a panel when it closes, to `target`, without `inert`, which would restyle every element in it.
+ * The closed panel is skipped by content-visibility, so nothing in it can take focus afterwards.
  */
-export function guardClosingFocus(input: {
+export function releaseClosedFocus(input: {
   root: Accessor<HTMLElement | undefined>
-  closing: Accessor<boolean>
+  open: Accessor<boolean>
   target: () => HTMLElement | undefined
 }) {
-  const evict = () => {
-    const root = input.root()
+  createEffect(
+    on(
+      input.open,
+      (open) => {
+        if (open || !input.root()?.contains(document.activeElement)) return
+        const target = input.target()
 
-    if (!input.closing() || !root?.contains(document.activeElement)) return
-    const target = input.target()
+        if (target) return target.focus({ preventScroll: true })
 
-    if (target) return target.focus({ preventScroll: true })
-
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
-  }
-
-  createEffect(on(input.closing, evict, { defer: true }))
-  createEffect(() => {
-    const root = input.root()
-
-    if (!root) return
-    root.addEventListener("focusin", evict)
-    onCleanup(() => root.removeEventListener("focusin", evict))
-  })
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+      },
+      { defer: true },
+    ),
+  )
 }

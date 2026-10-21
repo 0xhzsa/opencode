@@ -86,12 +86,9 @@ function SessionScreenContent(props: {
     closed: attachment.closed,
     open: (key) => attachment.openTab(key, props.view()),
     side: () => session.layout.view().side,
-    // Closing the last tab closes the side region, which opens with a new tab next time. The user's own hand closed
-    // it, so it goes at once.
+    // Closing the last tab closes the side region, which opens with a new tab next time.
     onEmptied: () => {
-      if (!session.layout.view().side.opened()) return
-      session.layout.view().side.toggle()
-      sideMotion.sync(false)
+      if (session.layout.view().side.opened()) session.layout.view().side.toggle()
     },
     settled: (run) => sideMotion.whenSettled(run),
   })
@@ -434,13 +431,9 @@ function SessionScreenContent(props: {
             class="min-w-0 h-full overflow-visible"
             classList={{
               "relative z-0 flex-1": sideVisible(),
-              // Out of the row, so a closing or closed panel takes no space or gap. A close fades it out over the chat
-              // at its open width.
-              "absolute inset-y-0 end-0": !sideVisible(),
-              "z-20": !sideVisible() && sideMotion.present(),
-              "w-0 [content-visibility:hidden]": !sideMotion.present(),
+              // Out of the row, so a closed panel takes no space or gap.
+              "absolute inset-y-0 end-0 w-0 [content-visibility:hidden]": !sideVisible(),
             }}
-            style={{ width: !sideVisible() && sideMotion.present() ? screen.side.contentWidth() : undefined }}
           >
             <div
               data-slot="session-side-panel-content"
@@ -455,7 +448,6 @@ function SessionScreenContent(props: {
                       view={props.view()}
                       region={region}
                       sidebar={sidebar}
-                      present={sideMotion.present()}
                       size={screen.size}
                       drag={drag}
                     />

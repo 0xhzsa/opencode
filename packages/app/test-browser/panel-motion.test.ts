@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "bun:test"
 import { batch, createRoot, createSignal } from "solid-js"
-import { createPanelMotion, guardClosingFocus, panelsMoving } from "../src/shell/panel-motion"
+import { createPanelMotion, panelsMoving, releaseClosedFocus } from "../src/shell/panel-motion"
 
 type Played = {
   keyframes: PropertyIndexedKeyframes
@@ -53,103 +53,93 @@ const land = async (played: Played[]) => {
   await Promise.resolve()
 }
 
-it("opens with a short shift on a spring and a fade from 0.15, present until a close lands", async () => {
+it("opens with a 10px shift on a 240 ms critically damped spring and a 180 ms fade from 0.15", async () => {
   const panel = setup(false)
   panel.setOpen(true)
 
-  expect(panel.motion.present()).toBe(true)
   const [shift, fade] = panel.played
   expect(shift.keyframes.transform).toEqual(["translateX(-10px)", "none"])
-  expect(shift.options.easing).toStartWith("linear(0, ")
-  expect(shift.options.duration).toBeGreaterThan(240)
-  expect(shift.options.duration).toBeLessThan(320)
-  expect(fade.keyframes.opacity).toEqual(["0.15", "1"])
+  // The easing samples x(t) = 1 - (1 + ωt)e^(-ωt) with ω = 2π / 0.24 s, one point per 60 Hz frame.
+  const omega = (2 * Math.PI) / 0.24
+  const points = String(shift.options.easing).slice("linear(".length, -1).split(", ").map(Number)
+  points.slice(1, -1).forEach((point, index) => {
+    const t = (index + 1) / 60
+    expect(point).toBeCloseTo(1 - (1 + omega * t) * Math.exp(-omega * t), 3)
+  })
+  expect(points.at(-1)).toBe(1)
+  expect(shift.options.duration).toBeCloseTo(((points.length - 1) * 1000) / 60)
+  expect(fade.keyframes.opacity).toEqual([0.15, 1])
   expect(fade.options).toMatchObject({ duration: 180, easing: "cubic-bezier(0.44, 0.75, 0.63, 1.03)" })
   expect(panelsMoving()).toBe(true)
   await land(panel.played)
   expect(panelsMoving()).toBe(false)
-
-  panel.setOpen(false)
-  expect(panel.played.at(-1)!.keyframes.opacity).toEqual(["1", "0.15"])
-  expect(panel.motion.present()).toBe(true)
-  await land(panel.played)
-  expect(panel.motion.present()).toBe(false)
   expect(panel.played.every((animation) => animation.cancelled)).toBe(true)
 })
 
-it("toggles from the keyboard without motion", () => {
-  const panel = setup(true)
-  window.dispatchEvent(new KeyboardEvent("keydown", { key: "b" }))
-  panel.setOpen(false)
-  window.dispatchEvent(new PointerEvent("pointerdown"))
-
-  expect(panel.played).toEqual([])
-  expect(panel.motion.present()).toBe(false)
-  expect(panelsMoving()).toBe(false)
-})
-
-it("snaps under reduced motion", () => {
-  document.documentElement.dataset.motion = "reduce"
-  const panel = setup(true)
-  panel.setOpen(false)
-
-  expect(panel.played).toEqual([])
-  expect(panel.motion.present()).toBe(false)
-})
-
-it("turns around mid-flight, dropping the first direction's animations and settled work", async () => {
+it("closes instantly, cancelling an opening in flight and the work queued for it", () => {
   const panel = setup(false)
   const ran: string[] = []
   panel.setOpen(true)
   panel.motion.whenSettled(() => ran.push("opened"))
   panel.setOpen(false)
-  panel.motion.whenSettled(() => ran.push("closed"))
 
-  expect(panel.played.slice(0, 2).every((animation) => animation.cancelled)).toBe(true)
-  await land(panel.played)
-  expect(ran).toEqual(["closed"])
-  expect(panel.motion.present()).toBe(false)
+  expect(panel.played).toHaveLength(2)
+  expect(panel.played.every((animation) => animation.cancelled)).toBe(true)
+  expect(panelsMoving()).toBe(false)
+  expect(ran).toEqual([])
   panel.motion.whenSettled(() => ran.push("at rest"))
-  expect(ran).toEqual(["closed", "at rest"])
+  expect(ran).toEqual(["at rest"])
 })
 
-it("shows another layout's state without motion", () => {
-  const panel = setup(true)
+it("runs settled work once an opening lands", async () => {
+  const panel = setup(false)
+  const ran: string[] = []
+  panel.setOpen(true)
+  panel.motion.whenSettled(() => ran.push("opened"))
+
+  expect(ran).toEqual([])
+  await land(panel.played)
+  expect(ran).toEqual(["opened"])
+})
+
+it("opens from the keyboard without motion", () => {
+  const panel = setup(false)
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "b" }))
+  panel.setOpen(true)
+  window.dispatchEvent(new PointerEvent("pointerdown"))
+
+  expect(panel.played).toEqual([])
+  expect(panelsMoving()).toBe(false)
+})
+
+it("opens without motion under reduced motion", () => {
+  document.documentElement.dataset.motion = "reduce"
+  const panel = setup(false)
+  panel.setOpen(true)
+
+  expect(panel.played).toEqual([])
+})
+
+it("shows another layout's open panel without motion", () => {
+  const panel = setup(false)
   batch(() => {
-    panel.setOpen(false)
+    panel.setOpen(true)
     panel.setIdentity("b")
   })
 
   expect(panel.played).toEqual([])
-  expect(panel.motion.present()).toBe(false)
 })
 
-it("shows a state at once when synced, also from inside a batch", () => {
-  const panel = setup(true)
-  batch(() => {
-    panel.setOpen(false)
-    panel.motion.sync(false)
-  })
-
-  expect(panel.played).toEqual([])
-  expect(panel.motion.present()).toBe(false)
-
-  panel.setOpen(true)
-  panel.motion.sync(true)
-  expect(panel.played.every((animation) => animation.cancelled)).toBe(true)
-  expect(panelsMoving()).toBe(false)
-})
-
-it("moves focus out of a closing panel when the close starts and when it re-enters mid-flight", () => {
+it("moves focus out of a panel when it closes", () => {
   const root = document.createElement("div")
   const inner = document.createElement("button")
   const toggle = document.createElement("button")
   root.append(inner)
   document.body.append(root, toggle)
-  const [closing, setClosing] = createSignal(false)
+  const [open, setOpen] = createSignal(true)
   cleanups.push(
     createRoot((dispose) => {
-      guardClosingFocus({ root: () => root, closing, target: () => toggle })
+      releaseClosedFocus({ root: () => root, open, target: () => toggle })
 
       return dispose
     }),
@@ -160,13 +150,10 @@ it("moves focus out of a closing panel when the close starts and when it re-ente
   )
 
   inner.focus()
-  setClosing(true)
+  setOpen(false)
   expect(document.activeElement).toBe(toggle)
 
-  inner.focus()
-  expect(document.activeElement).toBe(toggle)
-
-  setClosing(false)
+  setOpen(true)
   inner.focus()
   expect(document.activeElement).toBe(inner)
 })
