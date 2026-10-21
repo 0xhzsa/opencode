@@ -28,6 +28,7 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
       width: number
       typography: TimelineTypography
       height: number
+      streamHeight: number
       trailingMargin: number
       reasoning: boolean
     }
@@ -134,8 +135,14 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
         }
       const previous = measurements.get(prepared)
       if (previous?.width === width && previous.typography === typography && previous.reasoning === reasoning)
-        return { source: "pretext" as const, height: previous.height, trailingMargin: previous.trailingMargin }
+        return {
+          source: "pretext" as const,
+          height: previous.height,
+          streamHeight: previous.streamHeight,
+          trailingMargin: previous.trailingMargin,
+        }
       const entry = documents.get(key)!
+      let lastSublineKey: string | undefined
       const blocks = prepared.blocks.flatMap((block, blockIndex) => {
         if (block.mode === "code")
           return [
@@ -151,19 +158,35 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
               edgeAfter: 24,
             },
           ]
-        return entry.elements[blockIndex]!.map((element, index) =>
-          measure(element, `${key}:${blockIndex}:${index}`, width, typography, reasoning),
-        )
+        return entry.elements[blockIndex]!.map((element, index) => {
+          const itemKey = `${key}:${blockIndex}:${index}`
+          lastSublineKey = itemKey
+          return measure(element, itemKey, width, typography, reasoning)
+        })
       })
+      const baseHeight = flowHeight(blocks) + (blocks[0]?.edgeBefore ?? 0) + (blocks.at(-1)?.edgeAfter ?? 0)
+      const subline = streaming && lastSublineKey ? text.richSubline(lastSublineKey) : undefined
+      const lag =
+        subline && subline.lineCount >= 1
+          ? (1 - Math.min(1, Math.max(0.14, subline.fill / 0.86))) *
+            subline.lineHeight *
+            (subline.lineCount === 1 ? 0.52 : 0.82)
+          : 0
       const measured = {
         width,
         typography,
         reasoning,
-        height: flowHeight(blocks) + (blocks[0]?.edgeBefore ?? 0) + (blocks.at(-1)?.edgeAfter ?? 0),
+        height: baseHeight,
+        streamHeight: Math.max(0, Math.round((baseHeight - lag) * 64) / 64),
         trailingMargin: blocks.at(-1)?.edgeAfter ?? 0,
       }
       measurements.set(prepared, measured)
-      return { source: "pretext" as const, height: measured.height, trailingMargin: measured.trailingMargin }
+      return {
+        source: "pretext" as const,
+        height: measured.height,
+        streamHeight: measured.streamHeight,
+        trailingMargin: measured.trailingMargin,
+      }
     },
   }
 

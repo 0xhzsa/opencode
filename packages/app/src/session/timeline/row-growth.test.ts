@@ -163,4 +163,17 @@ describe("row growth", () => {
       copyScale: 1,
     })
   })
+
+  test("maintains a continuous feather cushion across streaming target advances", async () => {
+    const { growth, sizes, wrapper, frames } = setup()
+    growth.grow("row", 46, 50, false, undefined, true)
+    await Bun.sleep(25)
+    const mask = wrapper.style.getPropertyValue("mask-image")
+    const px = Number(mask.match(/calc\(100% - (\d+)px\)/)?.[1] ?? 0)
+    expect(px).toBeGreaterThanOrEqual(16)
+    growth.grow("row", 46, 90, false, undefined, true)
+    await settle(growth, frames)
+    expect(sizes.at(-1)).toBe(90)
+    expect(wrapper.style.getPropertyValue("mask-image")).toBe("")
+  })
 })

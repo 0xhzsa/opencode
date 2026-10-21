@@ -1,5 +1,10 @@
 import { clearCache, layout, measureNaturalWidth, prepare, type PreparedText } from "@chenglou/pretext"
-import { measureRichInlineStats, prepareRichInline, type RichInlineItem } from "@chenglou/pretext/rich-inline"
+import {
+  prepareRichInline,
+  walkRichInlineLineRanges,
+  type PreparedRichInline,
+  type RichInlineItem,
+} from "@chenglou/pretext/rich-inline"
 
 /** Resolved CSS values, read when the viewport's typography changes, never once per row. */
 export type TimelineTypography = {
@@ -17,7 +22,7 @@ export type TimelineTypography = {
 }
 
 export type TimelineRowLayout =
-  | { source: "pretext" | "fixed"; height: number }
+  | { source: "pretext" | "fixed"; height: number; streamHeight?: number }
   | { source: "dom"; reason: string; blocks?: number[] }
 
 export type TimelineLayoutEnvironment = {
@@ -79,10 +84,12 @@ export function createTimelineTextLayout() {
     string,
     {
       signature: string
-      prepared: ReturnType<typeof prepareRichInline>
+      prepared: PreparedRichInline
       width?: number
       lineHeight?: number
       height?: number
+      lineCount?: number
+      lastFill?: number
     }
   >()
   let revision = -1
@@ -137,9 +144,20 @@ export function createTimelineTextLayout() {
       )
         return previous.height
       const prepared = previous?.signature === signature ? previous.prepared : prepareRichInline(items)
-      const height = measureRichInlineStats(prepared, targetWidth).lineCount * lineHeight
-      rich.set(key, { signature, prepared, width: targetWidth, lineHeight, height })
+      let lastWidth = 0
+      const lineCount = walkRichInlineLineRanges(prepared, targetWidth, (line) => {
+        lastWidth = line.width
+      })
+      const height = lineCount * lineHeight
+      const lastFill = lineCount > 0 ? Math.min(1, Math.max(0, lastWidth / targetWidth)) : 0
+      rich.set(key, { signature, prepared, width: targetWidth, lineHeight, height, lineCount, lastFill })
       return height
+    },
+    richSubline(key: string) {
+      const entry = rich.get(key)
+      if (!entry || entry.lineCount === undefined || entry.lastFill === undefined || entry.lineHeight === undefined)
+        return undefined
+      return { lineCount: entry.lineCount, fill: entry.lastFill, lineHeight: entry.lineHeight }
     },
     ch(style: TimelineTypography) {
       refresh(style.revision)

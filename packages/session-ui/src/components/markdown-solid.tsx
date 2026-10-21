@@ -25,11 +25,11 @@ export function createMarkdownRenderer(root: HTMLDivElement, html: string, words
       typeof document !== "undefined"
         ? Number(document.documentElement?.style.getPropertyValue("--motion-time-scale")) || 1
         : 1
-    const step = 20 * scale
-    const maxLead = 120 * scale
-    const base = Math.min(now + maxLead, Math.max(now, frontier))
+    const base = Math.max(now, frontier)
+    const lead = (base - now) / scale
+    const step = Math.max(5.5, Math.min(20, 20 - lead * 0.045)) * scale
     frontier = base + step
-    return Math.max(0, Math.round((base - now) / 16) * 16)
+    return Math.max(0, Math.round(base - now))
   }
 
   const dispose = render(

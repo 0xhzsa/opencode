@@ -67,7 +67,11 @@ type Outcome = "completed" | "error" | "cancelled"
 function settledStreamText(raw: string, live: boolean) {
   if (!live || !raw) return raw
   if ((raw.match(/```/g)?.length ?? 0) % 2 === 1) return raw.replace(/\n[ \t]*`{1,2}$/, "")
-  const line = raw.slice(raw.lastIndexOf("\n") + 1)
+  const lastNewline = raw.lastIndexOf("\n")
+  const line = raw.slice(lastNewline + 1)
+  if (lastNewline > 0 && /^[A-Za-z0-9\u00C0-\u024F]{1,24}$/.test(line)) {
+    return raw.slice(0, lastNewline).replace(/\n+$/, "")
+  }
   const edge = line.search(/[ \t]+\S{1,24}$/)
   if (edge < 0) return raw
   const prefix = line.slice(0, edge)
@@ -1285,15 +1289,13 @@ export function createSessionTimelineRowRenderer(input: {
           environment.typography,
         )
         if (measured.source === "dom") return measured
+        const extra =
+          (row.spacing === "content" ? 16 : 24 + (row.spacing === "tool" ? 8 : 0)) +
+          (copyContentID(row.userMessageID) === row.group.ref.partID ? 28 - Math.min(4, measured.trailingMargin) : 0)
         return {
           source: "pretext",
-          height: !text
-            ? 0
-            : measured.height +
-              (row.spacing === "content" ? 16 : 24 + (row.spacing === "tool" ? 8 : 0)) +
-              (copyContentID(row.userMessageID) === row.group.ref.partID
-                ? 28 - Math.min(4, measured.trailingMargin)
-                : 0),
+          height: !text ? 0 : measured.height + extra,
+          streamHeight: !text ? 0 : (live ? measured.streamHeight : measured.height) + extra,
         }
       }
     }

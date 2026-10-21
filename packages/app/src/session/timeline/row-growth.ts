@@ -74,8 +74,11 @@ type Growth = {
   value: number
   target: number
   opaque: number
+  maskValue: number
   maskPx: number
   freshRow: boolean
+  streaming: boolean
+  cruiseStep: number
   entering: boolean
   enterSpan: number
   enterProgress: number
@@ -143,9 +146,26 @@ export function createRowGrowth(input: {
         growth.freshRow = false
         lastTake = 0
       }
+      const dtFactor = Math.max(0.75, Math.min(2.0, dt / (1 / 60)))
       const startStep = 1.875 / scale
-      const cap = slowWorking ? 7.5 / scale : rem <= 120 || lastTake < 7.5 / scale ? 11.5 / scale : 22 / scale
-      let maxTake = Math.max(startStep, Math.min(cap, lastTake > 0 ? 3.2 * lastTake : startStep))
+      const fastCap = Math.min(16, 11.5 + Math.max(0, rem - 90) * 0.05)
+      const baseCap = (slowWorking ? 7.5 : lastTake < 7.5 / scale ? 11.5 : fastCap) / scale
+      const targetCap = growth.streaming
+        ? rem <= 36
+          ? Math.max(1.25 / scale, Math.min(baseCap, (rem * 0.085 + 0.65) / scale))
+          : Math.min(baseCap, (3.71 + (rem - 36) * 0.14) / scale)
+        : baseCap
+      const rampUp = lastTake > 0 ? Math.min(lastTake * 2.2, lastTake + (2.8 * dtFactor) / scale) : startStep
+      const rampDown = lastTake > targetCap ? Math.max(targetCap, lastTake - (3.0 * dtFactor) / scale) : targetCap
+      let maxTake = Math.max(
+        growth.streaming && lastTake > 0 ? Math.min(targetCap, 1.15 / scale) : startStep,
+        Math.min(rampDown, rampUp),
+      )
+      const heldRoom = held && input.below(key) ? grid(held.value) : 0
+      if (!growth.coupled && heldRoom > 1 / 64 && heldRoom < maxTake) {
+        maxTake = heldRoom
+        growth.freshRow = true
+      }
       const room = input.foldRoom?.() ?? 0
       if (!growth.coupled && room > 1 / 64 && room < maxTake) {
         maxTake = grid(room)
@@ -190,9 +210,13 @@ export function createRowGrowth(input: {
           if (rowDone || growth.target <= shown) {
             paintEdge(wrapper, growth, 0)
           } else {
-            const wantFade = Math.min(softEdge, Math.max(0, growth.target - shown) * 1.5)
-            growth.opaque = Math.max(growth.opaque, shown - wantFade)
-            paintEdge(wrapper, growth, Math.max(0, Math.min(shown, shown - growth.opaque)))
+            const leftToGrow = Math.max(0, growth.target - shown)
+            const wantFade = Math.min(softEdge, Math.max(growth.streaming ? 18 : 0, leftToGrow * 1.5))
+            growth.maskValue =
+              wantFade >= growth.maskValue
+                ? Math.min(wantFade, growth.maskValue + 5)
+                : Math.max(wantFade, growth.maskValue - 1.8)
+            paintEdge(wrapper, growth, Math.min(shown, growth.maskValue))
           }
           if (growth.entering) paintArrival(wrapper, growth, shown)
         }
@@ -265,7 +289,14 @@ export function createRowGrowth(input: {
       }
       return undefined
     },
-    grow(key: string, from: number, to: number, enter?: (() => void) | boolean, coupled?: Coupled) {
+    grow(
+      key: string,
+      from: number,
+      to: number,
+      enter?: (() => void) | boolean,
+      coupled?: Coupled,
+      streaming = false,
+    ) {
       const entering = typeof enter === "boolean" ? enter : !!enter
       const onEnter = typeof enter === "function" ? enter : undefined
       const wasGrowing = growths.size > 0
@@ -276,7 +307,8 @@ export function createRowGrowth(input: {
           return
         }
         const oldRem = Math.abs(running.target - running.value)
-        if (oldRem <= 1e-4) running.freshRow = true
+        if (oldRem <= 1e-4 && !streaming && !running.streaming) running.freshRow = true
+        running.streaming = streaming
         running.target = to
         const newRem = Math.abs(to - running.value)
         if (onEnter && !running.enter) running.enter = onEnter
@@ -300,8 +332,11 @@ export function createRowGrowth(input: {
         value: from,
         target: to,
         opaque: Math.max(0, from),
+        maskValue: streaming ? 16 : Math.min(softEdge, rem),
         maskPx: 0,
         freshRow: true,
+        streaming,
+        cruiseStep: 0,
         entering: entering && from === 0,
         enterSpan: Math.min(28, Math.max(12, to)),
         enterProgress: 0,

@@ -465,7 +465,10 @@ export function createTimelineVirtualizer(input: Input) {
     batch(() =>
       rowKeys().forEach((key, index) => {
         const value = values.get(key)
-        if (value && value.source !== "dom") virtualizer.resizeItem(index, value.height)
+        if (value && value.source !== "dom") {
+          const isStream = following() && streaming(rows()[index])
+          virtualizer.resizeItem(index, isStream && value.streamHeight !== undefined ? value.streamHeight : value.height)
+        }
       }),
     )
   })
@@ -505,6 +508,7 @@ export function createTimelineVirtualizer(input: Input) {
     below: (key) => rowKeys().lastIndexOf(key) >= shift().rows,
     foldRoom: () => growthViewport - (topOffset() + virtualizer.getTotalSize() + bottomInset() + heldSpace),
     movesWorking: (key) => {
+      if (leavingKeys().includes("activity")) return true
       if (growthViewport > topOffset() + virtualizer.getTotalSize() + bottomInset() + heldSpace + 1 / 64) return true
       const keys = rowKeys()
       const actIdx = keys.lastIndexOf("activity")
@@ -685,7 +689,7 @@ export function createTimelineVirtualizer(input: Input) {
       resizeItem(index, 0)
     }
 
-    growth.grow(key, shown, size, arriving)
+    growth.grow(key, shown, size, arriving, undefined, streaming(rows()[index]))
   }
 
   const grows = (index: number, shown: number, size: number) => {
@@ -717,7 +721,10 @@ export function createTimelineVirtualizer(input: Input) {
       const oldSize =
         virtualizer.itemSizeCache.get("activity") ?? virtualizer.measurementsCache[oldActivityIdx]?.size ?? 36
       const targetSize = modelHeight("activity") ?? 36
-      const gapKey = keys[oldActivityIdx]
+      const gapKey = previous.slice(oldActivityIdx + 1).find((k) => {
+        const idx = keys.indexOf(k)
+        return idx >= 0 && idx < newActivityIdx
+      })
       const oldGapIdx = gapKey ? previous.indexOf(gapKey) : -1
       if (oldSize >= 1 && gapKey && oldGapIdx > oldActivityIdx) {
         const gapBase =
@@ -732,10 +739,12 @@ export function createTimelineVirtualizer(input: Input) {
           moveDistance +=
             kKey === gapKey
               ? gapBase + oldSize
-              : (virtualizer.itemSizeCache.get(kKey) ??
-                (kOld >= 0 ? virtualizer.measurementsCache[kOld]?.size : undefined) ??
-                modelHeight(kKey) ??
-                fallbackItemSize)
+              : kOld < 0
+                ? 0
+                : (virtualizer.itemSizeCache.get(kKey) ??
+                  virtualizer.measurementsCache[kOld]?.size ??
+                  modelHeight(kKey) ??
+                  fallbackItemSize)
         }
         growth.drop("activity")
         virtualizer.itemSizeCache.set(gapKey, gapBase + oldSize)
