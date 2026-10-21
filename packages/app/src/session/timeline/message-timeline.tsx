@@ -446,7 +446,7 @@ function MessageTimelineView(
         <div class={`flex h-9 items-center gap-2 pt-3 text-[13px] font-[530] leading-text-compact ${turnPadding()}`}>
           <div
             data-slot="session-working-indicator"
-            data-component={showWorking() ? "session-working" : undefined}
+            data-component={showWorking() || !showActivity() ? "session-working" : undefined}
             role={showWorking() ? "status" : undefined}
             aria-hidden={!showWorking() || undefined}
             class="origin-left will-change-[transform,opacity,filter]"

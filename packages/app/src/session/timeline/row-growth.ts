@@ -15,6 +15,8 @@ export const growthSpring = motionTuning.spring("timeline.growth", {
 
 const grid = (value: number) => Math.round(value * 64) / 64
 
+const softEdge = 28
+
 export const workingHandoffDuration = 0.34
 
 const ease = (t: number) => t * t * (3 - 2 * t)
@@ -66,7 +68,20 @@ export function workingHandoffPose(handoff: number, handsOffToCopy = true, reduc
   }
 }
 
-type Growth = { value: number; target: number; enter?: () => void }
+type Coupled = { key: string; base: number; extra: number }
+
+type Growth = {
+  value: number
+  target: number
+  opaque: number
+  maskPx: number
+  freshRow: boolean
+  entering: boolean
+  enterSpan: number
+  enterProgress: number
+  enter?: () => void
+  coupled?: Coupled
+}
 
 /**
  * Rows whose displayed height eases toward their measured height, and a gap left by a row near the end that closes on
@@ -78,11 +93,14 @@ export function createRowGrowth(input: {
   measure: () => void
   resize: (key: string, size: number) => HTMLElement | false | undefined
   below: (key: string) => boolean
+  foldRoom?: () => number
+  movesWorking?: (key: string) => boolean
   settle: (state: { pending: number; held: number }) => void
 }) {
   const growths = new Map<string, Growth>()
   let spring: Spring | undefined
   let fresh = false
+  let lastTake = 0
   let held: Spring | undefined
   let closing = false
   let quiet = 0
@@ -91,30 +109,60 @@ export function createRowGrowth(input: {
   const advance = (dt: number) => {
     if (!spring || !growths.size) {
       spring = undefined
+      lastTake = 0
       return
     }
+    spring.tune(growthSpring())
     const before = grid(spring.value)
     const beforeRaw = spring.value
     const nextValue = spring.step(dt)
     const target = spring.target
     // A growth bent toward a nearer target keeps its speed and would pass it, then come back: it lands there instead.
     const done = spring.resting || (target - before) * (target - nextValue) <= 0
-    let budget = done ? Infinity : Math.max(0, nextValue - beforeRaw)
+    const rawBudget = done ? Infinity : Math.max(0, nextValue - beforeRaw)
+    const scale = Math.max(1, motionTuning.timeScale())
+    let stepped = false
+    let consumed = 0
 
     growths.forEach((growth, key) => {
       const prevShown = grid(growth.value)
       const diff = growth.target - growth.value
       const rem = Math.abs(diff)
-      const take = rem <= 0 ? 0 : Math.min(rem, budget)
-      if (take > 0) budget -= take
+      if (rem <= 1e-4 && growth.entering) {
+        const wrapper = input.resize(key, growth.target)
+        if (wrapper) {
+          paintEdge(wrapper, growth, 0)
+          paintArrival(wrapper, growth, growth.target)
+        }
+        if (!growth.entering || !wrapper) growths.delete(key)
+        return
+      }
+      if (stepped) return
+      const slowWorking = input.movesWorking?.(key) ?? false
+      if (growth.freshRow) {
+        growth.freshRow = false
+        lastTake = 0
+      }
+      const startStep = 1.875 / scale
+      const cap = slowWorking ? 7.5 / scale : rem <= 120 || lastTake < 7.5 / scale ? 11.5 / scale : 22 / scale
+      let maxTake = Math.max(startStep, Math.min(cap, lastTake > 0 ? 3.2 * lastTake : startStep))
+      const room = input.foldRoom?.() ?? 0
+      if (!growth.coupled && room > 1 / 64 && room < maxTake) {
+        maxTake = grid(room)
+        growth.freshRow = true
+      }
+      const take = rem <= 0 ? 0 : Math.min(rem, rawBudget, done && rem <= maxTake ? rem : maxTake)
+      stepped = true
+      consumed = take
+      lastTake = take
       const nextRowValue = rem <= 0 ? growth.value : growth.value + Math.sign(diff) * take
       const rowDone =
-        done ||
+        (done && rem <= maxTake) ||
         (growth.target - prevShown) * (growth.target - nextRowValue) <= 0 ||
         Math.abs(growth.target - nextRowValue) <= 1e-4
       growth.value = rowDone ? growth.target : nextRowValue
       const shown = rowDone ? growth.target : grid(growth.value)
-      if (!rowDone && take <= 0) return
+      if (!rowDone && take <= 0 && !growth.entering) return
 
       const enter = growth.enter
       if (enter) {
@@ -122,26 +170,61 @@ export function createRowGrowth(input: {
         enter()
       }
       const wrapper = input.resize(key, shown)
+      if (growth.coupled) {
+        const coupled = growth.coupled
+        if (rowDone || wrapper === false) {
+          const cWrapper = input.resize(coupled.key, coupled.base)
+          if (cWrapper) clearWrapper(cWrapper)
+        } else {
+          const ratio = Math.max(0, Math.min(1, 1 - shown / Math.max(1, growth.target)))
+          input.resize(coupled.key, grid(coupled.base + coupled.extra * ratio))
+        }
+      }
 
       if (wrapper === false) {
         const unconsumed = Math.abs(growth.target - growth.value)
         growths.delete(key)
         if (unconsumed > 0) spring?.set(Math.max(spring.value, spring.target - unconsumed))
-      } else if (rowDone) {
-        if (rem > take && spring) spring.value += rem - take
-        growths.delete(key)
+      } else {
+        if (wrapper) {
+          if (rowDone || growth.target <= shown) {
+            paintEdge(wrapper, growth, 0)
+          } else {
+            const wantFade = Math.min(softEdge, Math.max(0, growth.target - shown) * 1.5)
+            growth.opaque = Math.max(growth.opaque, shown - wantFade)
+            paintEdge(wrapper, growth, Math.max(0, Math.min(shown, shown - growth.opaque)))
+          }
+          if (growth.entering) paintArrival(wrapper, growth, shown)
+        }
+        if (rowDone) {
+          if (rem > take && spring) spring.value += rem - take
+          if (!growth.entering || !wrapper) growths.delete(key)
+        }
       }
 
       if (held && wrapper !== false && input.below(key))
         held.value = Math.max(0, held.value - Math.max(0, shown - prevShown))
     })
 
-    if (done || !growths.size) spring = undefined
+    if (spring && Number.isFinite(rawBudget) && consumed < rawBudget) {
+      spring.value = Math.min(spring.target, beforeRaw + consumed)
+    }
+
+    if (!growths.size) {
+      spring = undefined
+      lastTake = 0
+    }
   }
 
   const settle = () => {
     let net = 0
-    growths.forEach((growth) => (net += growth.target - grid(growth.value)))
+    growths.forEach((growth) => {
+      net += growth.target - grid(growth.value)
+      if (growth.coupled) {
+        const ratio = Math.max(0, Math.min(1, 1 - grid(growth.value) / Math.max(1, growth.target)))
+        net -= grid(growth.coupled.extra * ratio)
+      }
+    })
     input.settle({ pending: Math.max(0, grid(net)), held: held ? Math.max(0, grid(held.value)) : 0 })
   }
 
@@ -154,6 +237,7 @@ export function createRowGrowth(input: {
 
     if (held && (closing || quiet >= 0.12)) {
       closing = true
+      held.tune(growthSpring())
       held.step(stepDt)
     }
 
@@ -172,8 +256,18 @@ export function createRowGrowth(input: {
 
   return {
     growing: () => growths.size > 0,
-    target: (key: string) => growths.get(key)?.target,
-    grow(key: string, from: number, to: number, enter?: () => void) {
+    entering: (key: string) => growths.get(key)?.entering === true,
+    target: (key: string) => {
+      const direct = growths.get(key)?.target
+      if (direct !== undefined) return direct
+      for (const growth of growths.values()) {
+        if (growth.coupled?.key === key) return growth.coupled.base
+      }
+      return undefined
+    },
+    grow(key: string, from: number, to: number, enter?: (() => void) | boolean, coupled?: Coupled) {
+      const entering = typeof enter === "boolean" ? enter : !!enter
+      const onEnter = typeof enter === "function" ? enter : undefined
       const wasGrowing = growths.size > 0
       const running = growths.get(key)
       if (running) {
@@ -182,31 +276,51 @@ export function createRowGrowth(input: {
           return
         }
         const oldRem = Math.abs(running.target - running.value)
+        if (oldRem <= 1e-4) running.freshRow = true
         running.target = to
         const newRem = Math.abs(to - running.value)
-        if (enter && !running.enter) running.enter = enter
+        if (onEnter && !running.enter) running.enter = onEnter
+        if (entering) running.entering = true
+        if (coupled) running.coupled = coupled
         spring?.set(spring.target + newRem - oldRem)
         return
       }
       const rem = Math.abs(to - from)
       if (rem <= 1e-4) {
-        enter?.()
-        input.resize(key, to)
+        onEnter?.()
+        const wrapper = input.resize(key, to)
+        if (wrapper) clearWrapper(wrapper)
+        if (coupled) {
+          const cWrapper = input.resize(coupled.key, coupled.base)
+          if (cWrapper) clearWrapper(cWrapper)
+        }
         return
       }
-      growths.set(key, { value: from, target: to, enter })
+      growths.set(key, {
+        value: from,
+        target: to,
+        opaque: Math.max(0, from),
+        maskPx: 0,
+        freshRow: true,
+        entering: entering && from === 0,
+        enterSpan: Math.min(28, Math.max(12, to)),
+        enterProgress: 0,
+        enter: onEnter,
+        coupled,
+      })
       if (!spring) spring = Spring.fromDuration(0, growthSpring())
+      else spring.tune(growthSpring())
       spring.set(spring.target + rem)
       if (!wasGrowing) fresh = true
       stop ??= frameLoop.addMeasured(input.measure, step)
     },
-    absorb(key: string, removed: number, base: number, to: number, enter?: () => void) {
+    absorb(key: string, removed: number, base: number, to: number, enter?: (() => void) | boolean) {
       const running = growths.get(key)
       if (!running) {
         const from = base + removed
         if (Math.abs(to - from) <= 1e-4) {
           queueMicrotask(() => {
-            enter?.()
+            if (typeof enter === "function") enter()
             this.land(key, to)
           })
           return
@@ -218,7 +332,7 @@ export function createRowGrowth(input: {
       running.value += removed
       running.target = to
       const newRem = Math.abs(running.target - running.value)
-      if (enter && !running.enter) running.enter = enter
+      if (typeof enter === "function" && !running.enter) running.enter = enter
       if (newRem <= 1e-4) {
         queueMicrotask(() => this.land(key, to))
         return
@@ -229,12 +343,20 @@ export function createRowGrowth(input: {
       const running = growths.get(key)
       if (!running) return
       const rem = Math.abs(running.target - running.value)
+      if (running.coupled) {
+        const cWrapper = input.resize(running.coupled.key, running.coupled.base)
+        if (cWrapper) clearWrapper(cWrapper)
+      }
       growths.delete(key)
       if (spring) spring.set(Math.max(spring.value, spring.target - rem))
-      if (!growths.size) spring = undefined
+      if (!growths.size) {
+        spring = undefined
+        lastTake = 0
+      }
     },
     hold(size: number) {
       held ??= Spring.fromDuration(0, growthSpring())
+      held.tune(growthSpring())
       held.value += size
       held.set(0)
       stop ??= frameLoop.addMeasured(input.measure, step)
@@ -243,14 +365,23 @@ export function createRowGrowth(input: {
       const running = growths.get(key)
       if (running) {
         const rem = Math.abs(running.target - running.value)
+        if (running.coupled) {
+          const cWrapper = input.resize(running.coupled.key, running.coupled.base)
+          if (cWrapper) clearWrapper(cWrapper)
+        }
         growths.delete(key)
         if (spring) spring.set(Math.max(spring.value, spring.target - rem))
-        if (!growths.size) spring = undefined
+        if (!growths.size) {
+          spring = undefined
+          lastTake = 0
+        }
       }
-      input.resize(key, size)
+      const wrapper = input.resize(key, size)
+      if (wrapper) clearWrapper(wrapper)
     },
     finish() {
       fresh = false
+      lastTake = 0
       stop?.()
       stop = undefined
       spring = undefined
@@ -259,10 +390,50 @@ export function createRowGrowth(input: {
       batch(() =>
         growths.forEach((growth, key) => {
           growth.enter?.()
-          input.resize(key, growth.target)
+          if (growth.coupled) {
+            const cWrapper = input.resize(growth.coupled.key, growth.coupled.base)
+            if (cWrapper) clearWrapper(cWrapper)
+          }
+          const wrapper = input.resize(key, growth.target)
+          if (wrapper) clearWrapper(wrapper)
         }),
       )
       growths.clear()
     },
   }
+}
+
+function paintEdge(wrapper: HTMLElement, growth: Growth | undefined, fade: number) {
+  const px = fade < 1 ? 0 : Math.round(fade)
+  if (growth) {
+    if (growth.maskPx === px) return
+    growth.maskPx = px
+  }
+  if (px === 0) return wrapper.style.removeProperty("mask-image")
+  wrapper.style.setProperty(
+    "mask-image",
+    `linear-gradient(to bottom, #000 calc(100% - ${px}px), rgba(0, 0, 0, 0.72) calc(100% - ${Math.round(px * 0.62)}px), rgba(0, 0, 0, 0.28) calc(100% - ${Math.round(px * 0.28)}px), transparent)`,
+  )
+}
+
+function paintArrival(wrapper: HTMLElement, growth: Growth, shown: number) {
+  const raw = Math.min(1, Math.max(0, shown / Math.max(1, growth.enterSpan)))
+  growth.enterProgress = Math.min(growth.enterProgress + 0.34, Math.max(0.28, easeOut(raw)))
+  const p = growth.enterProgress
+  if (p >= 0.995) {
+    growth.entering = false
+    clearArrival(wrapper)
+    return
+  }
+  wrapper.style.opacity = `${Math.round(p * 1000) / 1000}`
+}
+
+function clearArrival(wrapper: HTMLElement) {
+  wrapper.style.removeProperty("opacity")
+  wrapper.style.removeProperty("filter")
+}
+
+function clearWrapper(wrapper: HTMLElement) {
+  paintEdge(wrapper, undefined, 0)
+  clearArrival(wrapper)
 }

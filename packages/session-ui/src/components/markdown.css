@@ -53,7 +53,8 @@
   }
 
   :is([data-markdown-word], code, [data-component="markdown-code"])[data-markdown-enter] {
-    animation: markdown-word-enter 180ms ease-out both;
+    animation: markdown-word-enter calc(180ms * var(--motion-time-scale, 1)) ease-out var(--markdown-word-delay, 0ms)
+      both;
   }
 
   /* Spacing for flow */

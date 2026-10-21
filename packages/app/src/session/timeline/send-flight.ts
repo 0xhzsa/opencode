@@ -145,6 +145,7 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
 
       // A delayed frame must not skip most of a new flight before its first paint.
       const elapsed = Math.min(dt, 1 / 60)
+      spring.tune(growthSpring())
       const p = Math.min(1, Math.max(0, spring.step(elapsed)))
       flight.layer.style.visibility = "visible"
       host.toggleAttribute("data-pending", pending)

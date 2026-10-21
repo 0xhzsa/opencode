@@ -17,9 +17,23 @@ type MarkdownNode =
 export function createMarkdownRenderer(root: HTMLDivElement, html: string, words: boolean, animate = false) {
   const [nodes, setNodes] = createStore(parseMarkdownNodes(html, words, animate))
   let ready = animate
+  let frontier = 0
+
+  const delay = () => {
+    const now = typeof performance === "object" ? performance.now() : 0
+    const scale =
+      typeof document !== "undefined"
+        ? Number(document.documentElement?.style.getPropertyValue("--motion-time-scale")) || 1
+        : 1
+    const step = 20 * scale
+    const maxLead = 120 * scale
+    const base = Math.min(now + maxLead, Math.max(now, frontier))
+    frontier = base + step
+    return Math.max(0, Math.round((base - now) / 16) * 16)
+  }
 
   const dispose = render(
-    () => <For each={nodes}>{(node) => <MarkdownDomNode node={node} animate={() => ready} />}</For>,
+    () => <For each={nodes}>{(node) => <MarkdownDomNode node={node} animate={() => ready} delay={delay} />}</For>,
     root,
   )
 
@@ -33,7 +47,7 @@ export function createMarkdownRenderer(root: HTMLDivElement, html: string, words
   }
 }
 
-function MarkdownDomNode(props: { node: MarkdownNode; animate: () => boolean }) {
+function MarkdownDomNode(props: { node: MarkdownNode; animate: () => boolean; delay: () => number }) {
   const node = props.node
 
   if (node.type === "text") return node.text
@@ -41,11 +55,22 @@ function MarkdownDomNode(props: { node: MarkdownNode; animate: () => boolean }) 
   if (node.type === "word") {
     let ref: HTMLSpanElement | undefined
     onMount(() => {
-      if (props.animate() && node.animate) ref?.setAttribute("data-markdown-enter", "")
+      if (props.animate() && node.animate && ref) {
+        const wait = props.delay()
+        if (wait > 0) ref.style.setProperty("--markdown-word-delay", `${wait}ms`)
+        ref.setAttribute("data-markdown-enter", "")
+      }
     })
 
     return (
-      <span ref={ref} data-markdown-word="">
+      <span
+        ref={ref}
+        data-markdown-word=""
+        onAnimationEnd={(event) => {
+          event.currentTarget.removeAttribute("data-markdown-enter")
+          event.currentTarget.style.removeProperty("--markdown-word-delay")
+        }}
+      >
         {node.text}
       </span>
     )
@@ -58,7 +83,9 @@ function MarkdownDomNode(props: { node: MarkdownNode; animate: () => boolean }) 
 
   return (
     <Dynamic component={node.tag} ref={ref} {...node.attributes}>
-      <For each={node.children}>{(node) => <MarkdownDomNode node={node} animate={props.animate} />}</For>
+      <For each={node.children}>
+        {(node) => <MarkdownDomNode node={node} animate={props.animate} delay={props.delay} />}
+      </For>
     </Dynamic>
   )
 }

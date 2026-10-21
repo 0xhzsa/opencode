@@ -74,13 +74,14 @@ export function createClientConnection(initialApi: OpenCodeClient, options: Clie
 
   function publish(event: OpenCodeEvent) {
     pending.push(event)
+    const visible = typeof document === "undefined" || document.visibilityState === "visible"
+    if (flushFrame !== undefined && !visible && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(flushFrame)
+      flushFrame = undefined
+    }
     if (flushTimer !== undefined || flushFrame !== undefined) return
     const interval = options.flushInterval ?? 10
-    if (
-      interval > 0 &&
-      typeof requestAnimationFrame === "function" &&
-      (typeof document === "undefined" || document.visibilityState === "visible")
-    ) {
+    if (interval > 0 && typeof requestAnimationFrame === "function" && visible) {
       flushFrame = requestAnimationFrame(flush)
       return
     }

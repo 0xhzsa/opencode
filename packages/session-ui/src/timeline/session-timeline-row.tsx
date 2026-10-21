@@ -65,7 +65,8 @@ type Outcome = "completed" | "error" | "cancelled"
 // Hold an incomplete trailing word on an active prose line until its boundary arrives so it never
 // measures short at the end of a line and wraps to the next line as its remaining letters stream in.
 function settledStreamText(raw: string, live: boolean) {
-  if (!live || !raw || (raw.match(/```/g)?.length ?? 0) % 2 === 1) return raw
+  if (!live || !raw) return raw
+  if ((raw.match(/```/g)?.length ?? 0) % 2 === 1) return raw.replace(/\n[ \t]*`{1,2}$/, "")
   const line = raw.slice(raw.lastIndexOf("\n") + 1)
   const edge = line.search(/[ \t]+\S{1,24}$/)
   if (edge < 0) return raw

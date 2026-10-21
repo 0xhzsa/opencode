@@ -1562,3 +1562,45 @@ function ComposerSuggestionIcon(props: { item: ComposerSuggestion }) {
     />
   )
 }
+
+// Swapped text crossfades in place, like the placeholder turning from a follow-up to a new question as a turn ends.
+function FadingText(props: { text: string }) {
+  let element: HTMLSpanElement | undefined
+  let activeCopy: HTMLElement | undefined
+  createComputed(
+    on(
+      () => props.text,
+      (next, prev) => {
+        activeCopy?.remove()
+        activeCopy = undefined
+        if (!element?.isConnected || !prev || !next || prev === next) return
+        // SAFETY: a deep clone has the same element type as its source.
+        const copy = element.cloneNode(true) as HTMLElement
+        activeCopy = copy
+        copy.setAttribute("aria-hidden", "true")
+        Object.assign(copy.style, { position: "absolute", inset: "0", pointerEvents: "none" })
+        element.parentElement?.append(copy)
+        copy
+          .animate([{ opacity: 1 }, { opacity: 0 }], {
+            duration: 150,
+            easing: "cubic-bezier(.4,0,1,1)",
+            fill: "forwards",
+          })
+          .finished.finally(() => {
+            if (activeCopy === copy) activeCopy = undefined
+            copy.remove()
+          })
+        element.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: "cubic-bezier(.2,.8,.2,1)" })
+      },
+      { defer: true },
+    ),
+  )
+
+  return (
+    <span class="relative block">
+      <span ref={element} class="block">
+        {props.text}
+      </span>
+    </span>
+  )
+}
