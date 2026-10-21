@@ -34,9 +34,9 @@ import type { createTimelineProjection } from "./projection"
 import { observeElementOffsetReconnectAware } from "./observe-element-offset"
 import { filterVirtualIndexes } from "./virtual-items"
 import { holdLandingWidth } from "@/shell/panel-motion"
-import { enter, prefersReducedMotion } from "@opencode/ui/motion"
+import { enter, frameLoop, prefersReducedMotion } from "@opencode/ui/motion"
 import { landSendFlight } from "./send-flight"
-import { createRowGrowth } from "./row-growth"
+import { createRowGrowth, workingHandoffDuration, workingHandoffPose } from "./row-growth"
 
 const fallbackItemSize = 60
 
@@ -174,6 +174,7 @@ export function createTimelineVirtualizer(input: Input) {
   // instead of landing.
   const arrivals = new Set<string>()
   const [leavingKeys, setLeavingKeys] = createSignal<string[]>([])
+  const leavingCleanups = new Map<string, () => void>()
 
   let listedKeys = rowKeys()
 
@@ -183,6 +184,7 @@ export function createTimelineVirtualizer(input: Input) {
     listedKeys = keys
     const head = keys.findIndex((key) => knownKeys.has(key))
     keys.forEach((key, index) => {
+      leavingCleanups.get(key)?.()
       if (knownKeys.has(key)) return
       knownKeys.add(key)
       addedKeys.add(key)
@@ -585,7 +587,8 @@ export function createTimelineVirtualizer(input: Input) {
     // Streamed markdown can lose a line for a moment as it settles (a closing fence, say). While it streams, a followed
     // row never shrinks below what it shows, and gives back what it lost once the text completes. A target that drops
     // but stays above what is shown just bends the growth down to it.
-    if (shown !== undefined && size < shown && following() && streaming(rows()[index])) return shrinks.set(key, size)
+    if (shown !== undefined && size < (growth.target(key) ?? shown) && following() && streaming(rows()[index]))
+      return shrinks.set(key, size)
     shrinks.delete(key)
 
     if (shown === undefined || !grows(index, shown, size)) {
@@ -633,9 +636,8 @@ export function createTimelineVirtualizer(input: Input) {
     return input.pinned() && !coldPending && touchStart === undefined && !prefersReducedMotion()
   }
 
-  // A row near the end leaves while the timeline follows it: the offset clamps to the shorter end and the rows above
-  // would drop into its place in one frame. They start where they were and close the gap on the growth spring, while
-  // the original row stays mounted until its fade finishes.
+  // A row near the end leaves while the timeline follows it: the neighbour row absorbs its height and closes the gap on
+  // the shared growth spring, while the original row stays mounted until its fade or Working handoff finishes.
   function closeRemoved(previous: string[], keys: string[]) {
     if (previous === keys) return
     const remaining = new Set(keys)
@@ -643,30 +645,64 @@ export function createTimelineVirtualizer(input: Input) {
 
     if (!leaving.length) return
     const first = previous.indexOf(leaving[0]!)
-    const removed = leaving.reduce((sum, key) => sum + (virtualizer.itemSizeCache.get(key) ?? 0), 0)
+    const removed = leaving.reduce(
+      (sum, key) =>
+        sum +
+        (virtualizer.itemSizeCache.get(key) ?? virtualizer.measurementsCache[previous.indexOf(key)]?.size ?? 0),
+      0,
+    )
     const root = listRoot()
     const max = endOffset()
+    const canClose =
+      removed >= 1 && previous.length - first <= 4 && !!root && following() && max - layoutState.offset <= 1
 
-    const drop =
-      previous.length - first <= 4 && root && following() && max - layoutState.offset <= 1 ? Math.min(removed, max) : 0
-
-    if (drop >= 1) leaving.forEach((key) => fadeOutRow(key, previous[first - 1], drop))
+    if (canClose) leaving.forEach((key) => fadeOutRow(key, previous[first - 1], previous))
     leaving.forEach((key) => {
+      growth.drop(key)
       knownKeys.delete(key)
       addedKeys.delete(key)
       arrivals.delete(key)
       virtualizer.itemSizeCache.delete(key)
     })
 
-    if (drop < 1) return
-    endGap = false
-    const nextSize = shift().size + drop
-    setShift({
-      rows: previous.slice(0, first).filter((key) => remaining.has(key)).length,
-      size: nextSize,
-    })
-    holdSpace(grid(lift + nextSize))
-    growth.hold(drop)
+    if (!canClose) return
+    const oldSet = new Set(previous)
+    const candidate = first < keys.length ? keys[first] : keys.at(-1)
+    const neighbour =
+      candidate && !oldSet.has(candidate)
+        ? candidate
+        : first > 0 && first - 1 < keys.length
+          ? keys[first - 1]
+          : candidate
+    if (!neighbour) return
+    const entering = arrivals.delete(neighbour)
+    const oldIndex = previous.indexOf(neighbour)
+    const base = entering
+      ? 0
+      : (virtualizer.itemSizeCache.get(neighbour) ??
+        (oldIndex >= 0 ? virtualizer.measurementsCache[oldIndex]?.size : undefined) ??
+        modelHeight(neighbour) ??
+        fallbackItemSize)
+    const target = modelHeight(neighbour) ?? base
+    const from = base + removed
+    virtualizer.itemSizeCache.set(neighbour, from)
+    growth.absorb(
+      neighbour,
+      removed,
+      base,
+      target,
+      entering
+        ? () => {
+            const runEnter = () => {
+              const element = virtualizer.elementsCache.get(neighbour)
+              const currentIndex = rowKeys().lastIndexOf(neighbour)
+              if (element && currentIndex >= 0 && !textMessage(rows()[currentIndex])) enter(element, { duration: 200 })
+            }
+            if (virtualizer.elementsCache.get(neighbour)) runEnter()
+            else queueMicrotask(runEnter)
+          }
+        : undefined,
+    )
     queueMicrotask(() => {
       if (input.pinned()) pinEnd()
     })
@@ -674,25 +710,92 @@ export function createTimelineVirtualizer(input: Input) {
 
   const ghosts = new Map<HTMLElement, { key: string; top: number }>()
 
-  function fadeOutRow(key: string, above: string | undefined, drop: number) {
+  function fadeOutRow(key: string, above: string | undefined, previous: string[]) {
     const wrapper = virtualizer.elementsCache.get(key)?.parentElement
-    const anchor = above === undefined ? undefined : virtualizer.measurementsCache[rowKeys().lastIndexOf(above)]
+    const anchor = above === undefined ? undefined : virtualizer.measurementsCache[previous.indexOf(above)]
 
     if (!wrapper?.isConnected || !virtualContent || !above || !anchor) return
-    setLeavingKeys((keys) => [...keys, key])
+    leavingCleanups.get(key)?.()
+    setLeavingKeys((keys) => (keys.includes(key) ? keys : [...keys, key]))
     wrapper.setAttribute("aria-hidden", "true")
     wrapper.inert = true
     wrapper.style.pointerEvents = "none"
     ghosts.set(wrapper, { key: above, top: anchor.start - topOffset() })
+
+    if (key === "activity") {
+      const indicator = wrapper.querySelector<HTMLElement>('[data-slot="session-working-indicator"]')
+      let copyTarget: HTMLElement | undefined
+      let elapsed = 0
+      const reduced = prefersReducedMotion()
+      let stopLoop: (() => void) | undefined
+      const cleanup = () => {
+        stopLoop?.()
+        stopLoop = undefined
+        leavingCleanups.delete(key)
+        ghosts.delete(wrapper)
+        wrapper.removeAttribute("aria-hidden")
+        wrapper.inert = false
+        wrapper.style.removeProperty("pointer-events")
+        if (indicator) {
+          indicator.style.removeProperty("opacity")
+          indicator.style.removeProperty("filter")
+          indicator.style.removeProperty("transform")
+        }
+        if (copyTarget) {
+          copyTarget.style.removeProperty("opacity")
+          copyTarget.style.removeProperty("filter")
+          copyTarget.style.removeProperty("transform")
+        }
+        setLeavingKeys((keys) => keys.filter((item) => item !== key))
+      }
+      leavingCleanups.set(key, cleanup)
+      stopLoop = frameLoop.add((dt) => {
+        if (!copyTarget) {
+          const aboveEl = virtualizer.elementsCache.get(above)
+          const copyWrap = aboveEl?.querySelector<HTMLElement>('[data-slot="text-part-copy-wrapper"]')
+          copyTarget = copyWrap?.querySelector<HTMLElement>(":scope > *") ?? undefined
+          if (copyTarget) {
+            copyTarget.style.transformOrigin = "left center"
+            copyTarget.style.willChange = "transform, opacity, filter"
+          }
+        }
+        elapsed += dt
+        const m = Math.min(1, elapsed / workingHandoffDuration)
+        const pose = workingHandoffPose(m, !!copyTarget, reduced)
+        if (indicator) {
+          indicator.style.opacity = `${pose.indicatorOpacity}`
+          indicator.style.filter = pose.indicatorBlur > 0.01 ? `blur(${pose.indicatorBlur}px)` : ""
+          indicator.style.transform = pose.indicatorScale !== 1 ? `scale(${pose.indicatorScale})` : ""
+        }
+        if (copyTarget) {
+          copyTarget.style.opacity = `${pose.copyOpacity}`
+          copyTarget.style.filter = pose.copyBlur > 0.01 ? `blur(${pose.copyBlur}px)` : ""
+          copyTarget.style.transform = pose.copyScale !== 1 ? `scale(${pose.copyScale})` : ""
+        }
+        if (m >= 1) {
+          cleanup()
+          return false
+        }
+        return true
+      })
+      return
+    }
+
     const fade = wrapper.animate([{ opacity: getComputedStyle(wrapper).opacity }, { opacity: 0 }], {
       duration: 110,
       easing: "cubic-bezier(.4,0,1,1)",
       fill: "forwards",
     })
     const cleanup = () => {
+      leavingCleanups.delete(key)
+      fade.cancel()
       ghosts.delete(wrapper)
+      wrapper.removeAttribute("aria-hidden")
+      wrapper.inert = false
+      wrapper.style.removeProperty("pointer-events")
       setLeavingKeys((keys) => keys.filter((item) => item !== key))
     }
+    leavingCleanups.set(key, cleanup)
     void fade.finished.then(cleanup, cleanup)
   }
 
@@ -1522,7 +1625,7 @@ export function createTimelineVirtualizer(input: Input) {
           verticalGeometry={scrollGeometry()}
           onWheel={handleListWheel}
           onTouchStart={handleListTouchStart}
-          onPointerMove={(event) => delete event.currentTarget.dataset.hoverStale}
+          onPointerMove={() => delete listRoot()?.dataset.hoverStale}
           onKeyDown={handleListKeyDown}
           onScroll={handleListScroll}
           onClick={input.onSelectionInteraction}

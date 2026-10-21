@@ -15,6 +15,57 @@ export const growthSpring = motionTuning.spring("timeline.growth", {
 
 const grid = (value: number) => Math.round(value * 64) / 64
 
+export const workingHandoffDuration = 0.34
+
+const ease = (t: number) => t * t * (3 - 2 * t)
+const easeOut = (t: number) => 1 - (1 - t) * (1 - t)
+
+// Like the iOS WorkingHandoffPose: Working blurs and shrinks out as the reply's copy button sharpens in.
+export function workingHandoffPose(handoff: number, handsOffToCopy = true, reduceMotion = false) {
+  const m = Math.min(1, Math.max(0, handoff))
+  if (m <= 0)
+    return {
+      indicatorOpacity: 1,
+      indicatorBlur: 0,
+      indicatorScale: 1,
+      copyOpacity: 0,
+      copyBlur: 6,
+      copyScale: 0.6,
+    }
+  if (reduceMotion)
+    return {
+      indicatorOpacity: 1 - m,
+      indicatorBlur: 0,
+      indicatorScale: 1,
+      copyOpacity: handsOffToCopy ? m : 0,
+      copyBlur: 0,
+      copyScale: 1,
+    }
+  if (!handsOffToCopy) {
+    const out = ease(m)
+    return {
+      indicatorOpacity: 1 - out,
+      indicatorBlur: 4 * m,
+      indicatorScale: 1 - 0.04 * out,
+      copyOpacity: 0,
+      copyBlur: 6,
+      copyScale: 0.6,
+    }
+  }
+  const out = Math.min(1, Math.max(0, m / 0.7))
+  const into = Math.min(1, Math.max(0, (m - 0.25) / 0.75))
+  const easedOut = ease(out)
+  const easedInto = easeOut(into)
+  return {
+    indicatorOpacity: 1 - easedOut,
+    indicatorBlur: 6 * out,
+    indicatorScale: 1 - 0.5 * easedOut,
+    copyOpacity: easedInto,
+    copyBlur: 6 * (1 - into),
+    copyScale: 0.6 + 0.4 * easedInto,
+  }
+}
+
 type Growth = { value: number; target: number; enter?: () => void }
 
 /**
@@ -37,6 +88,12 @@ export function createRowGrowth(input: {
   let quiet = 0
   let stop: (() => void) | undefined
 
+  const totalRemaining = () => {
+    let sum = 0
+    growths.forEach((growth) => (sum += Math.abs(growth.target - growth.value)))
+    return sum
+  }
+
   const advance = (dt: number) => {
     if (!spring || !growths.size) {
       spring = undefined
@@ -46,35 +103,36 @@ export function createRowGrowth(input: {
     const beforeRaw = spring.value
     const nextValue = spring.step(dt)
     const target = spring.target
+    const remBefore = totalRemaining()
     // A growth bent toward a nearer target keeps its speed and would pass it, then come back: it lands there instead.
-    const done = spring.resting || (target - before) * (target - nextValue) <= 0
-    let budget = done ? Infinity : Math.max(0, nextValue - beforeRaw)
+    const done = spring.resting || (target - before) * (target - nextValue) <= 0 || remBefore <= 1e-4
+    const stepSize = Math.max(0, nextValue - beforeRaw)
+    const fraction = done ? 1 : Math.min(1, stepSize / remBefore)
 
     growths.forEach((growth, key) => {
       const prevShown = grid(growth.value)
-      const rem = growth.target - growth.value
-      const take = rem <= 0 ? 0 : Math.min(rem, budget)
-      if (take > 0) budget -= take
-      const nextRowValue = rem <= 0 ? growth.value : growth.value + take
+      const diff = growth.target - growth.value
+      const nextRowValue = done ? growth.target : growth.value + diff * fraction
       const rowDone =
-        done || (growth.target - prevShown) * (growth.target - nextRowValue) <= 0 || growth.target - nextRowValue <= 1e-4
-      growth.value = nextRowValue
+        done ||
+        (growth.target - prevShown) * (growth.target - nextRowValue) <= 0 ||
+        Math.abs(growth.target - nextRowValue) <= 1e-4
+      growth.value = rowDone ? growth.target : nextRowValue
       const shown = rowDone ? growth.target : grid(growth.value)
-      if (!rowDone && take <= 0) return
 
       const enter = growth.enter
       if (enter) {
         growth.enter = undefined
         enter()
       }
+      if (!rowDone && (Math.abs(diff) <= 0 || stepSize <= 0)) return
       const wrapper = input.resize(key, shown)
 
       if (wrapper === false) {
-        const unconsumed = Math.max(0, growth.target - growth.value)
+        const unconsumed = Math.abs(growth.target - growth.value)
         growths.delete(key)
-        if (unconsumed > 0) spring?.set(spring.target - unconsumed)
+        if (unconsumed > 0) spring?.set(Math.max(spring.value, spring.target - unconsumed))
       } else if (rowDone) {
-        if (growth.value < growth.target && spring) spring.value += growth.target - growth.value
         growths.delete(key)
       }
 
@@ -86,9 +144,9 @@ export function createRowGrowth(input: {
   }
 
   const settle = () => {
-    let pending = 0
-    growths.forEach((growth) => (pending += Math.max(0, growth.target - grid(growth.value))))
-    input.settle({ pending, held: held ? Math.max(0, grid(held.value)) : 0 })
+    let net = 0
+    growths.forEach((growth) => (net += growth.target - grid(growth.value)))
+    input.settle({ pending: Math.max(0, grid(net)), held: held ? Math.max(0, grid(held.value)) : 0 })
   }
 
   const step = (dt: number) => {
@@ -129,27 +187,65 @@ export function createRowGrowth(input: {
       const wasGrowing = growths.size > 0
       const running = growths.get(key)
       if (running) {
-        const delta = to - running.target
+        if (running.target > running.value && to <= running.value) {
+          this.land(key, to)
+          return
+        }
+        const oldRem = Math.abs(running.target - running.value)
         running.target = to
+        const newRem = Math.abs(to - running.value)
         if (enter && !running.enter) running.enter = enter
-        spring?.set(spring.target + delta)
+        spring?.set(spring.target + newRem - oldRem)
         return
       }
-      const delta = to - from
-      if (delta <= 0) {
+      const rem = Math.abs(to - from)
+      if (rem <= 1e-4) {
         enter?.()
         input.resize(key, to)
         return
       }
       growths.set(key, { value: from, target: to, enter })
       if (!spring) spring = Spring.fromDuration(0, growthSpring())
-      spring.set(spring.target + delta)
+      spring.set(spring.target + rem)
       stop ??= frameLoop.addMeasured(input.measure, step)
 
       if (!wasGrowing && !fresh) {
         fresh = true
         queueMicrotask(kick)
       }
+    },
+    absorb(key: string, removed: number, base: number, to: number, enter?: () => void) {
+      const running = growths.get(key)
+      if (!running) {
+        const from = base + removed
+        if (Math.abs(to - from) <= 1e-4) {
+          queueMicrotask(() => {
+            enter?.()
+            this.land(key, to)
+          })
+          return
+        }
+        this.grow(key, from, to, enter)
+        return
+      }
+      const oldRem = Math.abs(running.target - running.value)
+      running.value += removed
+      running.target = to
+      const newRem = Math.abs(running.target - running.value)
+      if (enter && !running.enter) running.enter = enter
+      if (newRem <= 1e-4) {
+        queueMicrotask(() => this.land(key, to))
+        return
+      }
+      spring?.set(Math.max(spring.value, spring.target + newRem - oldRem))
+    },
+    drop(key: string) {
+      const running = growths.get(key)
+      if (!running) return
+      const rem = Math.abs(running.target - running.value)
+      growths.delete(key)
+      if (spring) spring.set(Math.max(spring.value, spring.target - rem))
+      if (!growths.size) spring = undefined
     },
     hold(size: number) {
       held ??= Spring.fromDuration(0, growthSpring())
@@ -160,9 +256,9 @@ export function createRowGrowth(input: {
     land(key: string, size: number) {
       const running = growths.get(key)
       if (running) {
-        const rem = Math.max(0, running.target - running.value)
+        const rem = Math.abs(running.target - running.value)
         growths.delete(key)
-        if (spring) spring.set(spring.target - rem)
+        if (spring) spring.set(Math.max(spring.value, spring.target - rem))
         if (!growths.size) spring = undefined
       }
       input.resize(key, size)

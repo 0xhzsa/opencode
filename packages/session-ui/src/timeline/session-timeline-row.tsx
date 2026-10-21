@@ -40,7 +40,6 @@ import { SessionError } from "../components/session-error"
 import { timelineCategory, type TimelineDetail } from "./detail"
 import { currentToolFailed } from "../message/current-tool-state"
 import { userMessageRuns, userRunSpring } from "./user-runs"
-import { attached } from "../components/message-file"
 import {
   createReactiveTimelineProjection,
   Timeline,
@@ -1219,7 +1218,7 @@ export function createSessionTimelineRowRenderer(input: {
   const markdownLayout = createTimelineMarkdownLayout(textLayout)
 
   function layout(row: TimelineRow.TimelineRow, environment: TimelineLayoutEnvironment): TimelineRowLayout {
-    if (row._tag === "TurnGap") return { source: "fixed", height: 24 }
+    if (row._tag === "TurnGap") return { source: "fixed", height: runs().get(row.userMessageID)?.above ? 4 : 24 }
     if (row._tag === "Activity") return { source: "fixed", height: 36 }
     const width =
       (input.centered?.() && environment.desktop ? Math.min(744, environment.width) : environment.width) -
@@ -1314,13 +1313,15 @@ export function createSessionTimelineRowRenderer(input: {
     const images = message.files?.filter(attached).length ?? 0
     const imageRows = Math.ceil(images / Math.max(1, Math.floor((contentWidth + 24 + 8) / (58 + 8))))
     const pending = input.actions?.pending?.status(message.id)
+    const joined = runs().get(row.userMessageID)
+    const waiting = pending === "steering" || pending === "stranded"
     return {
       source: "pretext",
       height:
-        (pending === "steering" || pending === "stranded" ? 8 : 0) +
+        (waiting && !joined?.above ? 8 : 0) +
         (imageRows ? imageRows * (46 + 8) : presentation?.voice ? 8 : 0) +
         16 +
-        28 +
+        (joined?.below ? 0 : 28) +
         textLayout.text(TimelineRow.key(row), text, contentWidth, environment.typography, "pre-wrap"),
     }
   }

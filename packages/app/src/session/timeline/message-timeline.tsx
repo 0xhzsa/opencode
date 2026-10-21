@@ -1,5 +1,4 @@
 import {
-  createComputed,
   createEffect,
   createMemo,
   createSignal,
@@ -24,7 +23,7 @@ import { ExtensionSlot } from "@/runtime/extension/render"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useServer } from "@/runtime/server/current"
 import { useWorkspaceLocation } from "@/workspaces/location"
-import { Timeline } from "@opencode/session-ui/timeline/projection"
+import { Timeline, TimelineRow } from "@opencode/session-ui/timeline/projection"
 import { createSessionTimelineRowRenderer } from "@opencode/session-ui/timeline/row"
 import { getReadyMarkdown, preloadMarkdown } from "@opencode/session-ui/markdown-cache"
 import { createTimelineController, type TimelineController, type TimelineSessionSource } from "./controller"
@@ -196,11 +195,67 @@ function MessageTimelineView(
   const pinned = createMemo(() => props.pinned)
   const messageByID = projection.messageByID
 
+  const backgroundHintPartID = createMemo(() => {
+    const blocking = new Set(props.background.blocking().map((task) => task.partID))
+
+    if (blocking.size === 0) return
+
+    return projection
+      .rows()
+      .flatMap((row) =>
+        Predicate.isTagged(row, "AssistantPart") ? (row.group.type === "part" ? [row.group.ref] : row.group.refs) : [],
+      )
+      .findLast((ref) => blocking.has(ref.partID))?.partID
+  })
+
+  const showWorking = createMemo(() => {
+    const id = sessionID()
+
+    if (!id || sessionStatus().type !== "busy") return false
+
+    if (data.session.permission.list(id)?.length || data.session.form.list(id)?.length) return false
+    const active = projection.activeMessageID()
+
+    if (!active) return false
+    const assistant = projection.assistantMessagesByParent().get(active)?.at(-1)
+
+    if (assistant?.retry) return false
+
+    // Pending steers still project under the previous response until delivery.
+    // Its error must not hide feedback for a newly submitted prompt.
+    if (
+      assistant?.error &&
+      !data.session.pending.list(id).some((item) => item.type === "user" && item.delivery === "steer")
+    )
+      return false
+
+    return !projection.rows().some((row) => {
+      if (row.userMessageID !== active || !Predicate.isTagged(row, "Notice")) return false
+      const message = messageByID().get(row.messageID)
+
+      return message?.type === "compaction" && message.status === "running"
+    })
+  })
+
+  const showActivity = createMemo(() => showWorking() || !!backgroundHintPartID())
+  const timelineRows = createMemo(() => {
+    const base = projection.rows()
+    const active = projection.activeMessageID()
+    if (!showActivity() || !active) return base.filter((row) => !Predicate.isTagged(row, "Activity"))
+    if (base.some((row) => Predicate.isTagged(row, "Activity"))) return base
+    return [...base, new TimelineRow.Activity({ userMessageID: active })]
+  })
+  const timelineRowByKey = createMemo(() => new Map(timelineRows().map((row) => [TimelineRow.key(row), row])))
+
   const virtualized = createTimelineVirtualizer({
     active: () => props.active !== false,
     sessionKey: () => `${server.key}/${props.data.sessionID()}`,
     presentationKey: () => JSON.stringify(props.data.timelineDetail()),
-    projection,
+    projection: {
+      ...projection,
+      rows: timelineRows,
+      rowByKey: timelineRowByKey,
+    },
     showHeader,
     layout: (row, environment) =>
       row._tag === "Activity" ? { source: "fixed", height: 36 } : rowRenderer.layout(row, environment),
@@ -376,94 +431,10 @@ function MessageTimelineView(
     anchor: props.anchor,
   })
 
-  const backgroundHintPartID = createMemo(() => {
-    const blocking = new Set(props.background.blocking().map((task) => task.partID))
-
-    if (blocking.size === 0) return
-
-    return projection
-      .rows()
-      .flatMap((row) =>
-        Predicate.isTagged(row, "AssistantPart") ? (row.group.type === "part" ? [row.group.ref] : row.group.refs) : [],
-      )
-      .findLast((ref) => blocking.has(ref.partID))?.partID
-  })
-
-  const showWorking = createMemo(() => {
-    const id = sessionID()
-
-    if (!id || sessionStatus().type !== "busy") return false
-
-    if (data.session.permission.list(id)?.length || data.session.form.list(id)?.length) return false
-    const active = projection.activeMessageID()
-
-    if (!active) return false
-    const assistant = projection.assistantMessagesByParent().get(active)?.at(-1)
-
-    if (assistant?.retry) return false
-
-    // Pending steers still project under the previous response until delivery.
-    // Its error must not hide feedback for a newly submitted prompt.
-    if (
-      assistant?.error &&
-      !data.session.pending.list(id).some((item) => item.type === "user" && item.delivery === "steer")
-    )
-      return false
-    const content = assistant?.content.at(-1)
-
-    if (
-      assistant?.time.completed === undefined &&
-      assistant?.time.streamed === undefined &&
-      content?.type === "text" &&
-      content.text.trim()
-    )
-      return false
-    const background = new Set(props.background.tasks().map((task) => task.id))
-
-    return !projection.rows().some((row) => {
-      if (row.userMessageID !== active) return false
-
-      if (Predicate.isTagged(row, "Thinking")) return true
-
-      if (Predicate.isTagged(row, "Notice")) {
-        const message = messageByID().get(row.messageID)
-
-        return message?.type === "compaction" && message.status === "running"
-      }
-
-      // Used and read groups keep the fallback, so each new read does not swap Working out for its short call.
-      if (!Predicate.isTagged(row, "AssistantPart") || row.group.type === "context" || row.group.type === "read")
-        return false
-
-      return (row.group.type === "part" ? [row.group.ref] : row.group.refs).some((ref) => {
-        const content = Timeline.resolveContent(messageByID().get(ref.messageID), ref.partID)
-
-        if (content?.type !== "tool") return false
-
-        if (content.state.status === "streaming" || content.state.status === "running") return true
-        const taskID = content.state.metadata?.[content.name === "subagent" ? "sessionID" : "shellID"]
-
-        return background.has(content.id) || (Predicate.isString(taskID) && background.has(taskID))
-      })
-    })
-  })
-
-  // Undelivered input waits below the work the model has seen, so live status moves into the row above it.
-  const activityRow = createMemo(() => projection.rows().some((row) => Predicate.isTagged(row, "Activity")))
-  // Set before the move renders, so the lane it moves to sees it.
-  let movedAt = -Infinity
-  createComputed(on(activityRow, () => (movedAt = performance.now()), { defer: true }))
-
-  // Live status shows in one lane at a time. The lane it leaves fades it out where it was; the lane it moves to fades
-  // it in once that is done, so it never shows twice. The lane keeps its height while empty, so Working and the hint
-  // come and go without moving the rows around it.
-  function ActivityLane(lane: { here: () => boolean }) {
-    // Taking over from the other lane, status fades in once the copy there has faded out.
-    const delay = () => (performance.now() - movedAt < 100 ? 110 : undefined)
-    const working = createStatusFade(() => lane.here() && showWorking(), delay)
-    const hint = createStatusFade(() => lane.here() && !!backgroundHintPartID(), delay, 1000)
-    // Working keeps its width until a hint beside it leaves, so the hint never jumps sideways.
-    const holdWorking = createMemo<boolean>((held) => working.present() || Boolean(held && hint.present()))
+  // Live status sits in its own timeline row at the end of the active turn, growing and leaving on the shared row
+  // spring and handing over to the reply's copy button when the turn completes.
+  function ActivityLane() {
+    const hint = createStatusFade(() => !!backgroundHintPartID(), () => undefined, 1000)
 
     return (
       <div
@@ -473,17 +444,16 @@ function MessageTimelineView(
         }}
       >
         <div class={`flex h-9 items-center gap-2 pt-3 text-[13px] font-[530] leading-text-compact ${turnPadding()}`}>
-          <Show when={holdWorking()}>
-            <div
-              ref={working.ref}
-              data-component={working.present() ? "session-working" : undefined}
-              role={working.present() ? "status" : undefined}
-              aria-hidden={!working.present() || undefined}
-              classList={{ "invisible pointer-events-none": !working.present() }}
-            >
-              <TextShimmer text={language.t("session.timeline.working")} active />
-            </div>
-          </Show>
+          <div
+            data-slot="session-working-indicator"
+            data-component={showWorking() ? "session-working" : undefined}
+            role={showWorking() ? "status" : undefined}
+            aria-hidden={!showWorking() || undefined}
+            class="origin-left will-change-[transform,opacity,filter]"
+            classList={{ "invisible pointer-events-none": !showWorking() && showActivity() }}
+          >
+            <TextShimmer text={language.t("session.timeline.working")} active />
+          </div>
           <Show when={hint.present()}>
             <div ref={hint.ref} data-component="session-background-hint-row">
               <BackgroundMoveHint onMove={props.background.move} />
@@ -496,7 +466,6 @@ function MessageTimelineView(
 
   return (
     <VirtualizedTimeline
-      bottomSpacer={<ActivityLane here={() => !activityRow()} />}
       deferred={(row) => {
         if (!Predicate.isTagged(row, "AssistantPart") || row.group.type !== "part") return false
         const content = Timeline.resolveContent(messageByID().get(row.group.ref.messageID), row.group.ref.partID)
@@ -508,7 +477,7 @@ function MessageTimelineView(
           when={Predicate.isTagged(row(), "Activity")}
           fallback={<rowRenderer.Row row={row} onSizeChange={onSizeChange} />}
         >
-          <ActivityLane here={() => true} />
+          <ActivityLane />
         </Show>
       )}
       header={
