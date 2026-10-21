@@ -355,18 +355,6 @@ Desktop windows load storage over IPC; the web reads it synchronously. A read be
 
 Each process's `ctx.stores` holds only its own stores: reading a `Store.main` store in the window, or a window store in main, fails to compile.
 
-Details lists older homes, newest first: its earlier id's namespace, then the app key before it.
-
-<!-- source: src/details/index.ts#prefs -->
-
-```ts
-// Stored under the extension's earlier id `summary`, and before extensions in the app settings.
-prefs: Store.global(Prefs, { projectExpanded: true, serverExpanded: true }, [
-  "extension.summary.prefs",
-  { key: "settings.v3", pick: (value: { sessionSummary?: unknown } | null) => value?.sessionSummary },
-]),
-```
-
 Review imports one session's slice of an app key that holds every session:
 
 <!-- source: src/review/index.ts#session -->
