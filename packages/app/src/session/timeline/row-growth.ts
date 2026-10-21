@@ -68,7 +68,22 @@ export function workingHandoffPose(handoff: number, handsOffToCopy = true, reduc
   }
 }
 
-type Coupled = { key: string; base: number; extra: number }
+export type CoupledGap = { key: string; base: number; extra: number }
+
+export type Coupled =
+  | { key: string; base: number; extra: number; moveDistance?: number }
+  | { gaps: CoupledGap[]; moveDistance: number }
+
+type NormalizedCoupled = { gaps: CoupledGap[]; moveDistance: number }
+
+function normalizeCoupled(coupled: Coupled | undefined): NormalizedCoupled | undefined {
+  if (!coupled) return undefined
+  if ("gaps" in coupled) return coupled
+  return {
+    gaps: [{ key: coupled.key, base: coupled.base, extra: coupled.extra }],
+    moveDistance: coupled.moveDistance ?? 0,
+  }
+}
 
 type Growth = {
   value: number
@@ -83,7 +98,7 @@ type Growth = {
   enterSpan: number
   enterProgress: number
   enter?: () => void
-  coupled?: Coupled
+  coupled?: NormalizedCoupled
 }
 
 /**
@@ -98,6 +113,7 @@ export function createRowGrowth(input: {
   below: (key: string) => boolean
   foldRoom?: () => number
   movesWorking?: (key: string) => boolean
+  coupledDistance?: (key: string, originKey: string, shown: number) => number | undefined
   settle: (state: { pending: number; held: number }) => void
 }) {
   const growths = new Map<string, Growth>()
@@ -140,12 +156,30 @@ export function createRowGrowth(input: {
         if (!growth.entering || !wrapper) growths.delete(key)
         return
       }
-      if (stepped) return
+      if (stepped) {
+        if (growth.coupled && growth.coupled.gaps.length > 0) {
+          const shown = grid(growth.value)
+          const ratio = Math.max(0, Math.min(1, 1 - shown / Math.max(1, growth.target)))
+          const live = input.coupledDistance?.(key, growth.coupled.gaps[0]!.key, shown)
+          if (live !== undefined) growth.coupled.moveDistance = live
+          const wrapper = input.resize(key, shown)
+          if (wrapper) paintCoupled(wrapper, growth.coupled.moveDistance * ratio)
+        }
+        return
+      }
       const slowWorking = input.movesWorking?.(key) ?? false
       if (growth.freshRow) {
         growth.freshRow = false
         lastTake = 0
       }
+      const coupled = growth.coupled
+      if (coupled && coupled.gaps.length > 0) {
+        const live = input.coupledDistance?.(key, coupled.gaps[0]!.key, prevShown)
+        if (live !== undefined) coupled.moveDistance = live
+      }
+      const extraTotal = coupled ? coupled.gaps.reduce((sum, gap) => sum + gap.extra, 0) : 0
+      const travel = coupled ? Math.max(0, coupled.moveDistance - extraTotal) : 0
+      const travelFactor = coupled && growth.target > 0 ? Math.max(1, travel / growth.target) : 1
       const dtFactor = Math.max(0.75, Math.min(2.0, dt / (1 / 60)))
       const startStep = 1.875 / scale
       const fastCap = Math.min(16, 11.5 + Math.max(0, rem - 90) * 0.05)
@@ -162,24 +196,25 @@ export function createRowGrowth(input: {
         Math.min(rampDown, rampUp),
       )
       const heldRoom = held && input.below(key) ? grid(held.value) : 0
-      if (!growth.coupled && heldRoom > 1 / 64 && heldRoom < maxTake) {
+      if (!coupled && heldRoom > 1 / 64 && heldRoom < maxTake) {
         maxTake = heldRoom
         growth.freshRow = true
       }
       const room = input.foldRoom?.() ?? 0
-      if (!growth.coupled && room > 1 / 64 && room < maxTake) {
+      if (!coupled && room > 1 / 64 && room < maxTake) {
         maxTake = grid(room)
         growth.freshRow = true
       }
-      const take = rem <= 0 ? 0 : Math.min(rem, rawBudget, done && rem <= maxTake ? rem : maxTake)
+      const rowMaxTake = maxTake / travelFactor
+      const take = rem <= 0 ? 0 : Math.min(rem, rawBudget, done && rem <= rowMaxTake ? rem : rowMaxTake)
       stepped = true
       consumed = take
-      lastTake = take
+      lastTake = take * travelFactor
       const nextRowValue = rem <= 0 ? growth.value : growth.value + Math.sign(diff) * take
       const rowDone =
-        (done && rem <= maxTake) ||
+        (done && rem <= rowMaxTake) ||
         (growth.target - prevShown) * (growth.target - nextRowValue) <= 0 ||
-        Math.abs(growth.target - nextRowValue) <= 1e-4
+        Math.abs(growth.target - nextRowValue) * travelFactor <= (coupled ? 0.5 : 1e-4)
       growth.value = rowDone ? growth.target : nextRowValue
       const shown = rowDone ? growth.target : grid(growth.value)
       if (!rowDone && take <= 0 && !growth.entering) return
@@ -189,15 +224,31 @@ export function createRowGrowth(input: {
         growth.enter = undefined
         enter()
       }
+      if (coupled) {
+        const ratio = rowDone ? 0 : Math.max(0, Math.min(1, 1 - shown / Math.max(1, growth.target)))
+        coupled.gaps.forEach((gap) => {
+          const cWrapper = input.resize(gap.key, rowDone ? gap.base : grid(gap.base + gap.extra * ratio))
+          if (rowDone && cWrapper) clearWrapper(cWrapper)
+        })
+      }
       const wrapper = input.resize(key, shown)
-      if (growth.coupled) {
-        const coupled = growth.coupled
+      if (coupled) {
         if (rowDone || wrapper === false) {
-          const cWrapper = input.resize(coupled.key, coupled.base)
-          if (cWrapper) clearWrapper(cWrapper)
+          if (wrapper === false) {
+            coupled.gaps.forEach((gap) => {
+              const cWrapper = input.resize(gap.key, gap.base)
+              if (cWrapper) clearWrapper(cWrapper)
+            })
+          } else if (wrapper) {
+            clearCoupled(wrapper)
+          }
         } else {
           const ratio = Math.max(0, Math.min(1, 1 - shown / Math.max(1, growth.target)))
-          input.resize(coupled.key, grid(coupled.base + coupled.extra * ratio))
+          if (coupled.gaps.length > 0) {
+            const live = input.coupledDistance?.(key, coupled.gaps[0]!.key, shown)
+            if (live !== undefined) coupled.moveDistance = live
+          }
+          if (wrapper) paintCoupled(wrapper, coupled.moveDistance * ratio)
         }
       }
 
@@ -207,7 +258,7 @@ export function createRowGrowth(input: {
         if (unconsumed > 0) spring?.set(Math.max(spring.value, spring.target - unconsumed))
       } else {
         if (wrapper) {
-          if (rowDone || growth.target <= shown) {
+          if (rowDone || growth.target <= shown || coupled) {
             paintEdge(wrapper, growth, 0)
           } else {
             const leftToGrow = Math.max(0, growth.target - shown)
@@ -230,7 +281,7 @@ export function createRowGrowth(input: {
         held.value = Math.max(0, held.value - Math.max(0, shown - prevShown))
     })
 
-    if (spring && Number.isFinite(rawBudget) && consumed < rawBudget) {
+    if (spring && consumed < nextValue - beforeRaw) {
       spring.value = Math.min(spring.target, beforeRaw + consumed)
     }
 
@@ -246,7 +297,9 @@ export function createRowGrowth(input: {
       net += growth.target - grid(growth.value)
       if (growth.coupled) {
         const ratio = Math.max(0, Math.min(1, 1 - grid(growth.value) / Math.max(1, growth.target)))
-        net -= grid(growth.coupled.extra * ratio)
+        growth.coupled.gaps.forEach((gap) => {
+          net -= grid(gap.extra * ratio)
+        })
       }
     })
     input.settle({ pending: Math.max(0, grid(net)), held: held ? Math.max(0, grid(held.value)) : 0 })
@@ -281,11 +334,17 @@ export function createRowGrowth(input: {
   return {
     growing: () => growths.size > 0,
     entering: (key: string) => growths.get(key)?.entering === true,
+    coupled: (key: string) => growths.get(key)?.coupled,
+    shown: (key: string) => {
+      const running = growths.get(key)
+      return running ? grid(running.value) : undefined
+    },
     target: (key: string) => {
       const direct = growths.get(key)?.target
       if (direct !== undefined) return direct
       for (const growth of growths.values()) {
-        if (growth.coupled?.key === key) return growth.coupled.base
+        const hit = growth.coupled?.gaps.find((gap) => gap.key === key)
+        if (hit) return hit.base
       }
       return undefined
     },
@@ -299,21 +358,26 @@ export function createRowGrowth(input: {
     ) {
       const entering = typeof enter === "boolean" ? enter : !!enter
       const onEnter = typeof enter === "function" ? enter : undefined
+      const normalized = normalizeCoupled(coupled)
       const wasGrowing = growths.size > 0
       const running = growths.get(key)
       if (running) {
-        if (running.target > running.value && to <= running.value) {
+        if (!normalized && running.target > running.value && to <= running.value) {
           this.land(key, to)
           return
         }
         const oldRem = Math.abs(running.target - running.value)
-        if (oldRem <= 1e-4 && !streaming && !running.streaming) running.freshRow = true
+        if (normalized) {
+          running.value = from
+          running.coupled = normalized
+        } else if (oldRem <= 1e-4 && !streaming && !running.streaming) {
+          running.freshRow = true
+        }
         running.streaming = streaming
         running.target = to
         const newRem = Math.abs(to - running.value)
         if (onEnter && !running.enter) running.enter = onEnter
         if (entering) running.entering = true
-        if (coupled) running.coupled = coupled
         spring?.set(spring.target + newRem - oldRem)
         return
       }
@@ -322,9 +386,11 @@ export function createRowGrowth(input: {
         onEnter?.()
         const wrapper = input.resize(key, to)
         if (wrapper) clearWrapper(wrapper)
-        if (coupled) {
-          const cWrapper = input.resize(coupled.key, coupled.base)
-          if (cWrapper) clearWrapper(cWrapper)
+        if (normalized) {
+          normalized.gaps.forEach((gap) => {
+            const cWrapper = input.resize(gap.key, gap.base)
+            if (cWrapper) clearWrapper(cWrapper)
+          })
         }
         return
       }
@@ -341,7 +407,7 @@ export function createRowGrowth(input: {
         enterSpan: Math.min(28, Math.max(12, to)),
         enterProgress: 0,
         enter: onEnter,
-        coupled,
+        coupled: normalized,
       })
       if (!spring) spring = Spring.fromDuration(0, growthSpring())
       else spring.tune(growthSpring())
@@ -379,11 +445,32 @@ export function createRowGrowth(input: {
       if (!running) return
       const rem = Math.abs(running.target - running.value)
       if (running.coupled) {
-        const cWrapper = input.resize(running.coupled.key, running.coupled.base)
-        if (cWrapper) clearWrapper(cWrapper)
+        running.coupled.gaps.forEach((gap) => {
+          const cWrapper = input.resize(gap.key, gap.base)
+          if (cWrapper) clearWrapper(cWrapper)
+        })
       }
       growths.delete(key)
       if (spring) spring.set(Math.max(spring.value, spring.target - rem))
+      if (!growths.size) {
+        spring = undefined
+        lastTake = 0
+      }
+    },
+    // The row leaves mid-glide: its coupled gaps keep their share of the room and close on their own growth.
+    release(key: string) {
+      const running = growths.get(key)
+      if (!running?.coupled) return this.drop(key)
+      const ratio = Math.max(0, Math.min(1, 1 - grid(running.value) / Math.max(1, running.target)))
+      const gaps = running.coupled.gaps
+      growths.delete(key)
+      if (spring) spring.set(Math.max(spring.value, spring.target - Math.abs(running.target - running.value)))
+      gaps.forEach((gap) => {
+        const current = grid(gap.base + gap.extra * ratio)
+        if (current - gap.base > 1 / 64) return this.grow(gap.key, current, gap.base)
+        const wrapper = input.resize(gap.key, gap.base)
+        if (wrapper) clearWrapper(wrapper)
+      })
       if (!growths.size) {
         spring = undefined
         lastTake = 0
@@ -401,8 +488,10 @@ export function createRowGrowth(input: {
       if (running) {
         const rem = Math.abs(running.target - running.value)
         if (running.coupled) {
-          const cWrapper = input.resize(running.coupled.key, running.coupled.base)
-          if (cWrapper) clearWrapper(cWrapper)
+          running.coupled.gaps.forEach((gap) => {
+            const cWrapper = input.resize(gap.key, gap.base)
+            if (cWrapper) clearWrapper(cWrapper)
+          })
         }
         growths.delete(key)
         if (spring) spring.set(Math.max(spring.value, spring.target - rem))
@@ -426,8 +515,10 @@ export function createRowGrowth(input: {
         growths.forEach((growth, key) => {
           growth.enter?.()
           if (growth.coupled) {
-            const cWrapper = input.resize(growth.coupled.key, growth.coupled.base)
-            if (cWrapper) clearWrapper(cWrapper)
+            growth.coupled.gaps.forEach((gap) => {
+              const cWrapper = input.resize(gap.key, gap.base)
+              if (cWrapper) clearWrapper(cWrapper)
+            })
           }
           const wrapper = input.resize(key, growth.target)
           if (wrapper) clearWrapper(wrapper)
@@ -468,7 +559,27 @@ function clearArrival(wrapper: HTMLElement) {
   wrapper.style.removeProperty("filter")
 }
 
+function paintCoupled(wrapper: HTMLElement, offset: number) {
+  const px = grid(offset)
+  const inner = wrapper.firstElementChild as HTMLElement | null
+  if (!inner) return
+  // Working rides above its growing row while it glides, so the row must not clip it.
+  wrapper.style.overflow = "visible"
+  if (px <= 1 / 64) {
+    inner.style.removeProperty("transform")
+    return
+  }
+  inner.style.transform = `translateY(${-px}px)`
+}
+
+function clearCoupled(wrapper: HTMLElement) {
+  const inner = wrapper.firstElementChild as HTMLElement | null
+  if (wrapper.style.overflow === "visible") wrapper.style.overflow = "clip"
+  inner?.style.removeProperty("transform")
+}
+
 function clearWrapper(wrapper: HTMLElement) {
   paintEdge(wrapper, undefined, 0)
   clearArrival(wrapper)
+  clearCoupled(wrapper)
 }

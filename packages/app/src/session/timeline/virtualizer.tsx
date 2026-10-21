@@ -206,6 +206,7 @@ export function createTimelineVirtualizer(input: Input) {
     const active = id ? (input.projection.messageLastRowIndex().get(id) ?? -1) : -1
     const initialTail = rendering.initialTail && input.pinned()
     const anchored = rendering.anchor ? rowKeys().indexOf(rendering.anchor.key) : -1
+    const activity = rowKeys().lastIndexOf("activity")
 
     return (range: Range) => {
       // Batch a bounded cheap suffix, but stop before unknown/large content.
@@ -233,7 +234,7 @@ export function createTimelineVirtualizer(input: Input) {
         : defaultRangeExtractor({ ...range, overscan: 2 })
 
       return filterVirtualIndexes(
-        [...new Set([...indexes, ...[active, anchored].filter((index) => index >= 0)])].sort((a, b) => a - b),
+        [...new Set([...indexes, ...[active, anchored, activity].filter((index) => index >= 0)])].sort((a, b) => a - b),
         range.count,
       )
     }
@@ -514,6 +515,15 @@ export function createTimelineVirtualizer(input: Input) {
       const actIdx = keys.lastIndexOf("activity")
       return actIdx >= 0 && (actIdx < keys.length - 1 || key === "activity")
     },
+    coupledDistance: (key, originKey, shown) => {
+      const keys = rowKeys()
+      const originIdx = keys.lastIndexOf(originKey)
+      const actIdx = keys.lastIndexOf(key)
+      const originItem = virtualizer.measurementsCache[originIdx]
+      const actItem = virtualizer.measurementsCache[actIdx]
+      if (!originItem || !actItem || actIdx <= originIdx) return undefined
+      return grid(actItem.start - originItem.start + shown)
+    },
     settle: (state) => {
       if (!state.held) endGap = false
 
@@ -717,68 +727,85 @@ export function createTimelineVirtualizer(input: Input) {
     if (previous === keys) return
     const oldActivityIdx = previous.indexOf("activity")
     const newActivityIdx = keys.indexOf("activity")
-    if (oldActivityIdx >= 0 && newActivityIdx > oldActivityIdx && following()) {
-      const oldSize =
-        virtualizer.itemSizeCache.get("activity") ?? virtualizer.measurementsCache[oldActivityIdx]?.size ?? 36
+    const gapKey =
+      oldActivityIdx >= 0 && newActivityIdx >= 0 && !!listRoot() && !coldPending && !prefersReducedMotion()
+        ? previous.slice(oldActivityIdx + 1).find((k) => {
+            const idx = keys.indexOf(k)
+            return idx >= 0 && idx < newActivityIdx
+          })
+        : undefined
+    const oldGapIdx = gapKey ? previous.indexOf(gapKey) : -1
+    const newGapIdx = gapKey ? keys.indexOf(gapKey) : -1
+    if (gapKey && oldGapIdx > oldActivityIdx && newGapIdx >= 0 && newGapIdx < newActivityIdx) {
       const targetSize = modelHeight("activity") ?? 36
-      const gapKey = previous.slice(oldActivityIdx + 1).find((k) => {
-        const idx = keys.indexOf(k)
-        return idx >= 0 && idx < newActivityIdx
-      })
-      const oldGapIdx = gapKey ? previous.indexOf(gapKey) : -1
-      if (oldSize >= 1 && gapKey && oldGapIdx > oldActivityIdx) {
-        const gapBase =
-          virtualizer.itemSizeCache.get(gapKey) ??
-          virtualizer.measurementsCache[oldGapIdx]?.size ??
-          modelHeight(gapKey) ??
-          24
-        let moveDistance = 0
-        for (let k = oldActivityIdx; k < newActivityIdx; k++) {
+      const prevCoupled = growth.coupled("activity")
+      const currentShown =
+        prevCoupled !== undefined
+          ? (growth.shown("activity") ?? virtualizer.itemSizeCache.get("activity") ?? 0)
+          : (virtualizer.itemSizeCache.get("activity") ??
+            virtualizer.measurementsCache[oldActivityIdx]?.size ??
+            targetSize)
+      const oldGapSize =
+        virtualizer.itemSizeCache.get(gapKey) ??
+        virtualizer.measurementsCache[oldGapIdx]?.size ??
+        modelHeight(gapKey) ??
+        24
+      const gapBase = prevCoupled?.gaps.find((g) => g.key === gapKey)?.base ?? modelHeight(gapKey) ?? oldGapSize
+      const priorGaps = prevCoupled
+        ? prevCoupled.gaps.flatMap((g) => {
+            if (g.key === gapKey) return []
+            const cur = virtualizer.itemSizeCache.get(g.key) ?? g.base + g.extra
+            const extra = grid(Math.max(0, cur - g.base))
+            return extra > 1 / 64 ? [{ key: g.key, base: g.base, extra }] : []
+          })
+        : []
+      const gapExtra = grid(Math.max(0, oldGapSize - gapBase + currentShown))
+      const gaps = gapExtra > 1 / 64 ? [...priorGaps, { key: gapKey, base: gapBase, extra: gapExtra }] : priorGaps
+      const totalExtra = gaps.reduce((sum, g) => sum + g.extra, 0)
+      if (totalExtra >= 1) {
+        let deltaDistance = 0
+        for (let k = newGapIdx; k < newActivityIdx; k++) {
           const kKey = keys[k]!
           const kOld = previous.indexOf(kKey)
-          moveDistance +=
+          deltaDistance +=
             kKey === gapKey
-              ? gapBase + oldSize
+              ? gapBase + gapExtra
               : kOld < 0
-                ? 0
+                ? following()
+                  ? 0
+                  : (modelHeight(kKey) ?? fallbackItemSize)
                 : (virtualizer.itemSizeCache.get(kKey) ??
                   virtualizer.measurementsCache[kOld]?.size ??
                   modelHeight(kKey) ??
                   fallbackItemSize)
         }
-        growth.drop("activity")
-        virtualizer.itemSizeCache.set(gapKey, gapBase + oldSize)
+        const prevRatio = prevCoupled ? Math.max(0, Math.min(1, 1 - currentShown / Math.max(1, targetSize))) : 0
+        const moveDistance = grid((prevCoupled ? prevCoupled.moveDistance * prevRatio : 0) + deltaDistance)
+        if (gapExtra > 1 / 64) virtualizer.itemSizeCache.set(gapKey, gapBase + gapExtra)
         virtualizer.itemSizeCache.set("activity", 0)
-        growth.grow("activity", 0, targetSize, false, { key: gapKey, base: gapBase, extra: oldSize })
+        growth.grow("activity", 0, targetSize, false, { gaps, moveDistance })
         const activityEl = virtualizer.elementsCache.get("activity")
-        const wrapper = activityEl?.parentElement
-        const indicator = wrapper?.querySelector<HTMLElement>('[data-slot="session-working-indicator"]')
-        if (activityEl && wrapper && indicator && moveDistance > 0) {
-          wrapper.style.overflow = "visible"
+        if (activityEl && moveDistance > 0) {
+          if (activityEl.parentElement) activityEl.parentElement.style.overflow = "visible"
           activityEl.style.transform = `translateY(${-moveDistance}px)`
-          indicator.style.opacity = "0.45"
-          let stepCount = 0
-          frameLoop.add(() => {
-            stepCount++
-            if (stepCount === 1) {
-              wrapper.style.overflow = "clip"
-              activityEl.style.removeProperty("transform")
-              indicator.style.opacity = "0.2"
-              return true
-            }
-            if (stepCount === 2) {
-              indicator.style.opacity = "0.6"
-              return true
-            }
-            indicator.style.removeProperty("opacity")
-            return false
-          })
         }
       }
     }
 
     const remaining = new Set(keys)
-    const leaving = previous.filter((key) => !remaining.has(key))
+    const removedKeys = previous.filter((key) => !remaining.has(key))
+    // Working leaves mid-glide: it fades where it stands, riding the gap it glides from, while that gap closes.
+    const gliding = removedKeys.includes("activity") ? growth.coupled("activity") : undefined
+    if (gliding) {
+      const origin = gliding.gaps[0]?.key
+      if (origin && remaining.has(origin)) fadeOutRow("activity", origin, previous)
+      growth.release("activity")
+      knownKeys.delete("activity")
+      addedKeys.delete("activity")
+      arrivals.delete("activity")
+      virtualizer.itemSizeCache.delete("activity")
+    }
+    const leaving = gliding ? removedKeys.filter((key) => key !== "activity") : removedKeys
 
     if (!leaving.length) return
     const first = previous.indexOf(leaving[0]!)
@@ -865,6 +892,8 @@ export function createTimelineVirtualizer(input: Input) {
         stopLoop = undefined
         leavingCleanups.delete(key)
         ghosts.delete(wrapper)
+        virtualizer.elementsCache.get(key)?.style.removeProperty("transform")
+        if (wrapper.style.overflow === "visible") wrapper.style.overflow = "clip"
         wrapper.removeAttribute("aria-hidden")
         wrapper.inert = false
         wrapper.style.removeProperty("pointer-events")
@@ -1636,6 +1665,25 @@ export function createTimelineVirtualizer(input: Input) {
       const edges = createMemo<{ top: number; bottom: number }>((previous) => {
         if (leaving() && previous) return previous
         const top = item().start - topOffset() - rendering.scrollAdjustment
+        if (rowProps.rowKey === "activity") {
+          const coupled = growth.coupled("activity")
+          const shown = growth.shown("activity") ?? 0
+          const target = growth.target("activity") ?? 36
+          if (coupled && coupled.gaps.length > 0 && shown < target) {
+            const originIdx = rowKeys().lastIndexOf(coupled.gaps[0]!.key)
+            const originItem = virtualizer.measurementsCache[originIdx]
+            if (originItem && item().index > originIdx) {
+              coupled.moveDistance = grid(item().start - originItem.start + shown)
+              const ratio = Math.max(0, Math.min(1, 1 - shown / Math.max(1, target)))
+              const px = grid(coupled.moveDistance * ratio)
+              if (element) {
+                if (element.parentElement) element.parentElement.style.overflow = "visible"
+                if (px <= 1 / 64) element.style.removeProperty("transform")
+                else element.style.transform = `translateY(${-px}px)`
+              }
+            }
+          }
+        }
 
         return { top: grid(top), bottom: grid(top + item().size) }
       })
@@ -1691,6 +1739,16 @@ export function createTimelineVirtualizer(input: Input) {
             ref={(value) => {
               element = value
               if (modeled()) virtualizer.elementsCache.set(rowProps.rowKey, value)
+              if (rowProps.rowKey === "activity") {
+                const coupled = growth.coupled("activity")
+                const shown = growth.shown("activity") ?? 0
+                const target = growth.target("activity") ?? 36
+                if (coupled && coupled.moveDistance > 0 && shown < target) {
+                  const ratio = Math.max(0, Math.min(1, 1 - shown / Math.max(1, target)))
+                  if (value.parentElement) value.parentElement.style.overflow = "visible"
+                  value.style.transform = `translateY(${-grid(coupled.moveDistance * ratio)}px)`
+                }
+              }
               const mounted = row()
 
               if (Predicate.isTagged(mounted, "UserMessage"))

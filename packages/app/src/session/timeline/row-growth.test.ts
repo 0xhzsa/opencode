@@ -176,4 +176,107 @@ describe("row growth", () => {
     expect(sizes.at(-1)).toBe(90)
     expect(wrapper.style.getPropertyValue("mask-image")).toBe("")
   })
+
+  test("glides Working smoothly across single and multi-steer promotions without jumping or clipping", async () => {
+    const actWrapper = document.createElement("div")
+    const actInner = document.createElement("div")
+    actWrapper.appendChild(actInner)
+    const gap1Wrapper = document.createElement("div")
+    const gap2Wrapper = document.createElement("div")
+    const latest = new Map<string, number>([
+      ["gap-1", 60],
+      ["gap-2", 24],
+      ["activity", 0],
+    ])
+    const trace: { act: number; gap1: number; gap2: number; tx: number; wkY: number }[] = []
+    const frames: { pending: number; held: number }[] = []
+
+    const growth = createRowGrowth({
+      measure: () => {},
+      resize: (key, size) => {
+        latest.set(key, size)
+        if (key === "activity") return actWrapper
+        if (key === "gap-1") return gap1Wrapper
+        if (key === "gap-2") return gap2Wrapper
+        return false
+      },
+      below: () => true,
+      movesWorking: (key) => key === "activity",
+      settle: (state) => {
+        frames.push(state)
+        const act = latest.get("activity") ?? 0
+        const gap1 = latest.get("gap-1") ?? 24
+        const gap2 = latest.get("gap-2") ?? 24
+        const tf = actInner.style.transform
+        const m = tf.match(/translateY\((-?\d+(?:\.\d+)?)px\)/)
+        const tx = m ? Number(m[1]) : 0
+        const wrapperTop = gap1 + 73 + gap2 + 73
+        trace.push({ act, gap1, gap2, tx, wkY: wrapperTop + tx })
+      },
+    })
+
+    // Promote steer 1 & 2 together: total height between origin (0) and activity wrapper is (60 + 73 + 24 + 73) = 230
+    actInner.style.transform = "translateY(-230px)"
+    growth.grow("activity", 0, 36, false, {
+      gaps: [{ key: "gap-1", base: 24, extra: 36 }],
+      moveDistance: 230,
+    })
+
+    const deadline = performance.now() + 4000
+    while (growth.target("activity") !== undefined && performance.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 16))
+    }
+
+    expect(growth.target("activity")).toBeUndefined()
+    expect(latest.get("activity")).toBe(36)
+    expect(latest.get("gap-1")).toBe(24)
+    expect(actInner.style.transform).toBe("")
+    expect(actWrapper.style.getPropertyValue("mask-image")).toBe("")
+    expect(frames.every((f) => f.pending === 0)).toBe(true)
+    expect(trace.every((t) => Math.abs(t.act + t.gap1 - 60) < 0.05)).toBe(true)
+
+    let prevY = 0
+    const dys = trace.map((t) => {
+      const dy = t.wkY - prevY
+      prevY = t.wkY
+      return dy
+    })
+    expect(dys[0]).toBeGreaterThan(0)
+    expect(dys[0]).toBeLessThanOrEqual(2.1)
+    expect(dys.every((dy) => dy >= -0.05 && dy <= 8)).toBe(true)
+    expect(trace.at(-1)?.wkY).toBe(194)
+  })
+
+  test("closes a coupled gap on the spring when Working leaves mid-glide", async () => {
+    const gaps: number[] = []
+    const actWrapper = document.createElement("div")
+    actWrapper.appendChild(document.createElement("div"))
+    const frames: { pending: number; held: number }[] = []
+    let activity = true
+    const growth = createRowGrowth({
+      measure: () => {},
+      resize: (key, size) => {
+        if (key === "gap") {
+          gaps.push(size)
+          return document.createElement("div")
+        }
+        return key === "activity" && activity ? actWrapper : false
+      },
+      below: () => true,
+      settle: (state) => frames.push(state),
+    })
+    growth.grow("activity", 0, 36, false, { gaps: [{ key: "gap", base: 24, extra: 36 }], moveDistance: 120 })
+    await new Promise((resolve) => setTimeout(resolve, 70))
+    const before = gaps.at(-1)!
+    expect(before).toBeGreaterThan(24)
+    activity = false
+    growth.release("activity")
+    expect(gaps.at(-1)).toBe(before)
+    const deadline = performance.now() + 3000
+    while (growth.target("gap") !== undefined && performance.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 16))
+    expect(gaps.at(-1)).toBe(24)
+    const after = gaps.slice(gaps.indexOf(before))
+    expect(after.every((size, index) => index === 0 || (size <= after[index - 1]! && after[index - 1]! - size <= 8))).toBe(true)
+  })
 })
