@@ -10,7 +10,7 @@ const sidebarPanel = `${sidebar} > div`
 
 const sidePanel = '[data-slot="session-side-panel-presence"]'
 
-// Samples every frame for 700 ms after `toggle`: the content's edge beside the panel, and the panel's opacity and shift.
+// Samples every frame for 1.5 s after `toggle`: the content's edge beside the panel, and the panel's opacity and shift.
 async function trace(page: Page, toggle: () => Promise<void>, edge: string, panel: string) {
   const frames = page.evaluate(
     ([edge, panel]) =>
@@ -18,7 +18,8 @@ async function trace(page: Page, toggle: () => Promise<void>, edge: string, pane
         const start = performance.now()
         const out: { edge: number; opacity: number; shift: number }[] = []
 
-        const tick = (now: number) => {
+        // The rAF timestamp follows the slowed animation timeline, so time the window with performance.now().
+        const tick = () => {
           const style = getComputedStyle(document.querySelector(panel)!)
           out.push({
             edge: document.querySelector(edge)!.getBoundingClientRect().right,
@@ -26,7 +27,7 @@ async function trace(page: Page, toggle: () => Promise<void>, edge: string, pane
             shift: style.transform === "none" ? 0 : new DOMMatrix(style.transform).m41,
           })
 
-          if (now - start < 700) return requestAnimationFrame(tick)
+          if (performance.now() - start < 1500) return requestAnimationFrame(tick)
           resolve(out)
         }
 
@@ -50,6 +51,10 @@ for (const direction of ["ltr", "rtl"] as const) {
     await page.goto(sessionHref(fixture.targetID))
     await page.evaluate((direction) => (document.documentElement.dir = direction), direction)
     await expect(page.getByRole("heading", { name: fixture.expected.targetTitle })).toBeVisible()
+    // A fifth of the speed, so even a slow runner samples several frames of each fade.
+    const devtools = await page.context().newCDPSession(page)
+    await devtools.send("Animation.enable")
+    await devtools.send("Animation.setPlaybackRate", { playbackRate: 0.2 })
 
     const sidebarToggle = page
       .locator(
