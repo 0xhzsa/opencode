@@ -47,8 +47,7 @@ import {
 } from "../util/form"
 
 const INTEGRATION_PRIORITY: Record<string, number> = {
-  "opencode-go": 0,
-  opencode: 1,
+  opencode: 0,
   openai: 2,
   "github-copilot": 3,
   anthropic: 4,
@@ -66,8 +65,40 @@ const SUBMIT = Symbol("submit")
 // Device-flow codes such as "R283-GOUEO"; when present they are copied instead of the URL.
 const OAUTH_CODE = /[A-Z0-9]{4}-[A-Z0-9]{4,5}/
 
+// The integration that runs a merged row's method, when it isn't the row's own.
+const METHOD_OWNER = new WeakMap<ConnectMethod, IntegrationInfo>()
+
+// Go is an OpenCode account with a subscription, so /connect shows one OpenCode row: sign in with the
+// account (Go or Console), or paste a Zen or Go API key. Go's own connections stay manageable here.
+export function foldOpenCode(list: IntegrationInfo[]): IntegrationInfo[] {
+  const go = list.find((item) => item.id === "opencode-go")
+  if (!go || !list.some((item) => item.id === "opencode")) return list
+  const goKeys = connectMethods(go).flatMap((method) => {
+    if (method.type !== "key") return []
+    const folded = { ...method, label: "Use a Go API key" }
+    METHOD_OWNER.set(folded, go)
+    return [folded]
+  })
+  return list.flatMap((item) => {
+    if (item.id === go.id) return []
+    if (item.id !== "opencode") return [item]
+    const methods = connectMethods(item).map((method) => ({
+      ...method,
+      label: method.type === "key" ? "Use a Zen API key" : "Sign in with your OpenCode account",
+    }))
+    return [
+      {
+        ...item,
+        name: "OpenCode",
+        methods: [...methods, ...goKeys],
+        connections: [...item.connections, ...go.connections],
+      },
+    ]
+  })
+}
+
 export function integrationOptions(list: IntegrationInfo[]) {
-  return list.toSorted(
+  return foldOpenCode(list).toSorted(
     (a, b) =>
       Number(b.metadata?.source === "mcp") - Number(a.metadata?.source === "mcp") ||
       (INTEGRATION_PRIORITY[a.id] ?? 99) - (INTEGRATION_PRIORITY[b.id] ?? 99) ||
@@ -186,7 +217,7 @@ function manageConnections(
     const [deleting, setDeleting] = createSignal<string>()
     const [selected, setSelected] = createSignal(methods.length ? "add" : credentialConnections(integration)[0]?.id)
     const current = createMemo(() =>
-      data.location.integration.list(location)?.find((item) => item.id === integration.id),
+      foldOpenCode(data.location.integration.list(location) ?? []).find((item) => item.id === integration.id),
     )
 
     return (
@@ -312,12 +343,13 @@ function selectMethod(
 }
 
 function openMethod(
-  integration: IntegrationInfo,
+  row: IntegrationInfo,
   method: ConnectMethod,
   location: LocationRef,
   dialog: ReturnType<typeof useDialog>,
   onConnected?: OnIntegrationConnected,
 ) {
+  const integration = METHOD_OWNER.get(method) ?? row
   if (method.type === "key") {
     void beginKey(integration, method, location, dialog, onConnected)
     return

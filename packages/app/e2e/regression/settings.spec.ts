@@ -799,8 +799,18 @@ const consoleIntegrations = [
 ]
 
 for (const row of [
-  { provider: "OpenCode Console", connect: "Connect OpenCode Console", signIn: "Connecting to OpenCode Console" },
-  { provider: "OpenCode Go", connect: "Connect OpenCode Go", signIn: "Connecting to OpenCode Go" },
+  {
+    provider: "OpenCode Console",
+    connect: "Connect OpenCode",
+    signIn: "Connecting to OpenCode",
+    keys: ["Zen API key", "Go API key"],
+  },
+  {
+    provider: "OpenCode Go",
+    connect: "Connect OpenCode Go",
+    signIn: "Connecting to OpenCode Go",
+    keys: ["Use API key"],
+  },
 ]) {
   test(`providers: ${row.provider} signs in from the Console intro`, async ({ page, context }) => {
     const url = "https://auth.example.test/device?user_code=ABCD-EFGH"
@@ -820,9 +830,9 @@ for (const row of [
     const intro = page.getByRole("dialog", { name: row.connect, exact: true })
     const container = page.locator('[data-slot="dialog-container"]')
     await expect(
-      intro.getByText("Sign in with your OpenCode Console account to use the available models."),
+      intro.getByText("Sign in with your OpenCode account to use your Go subscription or Console workspace."),
     ).toBeVisible()
-    await expect(intro.getByRole("button", { name: "Use API key", exact: true })).toBeVisible()
+    for (const key of row.keys) await expect(intro.getByRole("button", { name: key, exact: true })).toBeVisible()
     expect((await container.boundingBox())?.height).toBe(512)
 
     const popup = page.waitForEvent("popup")
@@ -836,7 +846,7 @@ for (const row of [
     const signIn = page.getByRole("dialog", { name: row.signIn, exact: true })
     await expect(signIn.getByRole("group", { name: "Device code: ABCD-EFGH", exact: true })).toBeVisible()
     await expect(signIn.getByRole("button", { name: "Copy sign-in link", exact: true })).toBeVisible()
-    await expect(signIn.getByRole("button", { name: "Use API key", exact: true })).toHaveCount(0)
+    for (const key of row.keys) await expect(signIn.getByRole("button", { name: key, exact: true })).toHaveCount(0)
     await expect.poll(async () => (await container.boundingBox())?.height).toBeLessThan(512)
   })
 }
