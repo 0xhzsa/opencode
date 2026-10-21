@@ -382,10 +382,16 @@
     transition: opacity 0.15s ease;
   }
 
-  /* A pending steer keeps its Pending label and actions in view. */
-  &[data-pending] [data-slot="user-message-copy-wrapper"] {
-    opacity: 1;
-    pointer-events: auto;
+  [data-slot="user-message-pending-label"] {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    height: calc(20px * var(--user-run-label, 0));
+    margin-bottom: calc(4px * var(--user-run-label, 0));
+    overflow: hidden;
+    opacity: var(--user-run-label, 0);
+    user-select: none;
+    white-space: nowrap;
   }
 
   [data-slot="user-message-copy-wrapper"] > * {

@@ -1008,7 +1008,7 @@ for (const [action, status] of [
   })
 }
 
-test("waiting steers group under one Pending line, each keeping its own actions beside its bubble @quarantine", async ({
+test("waiting steers group under one Steering label, each keeping its own actions beside its bubble @quarantine", async ({
   page,
 }) => {
   const mock = createQueueMock(
@@ -1023,8 +1023,9 @@ test("waiting steers group under one Pending line, each keeping its own actions 
   await expect(last).toContainText("U3: And rebase on beta first.")
   await expect(first.locator('[data-component="user-message"]')).toHaveAttribute("data-pending", "true")
 
-  // The run's last steer carries the one Pending line; the first folds its line away.
-  await expect(last.locator('[data-slot="user-message-meta"]')).toContainText("Pending")
+  // The run wears one Steering label above its first steer, and no meta line at rest.
+  await expect(first.locator('[data-slot="user-message-pending-label"]')).toHaveText("Steering")
+  await expect(last.locator('[data-slot="user-message-pending-label"]')).toHaveCount(0)
   await expect(first.locator('[data-slot="user-message-meta"]')).toBeHidden()
 
   await first.locator('[data-slot="user-message-text"]').hover()
@@ -1162,12 +1163,12 @@ for (const delivery of ["steer", "queue"] as const) {
         : undefined
 
     if (colors) {
-      // A pending steer is grey, switches to it without a transition, and keeps its Pending row in view without hover.
+      // A pending steer is grey, switches to it without a transition, and wears a Steering label above it.
       await expect(bubble).toHaveCSS("background-color", colors.pending.background)
       await expect(bubble).toHaveCSS("color", colors.pending.text)
       await expect(bubble).toHaveCSS("transition-duration", "0s")
-      await expect(pending.locator('[data-slot="user-message-copy-wrapper"]')).toHaveCSS("opacity", "1")
-      await expect(pending.locator('[data-slot="user-message-meta"]')).toHaveText(/^Pending\s*·\s*Queue Model$/)
+      await expect(pending.locator('[data-slot="user-message-pending-label"]')).toHaveText("Steering")
+      await expect(pending.locator('[data-slot="user-message-meta"]')).toHaveText(/^Queue Model$/)
       await bubble.evaluate((element) => (element.dataset.deliveryMarker = "pending"))
     }
 

@@ -356,6 +356,12 @@ export function CurrentUserMessageDisplay(props: {
 
   const stamp = createMemo(() => timefmt().format(props.message.time.created))
 
+  const labelled = createMemo(() => waiting() && !props.run?.above)
+  const [label, setLabel] = createSignal("")
+  createEffect(() => {
+    if (labelled()) setLabel(i18n.t(status() === "stranded" ? "ui.message.pending" : "ui.message.steering"))
+  })
+
   const info = createMemo(() =>
     [
       waiting() ? i18n.t("ui.message.pending") : "",
@@ -373,6 +379,7 @@ export function CurrentUserMessageDisplay(props: {
   )
 
   const runPose = () => ({
+    label: labelled() ? 1 : 0,
     meta: folded() ? 0 : 1,
     top: meetsAbove() ? 1 : 0,
     bottom: folded() ? 1 : 0,
@@ -386,6 +393,8 @@ export function CurrentUserMessageDisplay(props: {
     () => root,
     runPose,
     (el, value) => {
+      el.style.setProperty("--user-run-label", `${value.label}`)
+      if (value.label === 0 && !labelled()) setLabel("")
       el.style.setProperty("--user-run-meta", `${value.meta}`)
       el.style.setProperty("--user-run-top", `${value.top}`)
       el.style.setProperty("--user-run-bottom", `${value.bottom}`)
@@ -595,6 +604,7 @@ export function CurrentUserMessageDisplay(props: {
       data-run-folded={folded() ? "" : undefined}
       data-run-meta-hidden={restingPose.meta === 0 ? "" : undefined}
       style={{
+        "--user-run-label": `${restingPose.label}`,
         "--user-run-meta": `${restingPose.meta}`,
         "--user-run-top": `${restingPose.top}`,
         "--user-run-bottom": `${restingPose.bottom}`,
@@ -625,6 +635,14 @@ export function CurrentUserMessageDisplay(props: {
         </MessageOptions>
       </Show>
       {renderAttachments()}
+      <Show when={label()}>
+        <div data-slot="user-message-pending-label" class="text-12-regular text-v2-text-text-weak" aria-hidden={!labelled()}>
+          <span data-slot="user-message-pending" aria-hidden="true">
+            <Icon name="outline-steer" size="small" />
+          </span>
+          {label()}
+        </div>
+      </Show>
       <Show
         when={props.text}
         fallback={
@@ -658,17 +676,6 @@ export function CurrentUserMessageDisplay(props: {
         <div data-slot="user-message-copy-wrapper">
           <span data-slot="user-message-meta-wrap">
             <span data-slot="user-message-meta">
-              <UserMessageTransition active={waiting()}>
-                <span data-slot="user-message-pending" aria-hidden="true">
-                  <Icon name="outline-steer" size="small" />
-                </span>
-                <span>{i18n.t("ui.message.pending")}</span>
-                <Show when={metaLabels().length > 0}>
-                  <span data-slot="user-message-meta-separator" aria-hidden="true">
-                    {"\u00B7"}
-                  </span>
-                </Show>
-              </UserMessageTransition>
               <Show when={metaLabels().length > 0}>
                 <span data-slot="user-message-meta-label">
                   <For each={metaLabels()}>

@@ -1316,9 +1316,12 @@ export function createSessionTimelineRowRenderer(input: {
     const images = message.files?.filter(attached).length ?? 0
     const imageRows = Math.ceil(images / Math.max(1, Math.floor((contentWidth + 24 + 8) / (58 + 8))))
     const joined = runs().get(row.userMessageID)
+    const pending = input.actions?.pending?.status(message.id)
+    const labelled = (pending === "steering" || pending === "stranded") && !joined?.above
     return {
       source: "pretext",
       height:
+        (labelled ? 24 : 0) +
         (imageRows ? imageRows * (46 + 8) : presentation?.voice ? 8 : 0) +
         16 +
         (joined?.below ? 0 : 28) +
