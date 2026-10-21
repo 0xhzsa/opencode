@@ -29,4 +29,12 @@ export default {
   "export.success.description": "Saved session to {{filename}}",
   "export.failed.title": "Failed to export session",
   "export.failed.description": "An error occurred while exporting the session",
+  "stats.username": "Username",
+  "stats.sessionId": "Session ID",
+  "context.full": "{{percent}}% full",
+  "context.empty": "No model response yet",
+  "mcp.section": "MCP servers",
+  "mcp.summary": "{{connected}} of {{total}} connected",
+  "systemPrompt.empty": "No system prompt recorded yet",
+  "advanced.title": "Advanced",
 }
