@@ -467,6 +467,15 @@ function normalizeExperimental(
         )
         if (value !== undefined) result.portable_shell_scanner = value
       }
+      if (own(experimental, "voice")) {
+        const value = decodeEncoded(
+          ConfigExperimental.Info.fields.voice,
+          experimental.voice,
+          ["experimental", "voice"],
+          diagnostics,
+        )
+        if (value !== undefined) result.voice = value
+      }
       if (own(experimental, "todo")) {
         const value = decodeEncoded(
           ConfigExperimental.Info.fields.todo,
