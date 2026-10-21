@@ -1,156 +1,123 @@
 import { createEffect, createSignal, on, onCleanup, type Accessor } from "solid-js"
-import { frameLoop, prefersReducedMotion, Spring } from "@opencode/ui/motion"
-import { motionTuning } from "@opencode/ui/motion-tuning"
+import { prefersReducedMotion, Spring } from "@opencode/ui/motion"
 
-const group = "Sidebars"
-
-// Panels in flight, across the app. Native views, which no DOM box clips, stay hidden while any panel moves.
+// Panels in flight, across the app. Native views, which can't fade with the DOM, stay hidden while any panel moves.
 const [flights, setFlights] = createSignal(0)
 
 export const panelsMoving = () => flights() > 0
 
-// The left sidebar and the side panel share one spring, so they move as one system.
-const spring = motionTuning.spring("sidebars", {
-  label: "Spring",
-  group,
-  shipped: "smooth",
-  presets: {
-    snappy: { duration: 0.2, bounce: 0 },
-    smooth: { duration: 0.3, bounce: 0 },
-    calm: { duration: 0.45, bounce: 0 },
-  },
-})
+// Layout changes at once; only the panel moves, by a few pixels toward its edge, and fades. Both run as Web Animations
+// on transform and opacity, so the compositor plays them through main-thread work like mounting the panel.
+const shift = springEasing(0.24)
 
-const style = motionTuning.choice("sidebars.style", {
-  label: "Motion",
-  group,
-  value: "spring",
-  labels: { spring: "Spring", instant: "Instant" },
-})
+const fade = { duration: 180, easing: "cubic-bezier(0.44, 0.75, 0.63, 1.03)" }
 
-/** Adds a button that toggles a panel to the Motion workspace's Sidebars section while the panel is mounted. */
-export function replayPanelToggle(input: { id: string; label: string; toggle: () => void }) {
-  onCleanup(motionTuning.action({ id: `sidebars.${input.id}`, label: input.label, group, run: input.toggle }))
+const faded = 0.15
+
+// Shortcuts toggle panels many times a day, so a toggle from the keyboard skips the motion.
+let keyboard = false
+
+if (typeof window !== "undefined") {
+  window.addEventListener("keydown", () => (keyboard = true), true)
+  window.addEventListener("pointerdown", () => (keyboard = false), true)
 }
 
 /**
- * Opens and closes an edge panel on the shared sidebar spring. `paint` receives how far closed the panel is, from 0
- * (open) to 1 (closed), every frame of a flight and whenever a signal it reads changes at rest. It sizes the panel's
- * real layout box, so the neighbouring content's edge follows the panel's edge on every frame. `present` stays true
- * until a close settles. `whenSettled` defers work that would force a layout, like moving focus, until the flight
- * lands; `sync` shows a state at once, for changes the user makes by hand.
+ * Fades an edge panel in and out while it shifts `offset` pixels toward its edge (negative for the inline-start edge;
+ * mirrored in RTL). `present` stays true until a close settles, so the panel can stay visible while it leaves.
+ * `whenSettled` defers work until the motion lands; `sync` shows a state at once, for changes the user makes by hand.
  */
 export function createPanelMotion(input: {
   open: Accessor<boolean>
-  paint: (closed: number) => void
+  element: Accessor<HTMLElement | undefined>
+  offset: number
   /** A change shows the new state without motion, e.g. switching to another session's layout. */
   identity?: Accessor<unknown>
-  onClosed?: () => void
 }) {
   const [present, setPresent] = createSignal(input.open())
-  // Percent closed, so the spring's rest threshold stays well under a pixel.
-  const motion = new Spring(input.open() ? 0 : 100)
-  let stop: (() => void) | undefined
+  let animations: Animation[] = []
   let landed: (() => void)[] = []
   // A state `sync` asked to show at once, for when the change hasn't reached this motion yet, e.g. inside a batch.
   let snapTo: boolean | undefined
-  let flying = false
 
-  const fly = (next: boolean) => {
-    if (flying === next) return
-    flying = next
-    setFlights((count) => count + (next ? 1 : -1))
+  const stop = () => {
+    if (animations.length > 0) setFlights((count) => count - 1)
+    animations.forEach((animation) => animation.cancel())
+    animations = []
   }
-
-  const paint = () => input.paint(Math.min(1, Math.max(0, motion.value / 100)))
 
   const settle = () => {
-    stop?.()
-    stop = undefined
-    fly(false)
+    if (!input.open()) setPresent(false)
+    stop()
     const queued = landed
     landed = []
-
-    if (!input.open()) {
-      setPresent(false)
-      input.onClosed?.()
-    }
-
     queued.forEach((run) => run())
-  }
-
-  const snap = (open: boolean) => {
-    motion.snap(open ? 0 : 100)
-    paint()
-    settle()
   }
 
   createEffect(
     on(
       () => [input.open(), input.identity?.()] as const,
       ([open, identity], previous) => {
-        const target = open ? 0 : 100
         // Work queued for the previous direction no longer applies.
         landed = []
-        const now = snapTo === open
+        const now = snapTo === open || keyboard || prefersReducedMotion()
         snapTo = undefined
 
         if (open) setPresent(true)
 
-        if (previous === undefined || previous[1] !== identity) {
-          stop?.()
-          stop = undefined
-          fly(false)
-          motion.snap(target)
-          paint()
+        const element = input.element()
 
-          if (!open) setPresent(false)
+        if (previous === undefined || previous[1] !== identity || now || !element?.animate) return settle()
 
-          return
-        }
+        const x = input.offset * (element.matches(":dir(rtl)") ? -1 : 1)
+        const away = { transform: `translateX(${x}px)`, opacity: `${faded}` }
+        const rest = { transform: "none", opacity: "1" }
+        const target = open ? rest : away
+        // A reversal mid-flight starts from where the panel is now.
+        const start = animations.length > 0 ? getComputedStyle(element) : open ? away : rest
 
-        if (now || prefersReducedMotion() || style() === "instant") return snap(open)
-
-        const tuning = spring()
-        motion.omega = (2 * Math.PI) / tuning.duration
-        motion.zeta = 1 - tuning.bounce
-        // Retargeting keeps the current position and velocity, so a second toggle mid-flight turns around smoothly.
-        motion.set(target)
-        fly(true)
-        // Writes only; anything reading layout this frame does so in the loop's read phase, before this runs.
-        stop ??= frameLoop.add((dt) => {
-          motion.step(dt)
-          paint()
-
-          if (!motion.resting) return true
-          stop = undefined
-          settle()
-
-          return false
-        })
+        stop()
+        setFlights((count) => count + 1)
+        animations = [
+          element.animate({ transform: [start.transform, target.transform] }, { ...shift, fill: "both" }),
+          element.animate({ opacity: [start.opacity, target.opacity] }, { ...fade, fill: "both" }),
+        ]
+        const current = animations
+        void Promise.all(current.map((animation) => animation.finished)).then(
+          () => current === animations && settle(),
+          () => undefined,
+        )
       },
     ),
   )
 
-  // Repaints at rest when the open size changes, e.g. a resize drag or a window resize.
-  createEffect(paint)
-
-  onCleanup(() => {
-    stop?.()
-    fly(false)
-  })
+  onCleanup(stop)
 
   return {
     present,
     sync: (open: boolean) => {
-      if (stop && input.open() === open) return snap(open)
+      if (animations.length > 0 && input.open() === open) return settle()
       snapTo = open
     },
     whenSettled: (run: () => void) => {
-      if (stop) return void landed.push(run)
+      if (animations.length > 0) return void landed.push(run)
       run()
     },
   }
+}
+
+/**
+ * A critically damped spring of SwiftUI-style `duration` seconds, sampled per frame into a CSS `linear()` easing. It
+ * ends once within 0.5% of rest, a twentieth of a pixel on these shifts.
+ */
+function springEasing(duration: number) {
+  const spring = Spring.fromDuration(0, { duration, bounce: 0 }).set(1)
+  const points = [0]
+
+  while (points.at(-1)! < 0.995) points.push(Math.round(spring.step(1 / 60) * 1000) / 1000)
+  points[points.length - 1] = 1
+
+  return { duration: ((points.length - 1) * 1000) / 60, easing: `linear(${points.join(", ")})` }
 }
 
 /**

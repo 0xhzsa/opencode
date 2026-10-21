@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, Show } from "solid-js"
+import { Show } from "solid-js"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Icon } from "@opencode/ui/icon"
 import { IconButton } from "@opencode/ui/icon-button"
@@ -32,18 +32,11 @@ const slotWidth = 32
 // The shell's 8px inline inset plus the session header's 10px start padding.
 const contentStart = 18
 
-/**
- * `handoff` makes this one of the two vertical-tabs toggles, each shown only on its side of the motion: "out" rides
- * the sidebar's header and fades as it passes the collapsed slot, then the "in" toggle fades up. Each keeps its own
- * icon, so neither flips mid-flight.
- */
-export function SidebarToggle(props: { handoff?: "out" | "in" }) {
+export function SidebarToggle() {
   const command = useCommand()
   const language = useLanguage()
   const settings = useSettings()
   const keybind = () => command.keybindParts("sidebar.toggle")
-  const side = props.handoff
-  const ref = side && collapsedRef((button, closed) => (button.style.opacity = `${handoff(side, closed)}`))
 
   return (
     <Tooltip
@@ -59,7 +52,6 @@ export function SidebarToggle(props: { handoff?: "out" | "in" }) {
       }
     >
       <IconButton
-        ref={ref}
         type="button"
         variant="ghost-muted"
         size="large"
@@ -69,11 +61,7 @@ export function SidebarToggle(props: { handoff?: "out" | "in" }) {
         aria-label={language.t("command.sidebar.toggle")}
         aria-expanded={settings.appearance.sidebarOpen()}
         aria-controls="vertical-tabs-sidebar"
-        icon={
-          <Icon
-            name={side === "out" || (!side && settings.appearance.sidebarOpen()) ? "layout-left-full" : "layout-left"}
-          />
-        }
+        icon={<Icon name={settings.appearance.sidebarOpen() ? "layout-left-full" : "layout-left"} />}
       />
     </Tooltip>
   )
@@ -104,62 +92,21 @@ function useCollapsedSlot() {
 
 const slotClass = "flex shrink-0 justify-end overflow-hidden"
 
-// How far closed the left sidebar is, from 0 to 1. The shell paints it on every frame of the sidebar's motion; the
-// collapsed toggle and the space headers keep for it grow with it, so header contents travel with the sidebar's edge.
-const collapsed = { closed: 0, slots: new Set<() => void>() }
-
-export function paintCollapsedSlots(closed: number) {
-  collapsed.closed = closed
-  collapsed.slots.forEach((paint) => paint())
-}
-
-/** A ref whose element `paint` styles from how far closed the sidebar is, now and on every frame of its motion. */
-function collapsedRef(paint: (element: HTMLElement, closed: number) => void) {
-  let target: HTMLElement | undefined
-
-  const repaint = () => {
-    if (target) paint(target, collapsed.closed)
-  }
-
-  collapsed.slots.add(repaint)
-  onCleanup(() => collapsed.slots.delete(repaint))
-  createEffect(repaint)
-
-  return (element: HTMLElement) => {
-    target = element
-    repaint()
-  }
-}
-
-/** A ref for a slot that is `width` wide while the sidebar is closed. */
-function slotRef(width: () => number) {
-  return collapsedRef((slot, closed) => (slot.style.width = `${width() * closed}px`))
-}
-
-// The collapsed toggle rides the content's edge, so the two never meet: the sliding one fades out as it passes the
-// collapsed slot, then the collapsed one fades up, and only one shows at a time.
-function handoff(side: "out" | "in", closed: number) {
-  if (side === "out") return 1 - Math.min(1, Math.max(0, (closed - 0.55) / 0.2))
-
-  return Math.min(1, Math.max(0, (closed - 0.75) / 0.25))
-}
-
 // Floats over the top of every screen, centered on the session header's 48px row. Appears at the content's start edge
 // when the sidebar closes.
 export function CollapsedSidebarToggle() {
   const slot = useCollapsedSlot()
-  const ref = slotRef(slot.width)
 
   return (
     <Show when={slot.visible()}>
       <div
-        ref={ref}
         data-slot="collapsed-sidebar-toggle"
-        class={`absolute top-[calc(var(--shell-top-inset,8px)+10px)] start-[calc(var(--shell-inline-inset,8px)+10px)] z-40 flex shrink-0 justify-end`}
+        class={`absolute top-[calc(var(--shell-top-inset,8px)+10px)] start-[calc(var(--shell-inline-inset,8px)+10px)] z-40 ${slotClass}`}
+        style={{ width: slot.open() ? "0px" : `${slot.width()}px` }}
         inert={slot.open()}
       >
         <div class="flex shrink-0 pe-1">
-          <SidebarToggle handoff="in" />
+          <SidebarToggle />
         </div>
       </div>
     </Show>
@@ -170,11 +117,14 @@ export function CollapsedSidebarToggle() {
 // the space begins, in pixels from the content area's start edge, so every header's contents line up after the toggle.
 export function CollapsedSidebarToggleSpace(props: { start?: number; class?: string }) {
   const slot = useCollapsedSlot()
-  const ref = slotRef(() => slot.width() + contentStart - (props.start ?? contentStart))
 
   return (
     <Show when={slot.visible()}>
-      <div ref={ref} aria-hidden="true" class={`${slotClass} ${props.class ?? ""}`} />
+      <div
+        aria-hidden="true"
+        class={`${slotClass} ${props.class ?? ""}`}
+        style={{ width: slot.open() ? "0px" : `${slot.width() + contentStart - (props.start ?? contentStart)}px` }}
+      />
     </Show>
   )
 }

@@ -817,7 +817,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                                 <Show when={homeInSidebarHeader()} fallback={<div class="flex-1" />}>
                                   <div class="min-w-0 flex-1">{homeButton(true)}</div>
                                 </Show>
-                                <SidebarToggle handoff="out" />
+                                <SidebarToggle />
                               </div>
                             </Show>
                             <div class="flex w-full shrink-0 flex-col gap-1">

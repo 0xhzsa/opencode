@@ -44,7 +44,7 @@ import { SessionIdentityHeader, SessionLocation } from "./session-identity-heade
 import { useServer } from "@/runtime/server/current"
 import { SessionReviewToggle } from "./header/session-header-actions"
 import { createTimelineCache } from "./timeline/cache"
-import { createPanelMotion, replayPanelToggle } from "@/shell/panel-motion"
+import { createPanelMotion } from "@/shell/panel-motion"
 
 export function SessionScreenView(props: { session: SessionModel }) {
   // The timeline cache captures its owner when created, so link handling must be provided above it.
@@ -146,34 +146,15 @@ function SessionScreenContent(props: {
     }),
   }
 
-  // The chat keeps its open width as the far end of a close's travel.
-  const chatOpenWidth = createMemo<string>((previous) => (sideVisible() ? screen.panel.width() : previous), "100%")
-  let chat: HTMLDivElement | undefined
+  let sidePresence: HTMLDivElement | undefined
 
-  // Once opened, the side region stays mounted and is skipped by content-visibility when a close settles, so neither
-  // direction mounts its contents mid-flight, and a reopen reuses their style and layout.
+  // Once opened, the side region stays mounted and is skipped by content-visibility when a close settles, so a reopen
+  // reuses its style and layout.
   const sideMotion = createPanelMotion({
     open: sideVisible,
+    element: () => sidePresence,
+    offset: 12,
     identity: session.layout.tabKey,
-    // The chat's real width moves the side panel's edge, whose contents keep their open width pinned to it.
-    paint: (closed) => {
-      if (!chat) return
-      const open = chatOpenWidth()
-
-      if (closed === 1) {
-        chat.style.width = "100%"
-
-        return
-      }
-
-      chat.style.width = closed === 0 ? open : `calc(${open} + (100% - ${open}) * ${closed})`
-    },
-  })
-
-  replayPanelToggle({
-    id: "side",
-    label: "Toggle the side panel",
-    toggle: () => session.layout.view().side.toggle(),
   })
 
   const hideTimelineScrollbar = () => setStore("timelineScrollbarHidden", true)
@@ -415,10 +396,10 @@ function SessionScreenContent(props: {
             </div>
           </Show>
           <div
-            ref={chat}
             class="relative z-10 min-w-0 shrink-0 flex flex-col min-h-0 h-full flex-1 md:flex-none"
             data-slot="session-chat-panel"
             data-scrollbar-hidden={store.timelineScrollbarHidden}
+            style={{ width: screen.panel.width() }}
             onPointerMove={revealTimelineScrollbar}
             onPointerDown={revealTimelineScrollbar}
             on:wheel={{ passive: true, handleEvent: revealTimelineScrollbar }}
@@ -447,39 +428,42 @@ function SessionScreenContent(props: {
             </Show>
           </div>
 
-          <Show when={sideMotion.present() || store.sideMounted}>
+          <div
+            ref={sidePresence}
+            data-slot="session-side-panel-presence"
+            class="min-w-0 h-full overflow-visible"
+            classList={{
+              "relative z-0 flex-1": sideVisible(),
+              // Out of the row, so a closing or closed panel takes no space or gap. A close fades it out over the chat
+              // at its open width.
+              "absolute inset-y-0 end-0": !sideVisible(),
+              "z-20": !sideVisible() && sideMotion.present(),
+              "w-0 [content-visibility:hidden]": !sideMotion.present(),
+            }}
+            style={{ width: !sideVisible() && sideMotion.present() ? screen.side.contentWidth() : undefined }}
+          >
             <div
-              data-slot="session-side-panel-presence"
-              class="z-0 min-w-0 h-full overflow-visible"
-              classList={{
-                "relative flex-1": sideMotion.present(),
-                // Out of the row, so a closed panel takes no space or gap.
-                "absolute inset-y-0 end-0 w-0 [content-visibility:hidden]": !sideMotion.present(),
-              }}
+              data-slot="session-side-panel-content"
+              class="absolute inset-y-0 start-0 size-full [contain:layout_style]"
+              style={{ "--session-side-content-width": screen.side.contentWidth() }}
             >
-              <div
-                data-slot="session-side-panel-content"
-                class="absolute inset-y-0 start-0 size-full [contain:layout_style]"
-                style={{ "--session-side-content-width": screen.side.contentWidth() }}
-              >
-                <div data-slot="session-side-region" class="absolute inset-0 min-h-0 overflow-visible">
-                  <Show when={store.sideMounted}>
-                    <div data-slot="session-side-region-presence" class="absolute inset-0">
-                      <SideRegion
-                        screen={props.screen}
-                        view={props.view()}
-                        region={region}
-                        sidebar={sidebar}
-                        present={sideMotion.present()}
-                        size={screen.size}
-                        drag={drag}
-                      />
-                    </div>
-                  </Show>
-                </div>
+              <div data-slot="session-side-region" class="absolute inset-0 min-h-0 overflow-visible">
+                <Show when={store.sideMounted}>
+                  <div data-slot="session-side-region-presence" class="absolute inset-0">
+                    <SideRegion
+                      screen={props.screen}
+                      view={props.view()}
+                      region={region}
+                      sidebar={sidebar}
+                      present={sideMotion.present()}
+                      size={screen.size}
+                      drag={drag}
+                    />
+                  </div>
+                </Show>
               </div>
             </div>
-          </Show>
+          </div>
         </div>
 
         {/* Hidden rather than unmounted while the user hides it, so its terminals keep their screens. */}

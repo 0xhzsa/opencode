@@ -1,207 +1,142 @@
-import { afterEach, beforeEach, expect, it } from "bun:test"
+import { afterEach, expect, it } from "bun:test"
 import { batch, createRoot, createSignal } from "solid-js"
-import { motionTuning } from "@opencode/ui/motion-tuning"
 import { createPanelMotion, guardClosingFocus, panelsMoving } from "../src/shell/panel-motion"
 
-let frames: Map<number, FrameRequestCallback>
-
-let id: number
-
-let time: number
+type Played = {
+  keyframes: PropertyIndexedKeyframes
+  options: KeyframeAnimationOptions
+  cancelled: boolean
+  finish: () => void
+}
 
 const cleanups: (() => void)[] = []
 
-const originals = { raf: globalThis.requestAnimationFrame, caf: globalThis.cancelAnimationFrame }
-
-beforeEach(() => {
-  frames = new Map()
-  id = 0
-  time = 0
-  globalThis.requestAnimationFrame = (fn: FrameRequestCallback) => {
-    frames.set(++id, fn)
-
-    return id
-  }
-
-  globalThis.cancelAnimationFrame = (key: number) => {
-    frames.delete(key)
-  }
-})
-
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup()
-  globalThis.requestAnimationFrame = originals.raf
-  globalThis.cancelAnimationFrame = originals.caf
-  setStyle("spring")
+  delete document.documentElement.dataset.motion
 })
 
-function setStyle(value: string) {
-  const knob = motionTuning.list().find((item) => item.id === "sidebars.style")
-
-  if (knob?.kind === "choice") motionTuning.set(knob, value)
-}
-
-function frame() {
-  time += 1000 / 60
-  const next = [...frames.values()]
-  frames.clear()
-
-  for (const callback of next) callback(time)
-}
-
-function settle() {
-  for (let i = 0; i < 120 && frames.size; i++) frame()
-}
-
+// happy-dom has no Web Animations, so the panel element records what it was asked to play.
 function setup(initial: boolean) {
   const [open, setOpen] = createSignal(initial)
   const [identity, setIdentity] = createSignal("a")
-  const [size, setSize] = createSignal(200)
-  const closed: number[] = []
-  const painted = { width: 0 }
+  const played: Played[] = []
+  const element = document.createElement("div")
+  Object.defineProperty(element, "animate", {
+    value: (keyframes: PropertyIndexedKeyframes, options: KeyframeAnimationOptions) => {
+      const finished = Promise.withResolvers<void>()
+      const animation = { keyframes, options, cancelled: false, finish: () => finished.resolve() }
+      played.push(animation)
+
+      return {
+        finished: finished.promise,
+        cancel: () => {
+          animation.cancelled = true
+          finished.reject(new Error("cancelled"))
+        },
+      }
+    },
+  })
 
   const motion = createRoot((dispose) => {
     cleanups.push(dispose)
 
-    return createPanelMotion({
-      open,
-      paint: (shut) => {
-        painted.width = size() * (1 - shut)
-      },
-      identity,
-      onClosed: () => closed.push(time),
-    })
+    return createPanelMotion({ open, element: () => element, offset: -10, identity })
   })
 
-  return { painted, setOpen, setIdentity, setSize, closed, present: motion.present, motion }
+  return { played, setOpen, setIdentity, motion }
 }
 
-it("sizes the panel a little every frame on the way open and closed, present until the close settles", () => {
+const land = async (played: Played[]) => {
+  played.filter((animation) => !animation.cancelled).forEach((animation) => animation.finish())
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
+it("opens with a short shift on a spring and a fade from 0.15, present until a close lands", async () => {
   const panel = setup(false)
   panel.setOpen(true)
-  expect(panel.present()).toBe(true)
-  expect(panel.painted.width).toBe(0)
-  const widths: number[] = []
 
-  for (let i = 0; i < 120 && frames.size; i++) {
-    frame()
-    widths.push(panel.painted.width)
-  }
-
-  const steps = widths.map((width, index) => width - (widths[index - 1] ?? 0))
-  expect(widths.length).toBeGreaterThan(5)
-  expect(steps.every((step) => step >= 0)).toBe(true)
-  expect(Math.max(...steps)).toBeLessThan(60)
-  // The last moving frame lands within a pixel of rest.
-  expect(200 - widths.findLast((width) => width < 200)!).toBeLessThan(1)
+  expect(panel.motion.present()).toBe(true)
+  const [shift, fade] = panel.played
+  expect(shift.keyframes.transform).toEqual(["translateX(-10px)", "none"])
+  expect(shift.options.easing).toStartWith("linear(0, ")
+  expect(shift.options.duration).toBeGreaterThan(240)
+  expect(shift.options.duration).toBeLessThan(320)
+  expect(fade.keyframes.opacity).toEqual(["0.15", "1"])
+  expect(fade.options).toMatchObject({ duration: 180, easing: "cubic-bezier(0.44, 0.75, 0.63, 1.03)" })
+  expect(panelsMoving()).toBe(true)
+  await land(panel.played)
+  expect(panelsMoving()).toBe(false)
 
   panel.setOpen(false)
-  frame()
-  expect(panel.present()).toBe(true)
-  expect(panel.closed).toEqual([])
-  settle()
-  expect(panel.painted.width).toBe(0)
-  expect(panel.present()).toBe(false)
-  expect(panel.closed).toHaveLength(1)
+  expect(panel.played.at(-1)!.keyframes.opacity).toEqual(["1", "0.15"])
+  expect(panel.motion.present()).toBe(true)
+  await land(panel.played)
+  expect(panel.motion.present()).toBe(false)
+  expect(panel.played.every((animation) => animation.cancelled)).toBe(true)
 })
 
-it("turns around mid-flight from where it is", () => {
-  const panel = setup(false)
-  panel.setOpen(true)
-  frame()
-  frame()
-  frame()
-  const before = panel.painted.width
-
+it("toggles from the keyboard without motion", () => {
+  const panel = setup(true)
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "b" }))
   panel.setOpen(false)
-  expect(panel.painted.width).toBe(before)
-  frame()
-  // Still carrying its opening velocity, it does not jump back closed.
-  expect(Math.abs(panel.painted.width - before)).toBeLessThan(30)
-  settle()
-  expect(panel.present()).toBe(false)
-  expect(panel.painted.width).toBe(0)
+  window.dispatchEvent(new PointerEvent("pointerdown"))
+
+  expect(panel.played).toEqual([])
+  expect(panel.motion.present()).toBe(false)
+  expect(panelsMoving()).toBe(false)
 })
 
-it("repaints at rest when the open size changes, like a resize drag", () => {
+it("snaps under reduced motion", () => {
+  document.documentElement.dataset.motion = "reduce"
   const panel = setup(true)
-  expect(panel.painted.width).toBe(200)
-
-  panel.setSize(260)
-  expect(panel.painted.width).toBe(260)
-  expect(frames.size).toBe(0)
-})
-
-it("snaps when the Motion workspace sets Instant", () => {
-  setStyle("instant")
-  const panel = setup(true)
-
   panel.setOpen(false)
-  expect(panel.painted.width).toBe(0)
-  expect(panel.present()).toBe(false)
-  expect(panel.closed).toHaveLength(1)
-  expect(frames.size).toBe(0)
+
+  expect(panel.played).toEqual([])
+  expect(panel.motion.present()).toBe(false)
 })
 
-it("shows another layout's state without motion or a close", () => {
-  const panel = setup(true)
-
-  panel.setOpen(false)
-  panel.setIdentity("b")
-  expect(panel.present()).toBe(false)
-  expect(panel.painted.width).toBe(0)
-  expect(panel.closed).toEqual([])
-  expect(frames.size).toBe(0)
-})
-
-it("shows a state at once when synced, also from inside a batch", () => {
-  const panel = setup(true)
-
-  batch(() => {
-    panel.setOpen(false)
-    panel.motion.sync(false)
-  })
-  expect(panel.painted.width).toBe(0)
-  expect(panel.present()).toBe(false)
-  expect(frames.size).toBe(0)
-
-  panel.setOpen(true)
-  frame()
-  panel.motion.sync(true)
-  expect(panel.painted.width).toBe(200)
-  expect(frames.size).toBe(0)
-})
-
-it("runs settled work once the flight lands, dropping work queued before a turnaround", () => {
+it("turns around mid-flight, dropping the first direction's animations and settled work", async () => {
   const panel = setup(false)
   const ran: string[] = []
   panel.setOpen(true)
   panel.motion.whenSettled(() => ran.push("opened"))
-  frame()
   panel.setOpen(false)
   panel.motion.whenSettled(() => ran.push("closed"))
-  frame()
-  expect(ran).toEqual([])
-  settle()
+
+  expect(panel.played.slice(0, 2).every((animation) => animation.cancelled)).toBe(true)
+  await land(panel.played)
   expect(ran).toEqual(["closed"])
+  expect(panel.motion.present()).toBe(false)
   panel.motion.whenSettled(() => ran.push("at rest"))
   expect(ran).toEqual(["closed", "at rest"])
 })
 
-it("reports a flight from its first frame until it lands, for native views to hide", () => {
+it("shows another layout's state without motion", () => {
   const panel = setup(true)
-  expect(panelsMoving()).toBe(false)
+  batch(() => {
+    panel.setOpen(false)
+    panel.setIdentity("b")
+  })
 
-  panel.setOpen(false)
-  expect(panelsMoving()).toBe(true)
-  frame()
+  expect(panel.played).toEqual([])
+  expect(panel.motion.present()).toBe(false)
+})
+
+it("shows a state at once when synced, also from inside a batch", () => {
+  const panel = setup(true)
+  batch(() => {
+    panel.setOpen(false)
+    panel.motion.sync(false)
+  })
+
+  expect(panel.played).toEqual([])
+  expect(panel.motion.present()).toBe(false)
+
   panel.setOpen(true)
-  expect(panelsMoving()).toBe(true)
-  settle()
-  expect(panelsMoving()).toBe(false)
-
-  setStyle("instant")
-  panel.setOpen(false)
+  panel.motion.sync(true)
+  expect(panel.played.every((animation) => animation.cancelled)).toBe(true)
   expect(panelsMoving()).toBe(false)
 })
 

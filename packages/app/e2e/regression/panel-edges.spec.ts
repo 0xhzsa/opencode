@@ -1,76 +1,106 @@
-import { expect, test, type Locator, type Page } from "@playwright/test"
+import { expect, test, type Page } from "@playwright/test"
 import { seed, sessionHref } from "../utils/app"
 import { fixture, installStressSessionTabs, mockStressTimeline } from "../utils/session-fixture"
 
 test.use({ viewport: { width: 1440, height: 900 } })
 
-// Samples every frame of a click toggle until the edge has rested for 300 ms: the moving edge, and the gap from the
-// element before it to the one after.
-async function trace(page: Page, toggle: Locator, before: string, after: string) {
+const sidebar = '[data-slot="vertical-tabs-sidebar"]'
+
+const sidebarPanel = `${sidebar} > div`
+
+const sidePanel = '[data-slot="session-side-panel-presence"]'
+
+// Samples every frame for 700 ms after `toggle`: the content's edge beside the panel, and the panel's opacity and shift.
+async function trace(page: Page, toggle: () => Promise<void>, edge: string, panel: string) {
   const frames = page.evaluate(
-    ([before, after]) =>
-      new Promise<{ edge: number; gap?: number }[]>((resolve) => {
+    ([edge, panel]) =>
+      new Promise<{ edge: number; opacity: number; shift: number }[]>((resolve) => {
         const start = performance.now()
-        const out: { edge: number; gap?: number }[] = []
-        let changed: number | undefined
+        const out: { edge: number; opacity: number; shift: number }[] = []
 
         const tick = (now: number) => {
-          const a = document.querySelector(before)?.getBoundingClientRect()
-          const b = document.querySelector(after)?.getBoundingClientRect()
-          const edge = (a ?? b)!.right
+          const style = getComputedStyle(document.querySelector(panel)!)
+          out.push({
+            edge: document.querySelector(edge)!.getBoundingClientRect().right,
+            opacity: Number(style.opacity),
+            shift: style.transform === "none" ? 0 : new DOMMatrix(style.transform).m41,
+          })
 
-          if (out.length && edge !== out.at(-1)!.edge) changed = now
-          // A settled-closed panel leaves the row, so the gap only holds while it has width.
-          out.push({ edge, gap: a && b && b.width > 0 ? b.left - a.right : undefined })
-
-          if (changed === undefined ? now - start < 10_000 : now - changed < 300) return requestAnimationFrame(tick)
+          if (now - start < 700) return requestAnimationFrame(tick)
           resolve(out)
         }
 
         requestAnimationFrame(tick)
       }),
-    [before, after] as const,
+    [edge, panel] as const,
   )
 
-  await toggle.click({ force: true })
+  await toggle()
 
   return frames
 }
 
-test("the content beside a panel follows the panel's edge on every frame of a toggle", async ({ page }) => {
+for (const direction of ["ltr", "rtl"] as const) {
+  test(`a click fades the panel in place while the content beside it moves in one frame (${direction})`, async ({
+    page,
+  }) => {
+    await mockStressTimeline(page)
+    await installStressSessionTabs(page)
+    await seed(page, { settings: { appearance: { tabLayout: "vertical", sidebarOpen: true } } })
+    await page.goto(sessionHref(fixture.targetID))
+    await page.evaluate((direction) => (document.documentElement.dir = direction), direction)
+    await expect(page.getByRole("heading", { name: fixture.expected.targetTitle })).toBeVisible()
+
+    const sidebarToggle = page
+      .locator(
+        `${sidebar} button[aria-controls="vertical-tabs-sidebar"], main button[aria-controls="vertical-tabs-sidebar"]`,
+      )
+      .locator("visible=true")
+      .first()
+
+    const reviewToggle = page.locator('[data-slot="session-review-toggle"] button')
+
+    // Each panel shifts toward its own edge: the sidebar toward the start, the side panel toward the end.
+    const start = direction === "ltr" ? -1 : 1
+
+    const runs = [
+      { toggle: sidebarToggle, edge: sidebar, panel: sidebarPanel, shift: 10 * start },
+      { toggle: sidebarToggle, edge: sidebar, panel: sidebarPanel, shift: 10 * start },
+      { toggle: reviewToggle, edge: '[data-slot="session-chat-panel"]', panel: sidePanel, shift: -12 * start },
+      { toggle: reviewToggle, edge: '[data-slot="session-chat-panel"]', panel: sidePanel, shift: -12 * start },
+    ]
+
+    for (const run of runs) {
+      const frames = await trace(page, () => run.toggle.click({ force: true }), run.edge, run.panel)
+      // The layout jumps straight from where it was to where it lands.
+      expect(new Set(frames.map((frame) => Math.round(frame.edge))).size).toBeLessThanOrEqual(2)
+      // The panel fades over several frames from 0.15 (the fade curve overshoots its end by a hair) and shifts at
+      // most its offset toward its edge.
+      const opacities = frames.map((frame) => frame.opacity).filter((opacity) => opacity < 1)
+      expect(new Set(opacities).size).toBeGreaterThan(2)
+      expect(Math.min(...opacities)).toBeGreaterThan(0.14)
+      frames.forEach((frame) => {
+        expect(Math.abs(frame.shift)).toBeLessThanOrEqual(Math.abs(run.shift) + 0.5)
+        expect(frame.shift * run.shift).toBeGreaterThanOrEqual(0)
+      })
+    }
+  })
+}
+
+test("keyboard toggles switch the panels without motion", async ({ page }) => {
   await mockStressTimeline(page)
   await installStressSessionTabs(page)
-  // Half speed, so even a slow runner draws several frames of each flight.
-  await seed(page, {
-    settings: { appearance: { tabLayout: "vertical", sidebarOpen: true } },
-    storage: { "opencode.motion.v2": { speed: 0.5 } },
-  })
+  await seed(page, { settings: { appearance: { tabLayout: "vertical", sidebarOpen: true } } })
   await page.goto(sessionHref(fixture.targetID))
   await expect(page.getByRole("heading", { name: fixture.expected.targetTitle })).toBeVisible()
 
-  const sidebar = page
-    .locator(
-      '[data-slot="vertical-tabs-sidebar"] button[aria-controls="vertical-tabs-sidebar"], main button[aria-controls="vertical-tabs-sidebar"]',
-    )
-    .locator("visible=true")
-    .first()
-
-  const review = page.locator('[data-slot="session-review-toggle"] button')
-
-  const runs = [
-    { toggle: sidebar, before: '[data-slot="vertical-tabs-sidebar"] > div > div', after: "main", gap: 0 },
-    { toggle: sidebar, before: '[data-slot="vertical-tabs-sidebar"] > div > div', after: "main", gap: 0 },
-    { toggle: review, before: '[data-slot="session-chat-panel"]', after: "#review-panel", gap: 8 },
-    { toggle: review, before: '[data-slot="session-chat-panel"]', after: "#review-panel", gap: 8 },
-  ]
-
-  for (const run of runs) {
-    const frames = await trace(page, run.toggle, run.before, run.after)
-    const edges = frames.map((frame) => frame.edge)
-    // The toggle animates over several frames rather than jumping to its end, and never doubles back.
-    expect(new Set(edges.map(Math.round)).size).toBeGreaterThan(3)
-    const steps = edges.slice(1).map((edge, index) => edge - edges[index])
-    expect(steps.every((step) => step >= -0.5) || steps.every((step) => step <= 0.5)).toBe(true)
-    frames.flatMap((frame) => frame.gap ?? []).forEach((gap) => expect(gap).toBeCloseTo(run.gap, 0))
+  for (const [shortcut, panel] of [
+    ["ControlOrMeta+Shift+B", sidebarPanel],
+    ["ControlOrMeta+Shift+B", sidebarPanel],
+    ["ControlOrMeta+Shift+R", sidePanel],
+    ["ControlOrMeta+Shift+R", sidePanel],
+  ] as const) {
+    const frames = await trace(page, () => page.keyboard.press(shortcut), sidebar, panel)
+    expect(frames.every((frame) => frame.opacity === 1 && frame.shift === 0)).toBe(true)
   }
 })

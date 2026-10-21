@@ -85,8 +85,6 @@
     );
   }
 
-  /* The review panel's visible width, which the header fade below tracks while the panel animates. Its fixed-width
-     content holds nothing else that reads it. */
   #review-panel,
   #bottom-panel {
     container-type: inline-size;

@@ -13,8 +13,8 @@ import { ExtensionServerCover } from "@/runtime/extension/server-shell"
 import { ExtensionSlot } from "@/runtime/extension/render"
 import { useCommand } from "@/shell/commands/command"
 import { useLanguage } from "@/runtime/i18n/language"
-import { CollapsedSidebarToggle, paintCollapsedSlots } from "@/shell/sidebar-toggle"
-import { createPanelMotion, guardClosingFocus, replayPanelToggle } from "@/shell/panel-motion"
+import { CollapsedSidebarToggle } from "@/shell/sidebar-toggle"
+import { createPanelMotion, guardClosingFocus } from "@/shell/panel-motion"
 
 export default function Layout(props: ParentProps) {
   const platform = usePlatform()
@@ -28,28 +28,21 @@ export default function Layout(props: ParentProps) {
     tabsWidth: number
     tabsMount: HTMLElement | undefined
     tabsAside: HTMLElement | undefined
+    tabsPanel: HTMLElement | undefined
   }>({
     tabsWidth: 260,
     tabsMount: undefined,
     tabsAside: undefined,
+    tabsPanel: undefined,
   })
 
   const verticalTabs = () => preferences.appearance.tabLayout() !== "horizontal" && !mobile()
 
-  const toggleSidebar = () => preferences.appearance.setSidebarOpen(!preferences.appearance.sidebarOpen())
-
   const sidebarMotion = createPanelMotion({
     open: preferences.appearance.sidebarOpen,
-    // The aside's real width moves main's edge with the sidebar's; its contents keep their width, pinned to that edge.
-    paint: (closed) => {
-      const aside = state.tabsAside
-
-      if (aside) aside.style.width = `${state.tabsWidth * (1 - closed)}px`
-      paintCollapsedSlots(closed)
-    },
+    element: () => state.tabsPanel,
+    offset: -10,
   })
-
-  replayPanelToggle({ id: "sidebar", label: "Toggle the left sidebar", toggle: toggleSidebar })
 
   guardClosingFocus({
     root: () => state.tabsAside,
@@ -69,7 +62,7 @@ export default function Layout(props: ParentProps) {
             title: language.t("command.sidebar.toggle"),
             category: language.t("command.category.view"),
             keybind: "mod+shift+b",
-            onSelect: toggleSidebar,
+            onSelect: () => preferences.appearance.setSidebarOpen(!preferences.appearance.sidebarOpen()),
           },
         ]
       : [],
@@ -104,12 +97,15 @@ export default function Layout(props: ParentProps) {
               data-state={preferences.appearance.sidebarOpen() ? "open" : "closed"}
               ref={(element) => setState("tabsAside", element)}
               class="relative z-10 h-full min-h-0 shrink-0"
+              style={{ width: preferences.appearance.sidebarOpen() ? `${state.tabsWidth}px` : "0px" }}
             >
-              {/* Skipped rather than display: none or inert, so neither direction restyles the sidebar's contents and
-                  a reopen reuses their layout. */}
+              {/* Keeps its width over main while a close fades it out. Skipped rather than display: none or inert, so
+                  neither direction restyles the sidebar's contents and a reopen reuses their layout. */}
               <div
-                class="absolute inset-0 overflow-hidden [contain:layout_style_paint]"
+                ref={(element) => setState("tabsPanel", element)}
+                class="absolute inset-y-0 start-0 overflow-hidden [contain:layout_style_paint]"
                 classList={{ "[content-visibility:hidden]": !sidebarMotion.present() }}
+                style={{ width: `${sidebarMotion.present() ? state.tabsWidth : 0}px` }}
               >
                 <div
                   ref={(element) => setState("tabsMount", element)}
@@ -119,12 +115,12 @@ export default function Layout(props: ParentProps) {
                     "padding-bottom": "max(10px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))",
                   }}
                 />
+                {/* Takes the pointer while the sidebar closes, without restyling its contents. */}
+                <div
+                  class="absolute inset-0 z-20"
+                  classList={{ hidden: preferences.appearance.sidebarOpen() || !sidebarMotion.present() }}
+                />
               </div>
-              {/* Takes the pointer while the sidebar closes, without restyling its contents. */}
-              <div
-                class="absolute inset-0 z-20"
-                classList={{ hidden: preferences.appearance.sidebarOpen() || !sidebarMotion.present() }}
-              />
               <Show when={preferences.appearance.sidebarOpen()}>
                 <ResizeHandle
                   class="-end-1"
