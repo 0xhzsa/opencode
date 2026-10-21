@@ -480,11 +480,14 @@ function ProviderConnection(props: {
 
   const showAccounts = () => !!props.accounts && !state.adding && accounts().length > 0
 
+  // Only a key attempt uses the picked key provider, so going back to sign in never reaches Go's providers.
+  const keyProvider = () => (controller.currentMethod()?.type === "key" ? state.keyProvider : undefined)
+
   const controller = createProviderConnectionController({
     provider: () => integrationID,
     // A Go service-account key still belongs to the `opencode-go` integration (zen/go/v1),
     // exactly as before; only the sign-in is shared with the Console.
-    keyProvider: () => state.keyProvider ?? props.provider,
+    keyProvider: () => keyProvider() ?? props.provider,
     directory,
     manual: () => isConsole || (!!props.accounts && accounts().length > 0),
     prepare: isConsole ? prepareConsoleCatalog : undefined,
@@ -544,7 +547,7 @@ function ProviderConnection(props: {
       (provider) =>
         provider.id === props.provider ||
         provider.integrationID === integrationID ||
-        (state.keyProvider !== undefined && provider.integrationID === state.keyProvider),
+        (keyProvider() !== undefined && provider.integrationID === keyProvider()),
     ),
   )
 
@@ -1053,7 +1056,7 @@ function ProviderConnection(props: {
         <form onSubmit={handleSubmit} class="flex flex-col items-start gap-5 self-stretch">
           <label class="flex w-full flex-col gap-2 font-[530] leading-4 text-v2-text-text-base">
             {language.t("provider.connect.apiKey.label", {
-              provider: props.provider !== "opencode" ? provider().name : state.keyProvider ? "Go" : "Zen",
+              provider: props.provider !== "opencode" ? provider().name : keyProvider() ? "Go" : "Zen",
             })}
             <TextInput
               ref={apiKey}

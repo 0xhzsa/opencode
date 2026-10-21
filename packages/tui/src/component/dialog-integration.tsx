@@ -97,6 +97,14 @@ export function foldOpenCode(list: IntegrationInfo[]): IntegrationInfo[] {
   })
 }
 
+// A merged row holds several integrations' credentials; each integration keeps its own active one (listed first).
+export function activeCredentialIDs(list: IntegrationInfo[], rowID: string) {
+  const members = rowID === "opencode" ? ["opencode", "opencode-go"] : [rowID]
+  return new Set(
+    list.flatMap((item) => (members.includes(item.id) ? credentialConnections(item).slice(0, 1) : [])).map((c) => c.id),
+  )
+}
+
 export function integrationOptions(list: IntegrationInfo[]) {
   return foldOpenCode(list).toSorted(
     (a, b) =>
@@ -219,11 +227,11 @@ function manageConnections(
     const current = createMemo(() =>
       foldOpenCode(data.location.integration.list(location) ?? []).find((item) => item.id === integration.id),
     )
+    const active = createMemo(() => activeCredentialIDs(data.location.integration.list(location) ?? [], integration.id))
 
     return (
       <DialogSelect
         title={integration.name}
-        current={credentialConnections(current() ?? integration)[0]?.id}
         focusCurrent={false}
         preserveSelection
         onMove={(option) => {
@@ -249,6 +257,7 @@ function manageConnections(
                   ? `Press ${shortcuts.get("dialog.integration.delete")} again to confirm`
                   : connection.label,
                 value: connection.id,
+                current: active().has(connection.id),
                 footer: connection.status ? "Sign in required →" : undefined,
                 footerColor: connection.status ? theme.text.feedback.warning.base : undefined,
                 category: "Connected accounts",
@@ -258,7 +267,7 @@ function manageConnections(
                   if (connection.status?.url) return void openUrl(connection.status.url).catch(toast.error)
                   if (connection.status)
                     return selectMethod(current() ?? integration, methods, location, dialog, onConnected)
-                  if (credentialConnections(current() ?? integration)[0]?.id === connection.id) return
+                  if (active().has(connection.id)) return
                   void client.api.credential.activate({ credentialID: connection.id }).catch(toast.error)
                 },
               }
@@ -332,9 +341,10 @@ function selectMethod(
       <DialogSelect
         title={`Connect ${integration.name}`}
         renderFilter={!newDesigns()}
-        options={methods.map((method) => ({
+        options={methods.map((method, index) => ({
           title: method.type === "key" ? (method.label ?? "API key") : method.label,
-          value: method.type === "key" ? "key" : method.id,
+          // A merged row can offer several key methods, so the position keeps each value unique.
+          value: index,
           onSelect: () => openMethod(integration, method, location, dialog, onConnected),
         }))}
       />

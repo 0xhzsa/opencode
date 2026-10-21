@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { IntegrationInfo } from "@opencode/client"
 import {
+  activeCredentialIDs,
   connectionSummary,
   connectMethods,
   credentialConnections,
@@ -65,6 +66,34 @@ describe("integrationOptions", () => {
         integration({ id: "opencode-go", name: "OpenCode Go" }),
       ]).map((item) => item.id),
     ).toEqual(["github", "linear", "opencode", "openai"])
+  })
+})
+
+describe("activeCredentialIDs", () => {
+  test("keeps one active credential per integration in the OpenCode row", () => {
+    const list = [
+      integration({
+        id: "opencode",
+        name: "OpenCode Console",
+        connections: [{ type: "credential", method: "oauth", id: "cred_acme", label: "Acme" }],
+      }),
+      integration({
+        id: "opencode-go",
+        name: "OpenCode Go",
+        connections: [
+          { type: "credential", method: "key", id: "cred_go2", label: "Go key 2" },
+          { type: "credential", method: "key", id: "cred_go1", label: "Go key 1" },
+        ],
+      }),
+      integration({
+        id: "openai",
+        name: "OpenAI",
+        connections: [{ type: "credential", method: "key", id: "cred_openai", label: "Work" }],
+      }),
+    ]
+
+    expect([...activeCredentialIDs(list, "opencode")]).toEqual(["cred_acme", "cred_go2"])
+    expect([...activeCredentialIDs(list, "openai")]).toEqual(["cred_openai"])
   })
 })
 
