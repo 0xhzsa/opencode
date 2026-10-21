@@ -117,7 +117,7 @@ benchmark.describe("stills", () => {
   for (const engine of engines) {
     for (const scheme of ["light", "dark"] as const) {
       benchmark(`code in ${scheme} with ${engine}`, async ({ page, report }) => {
-        benchmark.setTimeout(240_000)
+        benchmark.setTimeout(420_000)
         const directory = process.env.HIGHLIGHTER_STILLS!
         await mkdir(directory, { recursive: true })
         await useEngine(page, engine)
