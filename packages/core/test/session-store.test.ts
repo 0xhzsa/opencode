@@ -192,95 +192,77 @@ describe("SessionStore", () => {
     }),
   )
 
-  it.effect("omits inline data URIs on read tool parts in messages list while retaining them on message and context", () =>
-    Effect.gen(function* () {
-      const sessionID = Session.ID.make("ses_read_media")
-      yield* seedSessions([{ id: sessionID, updated: 0 }])
-      const database = yield* Database.Service
-      const store = yield* SessionStore.Service
-      const assistantMessageID = SessionMessage.ID.make("msg_step_start")
-      const inlineUri = `data:image/png;base64,${"A".repeat(4096)}`
-      const created = DateTime.makeUnsafe(100)
-      const encoded = Schema.encodeSync(SessionMessage.Info)(
-        SessionMessage.Assistant.make({
-          id: assistantMessageID,
-          type: "assistant",
-          agent: Agent.ID.make("build"),
-          model: { providerID: Provider.ID.make("anthropic"), id: Model.ID.make("claude-sonnet-4-5") },
-          time: { created, completed: DateTime.makeUnsafe(120) },
-          content: [
-            {
-              type: "tool",
-              id: "call_read_1",
-              name: "read",
-              time: { created, completed: DateTime.makeUnsafe(120) },
-              state: {
-                status: "completed",
-                input: { path: "screenshot.png" },
-                content: [
-                  { type: "text", text: "Image read successfully" },
-                  { type: "file", uri: inlineUri, mime: "image/png", name: "screenshot.png" },
-                ],
+  describe.each(["read", "execute"])("%s media", (name) => {
+    it.effect("omits inline data URIs in messages list while retaining them on message and context", () =>
+      Effect.gen(function* () {
+        const sessionID = Session.ID.make("ses_read_media")
+        yield* seedSessions([{ id: sessionID, updated: 0 }])
+        const database = yield* Database.Service
+        const store = yield* SessionStore.Service
+        const assistantMessageID = SessionMessage.ID.make("msg_step_start")
+        const inlineUri = `data:image/png;base64,${"A".repeat(4096)}`
+        const created = DateTime.makeUnsafe(100)
+        const encoded = Schema.encodeSync(SessionMessage.Info)(
+          SessionMessage.Assistant.make({
+            id: assistantMessageID,
+            type: "assistant",
+            agent: Agent.ID.make("build"),
+            model: { providerID: Provider.ID.make("anthropic"), id: Model.ID.make("claude-sonnet-4-5") },
+            time: { created, completed: DateTime.makeUnsafe(120) },
+            content: [
+              {
+                type: "tool",
+                id: "call_read_1",
+                name,
+                time: { created, completed: DateTime.makeUnsafe(120) },
+                state: {
+                  status: "completed",
+                  input: { path: "screenshot.png" },
+                  content: [
+                    { type: "text", text: "Image read successfully" },
+                    { type: "file", uri: inlineUri, mime: "image/png", name: "screenshot.png" },
+                  ],
+                },
               },
-            },
-          ],
-        }),
-      )
-      const { id, type, ...data } = encoded
-      yield* database.db
-        .insert(SessionMessageTable)
-        .values({
-          id: SessionMessage.ID.make(id),
-          session_id: sessionID,
-          type,
-          seq: 2,
-          time_created: 100,
-          data,
-        })
-        .run()
+            ],
+          }),
+        )
+        const { id, type, ...data } = encoded
+        yield* database.db
+          .insert(SessionMessageTable)
+          .values({
+            id: SessionMessage.ID.make(id),
+            session_id: sessionID,
+            type,
+            seq: 2,
+            time_created: 100,
+            data,
+          })
+          .run()
 
-      const listed = yield* store.messages({ sessionID })
-      expect(listed).toHaveLength(1)
-      const assistant = listed[0]!
-      expect(assistant.type).toBe("assistant")
-      if (assistant.type !== "assistant") return
-      expect(assistant.content).toMatchObject([
-        {
-          type: "tool",
-          name: "read",
-          state: {
-            status: "completed",
-            content: [{ type: "text", text: "Image read successfully" }],
-          },
-        },
-      ])
-
-      const single = yield* store.message(assistant.id)
-      expect(single?.message).toMatchObject({
-        type: "assistant",
-        content: [
+        const listed = yield* store.messages({ sessionID })
+        expect(listed).toHaveLength(1)
+        const assistant = listed[0]!
+        expect(assistant.type).toBe("assistant")
+        if (assistant.type !== "assistant") return
+        expect(assistant.content).toMatchObject([
           {
             type: "tool",
-            name: "read",
+            name,
             state: {
               status: "completed",
-              content: [
-                { type: "text", text: "Image read successfully" },
-                { type: "file", uri: inlineUri, mime: "image/png", name: "screenshot.png" },
-              ],
+              content: [{ type: "text", text: "Image read successfully" }],
             },
           },
-        ],
-      })
+        ])
 
-      const context = yield* store.context(sessionID)
-      expect(context).toMatchObject([
-        {
+        const single = yield* store.message(assistant.id)
+        expect(single?.message).toMatchObject({
           type: "assistant",
           content: [
             {
               type: "tool",
-              name: "read",
+              name,
               state: {
                 status: "completed",
                 content: [
@@ -290,8 +272,28 @@ describe("SessionStore", () => {
               },
             },
           ],
-        },
-      ])
-    }),
-  )
+        })
+
+        const context = yield* store.context(sessionID)
+        expect(context).toMatchObject([
+          {
+            type: "assistant",
+            content: [
+              {
+                type: "tool",
+                name,
+                state: {
+                  status: "completed",
+                  content: [
+                    { type: "text", text: "Image read successfully" },
+                    { type: "file", uri: inlineUri, mime: "image/png", name: "screenshot.png" },
+                  ],
+                },
+              },
+            ],
+          },
+        ])
+      }),
+    )
+  })
 })

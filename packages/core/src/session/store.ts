@@ -87,17 +87,18 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionStore") {}
 
-function stripReadMedia(row: typeof SessionMessageTable.$inferSelect): typeof SessionMessageTable.$inferSelect {
+function stripToolMedia(row: typeof SessionMessageTable.$inferSelect): typeof SessionMessageTable.$inferSelect {
   if (row.type !== "assistant" || !("content" in row.data)) return row
   let changed = false
   const content = row.data.content.map((part) => {
-    if (part.type !== "tool" || part.name !== "read") return part
+    if (part.type !== "tool" || (part.name !== "read" && part.name !== "execute")) return part
     if (part.state.status !== "completed" && part.state.status !== "error") return part
     if (!part.state.content) return part
     const filtered = part.state.content.filter((item) => !(item.type === "file" && item.uri.startsWith("data:")))
     if (filtered.length === part.state.content.length) return part
     changed = true
-    const first = filtered[0] ?? ({ type: "text", text: "Image read successfully" } as const)
+    // Content must remain nonempty, without inventing output for file-only execute results.
+    const first = filtered[0] ?? ({ type: "text", text: part.name === "read" ? "Image read successfully" : "" } as const)
     return {
       ...part,
       state: {
@@ -204,7 +205,7 @@ const layer = Layer.effect(
           Effect.orDie,
         )
         const ordered = direction === "previous" ? rows.toReversed() : rows
-        return yield* Effect.forEach(ordered, (row) => SessionHistory.decodeMessageRow(stripReadMedia(row)))
+        return yield* Effect.forEach(ordered, (row) => SessionHistory.decodeMessageRow(stripToolMedia(row)))
       }),
       context: Effect.fn("SessionStore.context")((sessionID) => SessionHistory.load(db, sessionID, "latest")),
       message: Effect.fn("SessionStore.message")(function* (messageID) {
