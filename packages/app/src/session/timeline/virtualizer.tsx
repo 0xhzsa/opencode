@@ -294,8 +294,6 @@ export function createTimelineVirtualizer(input: Input) {
     // inset spacer below the rows keeps consistent with the native scroll range.
     observeElementRect: (instance, callback) => {
       reportRect = (rect) => {
-        const widthChanged = Math.abs(rect.width - (instance.scrollRect?.width ?? 0)) >= 1
-        if (widthChanged) rewrap()
         callback({ width: rect.width, height: Math.max(0, rect.height - bottomInset()) })
       }
 
@@ -303,7 +301,13 @@ export function createTimelineVirtualizer(input: Input) {
         const resized = rootRect !== undefined && (rootRect.width !== rect.width || rootRect.height !== rect.height)
         rootRect = rect
         setLayoutState("viewport", rect.height)
-        if (layoutState.environment) setLayoutState("environment", { width: rect.width, desktop: isDesktop() })
+        const environment = layoutState.environment
+        if (environment && Math.abs(environment.width - rect.width) >= 1) {
+          // A side panel animates the column's width every frame. Rows keep their heights until the width settles,
+          // then re-measure once, instead of rewrapping every row on every frame.
+          if (coldPending) setLayoutState("environment", { width: rect.width, desktop: isDesktop() })
+          else holdWidth()
+        }
 
         if (!active()) return
         reportRect?.(rect)
@@ -664,15 +668,26 @@ export function createTimelineVirtualizer(input: Input) {
   // Rows rewrap at a new width. Growing rows ease to their new heights instead of landing, and a streaming row may
   // shrink for a moment, since the lost height is the new width's, not a settling line's.
   let rewrapUntil = 0
-  function rewrap() {
+  let widthTimer: ReturnType<typeof setTimeout> | undefined
+  const heldSizes = new Map<string, number>()
+  function holdWidth() {
+    clearTimeout(widthTimer)
+    widthTimer = setTimeout(settleWidth, 120)
+  }
+  function settleWidth() {
+    widthTimer = undefined
+    if (!rootRect || !layoutState.environment) return
     rewrapUntil = performance.now() + 400
-    const held = [...shrinks]
+    batch(() => setLayoutState("environment", { width: rootRect!.width, desktop: isDesktop() }))
+    const held = [...shrinks, ...heldSizes]
     shrinks.clear()
+    heldSizes.clear()
     held.forEach(([key, size]) => {
       const index = rowKeys().lastIndexOf(key)
-      if (index >= 0) commitSize(index, key, size)
+      if (index >= 0) virtualizer.resizeItem(index, size)
     })
   }
+  onCleanup(() => clearTimeout(widthTimer))
 
   const commitSize = (index: number, key: string, size: number) => {
     if (growth.rebase(key, size)) return
@@ -1021,6 +1036,11 @@ export function createTimelineVirtualizer(input: Input) {
 
     if (!row) return
     const key = TimelineRow.key(row)
+    // Mid width change, a rewrapped row's new box waits for the width to settle.
+    if (widthTimer !== undefined) {
+      heldSizes.set(key, size)
+      return
+    }
     // TanStack does not cache a measurement equal to its estimate. Treat that estimate as committed too,
     // or a mixed pretext/DOM cold mount endlessly queues the same sizes before the browser can paint.
     const known =
