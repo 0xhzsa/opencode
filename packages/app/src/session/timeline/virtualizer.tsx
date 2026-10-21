@@ -294,9 +294,8 @@ export function createTimelineVirtualizer(input: Input) {
     // inset spacer below the rows keeps consistent with the native scroll range.
     observeElementRect: (instance, callback) => {
       reportRect = (rect) => {
-        // Rows rewrap at a new width: their heights mean something else, so growth lands.
         const widthChanged = Math.abs(rect.width - (instance.scrollRect?.width ?? 0)) >= 1
-        if (widthChanged) landGrowth()
+        if (widthChanged) rewrap()
         const height = Math.max(0, rect.height - bottomInset())
         const root = listRoot()
         batch(() => {
@@ -673,6 +672,19 @@ export function createTimelineVirtualizer(input: Input) {
     flushDeferredScroll()
   }
 
+  // Rows rewrap at a new width. Growing rows ease to their new heights instead of landing, and a streaming row may
+  // shrink for a moment, since the lost height is the new width's, not a settling line's.
+  let rewrapUntil = 0
+  function rewrap() {
+    rewrapUntil = performance.now() + 400
+    const held = [...shrinks]
+    shrinks.clear()
+    held.forEach(([key, size]) => {
+      const index = rowKeys().lastIndexOf(key)
+      if (index >= 0) commitSize(index, key, size)
+    })
+  }
+
   const commitSize = (index: number, key: string, size: number) => {
     if (growth.rebase(key, size)) return
     const measured = virtualizer.itemSizeCache.get(key)
@@ -685,7 +697,13 @@ export function createTimelineVirtualizer(input: Input) {
     // Streamed markdown can lose a line for a moment as it settles (a closing fence, say). While it streams, a followed
     // row never shrinks below what it shows, and gives back what it lost once the text completes. A target that drops
     // but stays above what is shown just bends the growth down to it.
-    if (shown !== undefined && size < (growth.target(key) ?? shown) && following() && streaming(rows()[index]))
+    if (
+      shown !== undefined &&
+      size < (growth.target(key) ?? shown) &&
+      following() &&
+      streaming(rows()[index]) &&
+      performance.now() > rewrapUntil
+    )
       return shrinks.set(key, size)
     shrinks.delete(key)
 
