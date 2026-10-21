@@ -39,8 +39,8 @@ describe("fetchSessionExport", () => {
     expect(result).toEqual({ info, messages: [first, second] })
     expect(result).not.toHaveProperty("cursor")
     expect(calls).toEqual([
-      { sessionID: "ses_1", limit: 200, order: "asc" },
-      { sessionID: "ses_1", limit: 200, cursor: "page-2" },
+      { sessionID: "ses_1", limit: 200, order: "asc", attachments: "inline" },
+      { sessionID: "ses_1", limit: 200, cursor: "page-2", attachments: "inline" },
     ])
   })
 })
