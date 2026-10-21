@@ -44,6 +44,7 @@
   max-height: min(270px, var(--kb-popper-content-available-height, 270px));
   display: flex;
   flex-direction: column;
+  padding: 0;
   /* The capsule's hairline, so both insets round to the same device pixels. */
   border: 0.5px solid transparent;
   border-radius: 10px;
