@@ -544,7 +544,7 @@ function ProviderConnection(props: {
       (provider) =>
         provider.id === props.provider ||
         provider.integrationID === integrationID ||
-        provider.integrationID === state.keyProvider,
+        (state.keyProvider !== undefined && provider.integrationID === state.keyProvider),
     ),
   )
 

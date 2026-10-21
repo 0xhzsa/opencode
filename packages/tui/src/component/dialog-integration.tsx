@@ -91,7 +91,7 @@ export function foldOpenCode(list: IntegrationInfo[]): IntegrationInfo[] {
         ...item,
         name: "OpenCode",
         methods: [...methods, ...goKeys],
-        connections: [...item.connections, ...go.connections],
+        connections: [...item.connections, ...credentialConnections(go)],
       },
     ]
   })
