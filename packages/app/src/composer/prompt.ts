@@ -76,6 +76,7 @@ export type PromptSource = Pick<SessionMessageUser, "id" | "text" | "files" | "a
 export function unchangedDraft(target: ReturnType<ComposerState["capture"]>) {
   const snapshot = () =>
     JSON.stringify([target.current(), target.context.items(), target.model.current(), target.mode.current()])
+
   const before = snapshot()
 
   return () => snapshot() === before

@@ -167,7 +167,7 @@ story("hydrates user attachments before preview or opening", async ({ page, moun
   await view.getByRole("button", { name: "Replace attachment proxies" }).click()
   release.resolve()
   await expect(image).toHaveAttribute("src", `data:image/png;base64,${png}`)
-  await expect.poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(1)
+  await expect(image).toHaveJSProperty("naturalWidth", 1)
   expect(requests).toEqual(["pixel.png"])
   await view.locator('[data-component="attachment-card"]').filter({ hasText: "note.txt" }).click()
   await expect(view.getByLabel("Opened attachment")).toHaveText("note.txt:YWJj")
@@ -188,9 +188,11 @@ story("retries passive attachment failures on re-entry and reports only explicit
 
     return route.fulfill({ json: { name: "pixel.png", mime: "image/png", data: png, source: { type: "inline" } } })
   })
+
   const failed = page.waitForResponse(
     (response) => response.url().endsWith("attachment-fixture/pixel.png") && response.status() === 503,
   )
+
   const view = await mount("attachment-hydration--deferred")
   await failed
   const image = view.getByRole("img", { name: "pixel.png" })

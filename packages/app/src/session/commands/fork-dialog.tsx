@@ -78,8 +78,10 @@ export const DialogFork: Component = () => {
     const target = prompt.capture()
     const unchanged = unchangedDraft(target)
     const key = server.key
+
     const current = () =>
       active && params.id === sessionID && server.key === key && prompt.capture() === target && unchanged()
+
     pending = true
 
     try {
