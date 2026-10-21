@@ -674,6 +674,7 @@ export function createTimelineVirtualizer(input: Input) {
   }
 
   const commitSize = (index: number, key: string, size: number) => {
+    if (growth.rebase(key, size)) return
     const measured = virtualizer.itemSizeCache.get(key)
     const arriving = arrivals.has(key)
     const shown = measured ?? (arriving ? 0 : undefined)
@@ -781,7 +782,12 @@ export function createTimelineVirtualizer(input: Input) {
         }
         const prevRatio = prevCoupled ? Math.max(0, Math.min(1, 1 - currentShown / Math.max(1, targetSize))) : 0
         const moveDistance = grid((prevCoupled ? prevCoupled.moveDistance * prevRatio : 0) + deltaDistance)
-        if (gapExtra > 1 / 64) virtualizer.itemSizeCache.set(gapKey, gapBase + gapExtra)
+        // A gap still arriving would fight the glide for its height; the glide takes its current height over.
+        if (gapExtra > 1 / 64) {
+          if (!prevCoupled?.gaps.some((g) => g.key === gapKey) && growth.shown(gapKey) !== undefined)
+            growth.drop(gapKey)
+          virtualizer.itemSizeCache.set(gapKey, gapBase + gapExtra)
+        }
         virtualizer.itemSizeCache.set("activity", 0)
         growth.grow("activity", 0, targetSize, false, { gaps, moveDistance })
         const activityEl = virtualizer.elementsCache.get("activity")

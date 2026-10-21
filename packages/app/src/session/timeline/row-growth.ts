@@ -348,14 +348,7 @@ export function createRowGrowth(input: {
       }
       return undefined
     },
-    grow(
-      key: string,
-      from: number,
-      to: number,
-      enter?: (() => void) | boolean,
-      coupled?: Coupled,
-      streaming = false,
-    ) {
+    grow(key: string, from: number, to: number, enter?: (() => void) | boolean, coupled?: Coupled, streaming = false) {
       const entering = typeof enter === "boolean" ? enter : !!enter
       const onEnter = typeof enter === "function" ? enter : undefined
       const normalized = normalizeCoupled(coupled)
@@ -456,6 +449,16 @@ export function createRowGrowth(input: {
         spring = undefined
         lastTake = 0
       }
+    },
+    // A coupled gap measured a new resting height (a run joining, say): it keeps its share of the glide on top of it.
+    rebase(key: string, base: number) {
+      const owner = [...growths.values()].find((growth) => growth.coupled?.gaps.some((gap) => gap.key === key))
+      const gap = owner?.coupled?.gaps.find((item) => item.key === key)
+      if (!owner || !gap) return false
+      gap.base = base
+      const ratio = Math.max(0, Math.min(1, 1 - grid(owner.value) / Math.max(1, owner.target)))
+      input.resize(key, grid(base + gap.extra * ratio))
+      return true
     },
     // The row leaves mid-glide: its coupled gaps keep their share of the room and close on their own growth.
     release(key: string) {
