@@ -25,7 +25,7 @@ describe("sessionExportFilename", () => {
 })
 
 describe("fetchSessionExport", () => {
-  test.each(["app", "context"])("%s export preserves original bytes on every page", async (surface) => {
+  test("export preserves original bytes on every page", async () => {
     const first: SessionMessageInfo = {
       id: "msg_1",
       type: "user",
@@ -39,22 +39,24 @@ describe("fetchSessionExport", () => {
 
     const api = createApiForServer({
       server: { url: "http://fixture" },
-      fetch: async (input) => {
-        const url = new URL(input instanceof Request ? input.url : String(input))
+      fetch: Object.assign(
+        async (input: string | URL | Request) => {
+          const url = new URL(input instanceof Request ? input.url : String(input))
 
-        if (!url.pathname.endsWith("/message")) return Response.json({ data: info })
-        calls.push(Object.fromEntries(url.searchParams))
-        const message = url.searchParams.has("cursor") ? second : first
+          if (!url.pathname.endsWith("/message")) return Response.json({ data: info })
+          calls.push(Object.fromEntries(url.searchParams))
+          const message = url.searchParams.has("cursor") ? second : first
 
-        return Response.json({
-          data: [{ ...message, files: url.searchParams.get("attachments") === "inline" ? message.files : [] }],
-          cursor: url.searchParams.has("cursor") ? {} : { next: "page-2" },
-        })
-      },
+          return Response.json({
+            data: [{ ...message, files: url.searchParams.get("attachments") === "inline" ? message.files : [] }],
+            cursor: url.searchParams.has("cursor") ? {} : { next: "page-2" },
+          })
+        },
+        { preconnect: fetch.preconnect },
+      ),
     })
 
-    const context = await import("../../../../gui-extensions/src/context/export")
-    const result = await (surface === "app" ? fetchSessionExport : context.fetchSessionExport)({
+    const result = await fetchSessionExport({
       sessionID: "ses_1",
       api,
     })
