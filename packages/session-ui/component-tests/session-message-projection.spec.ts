@@ -187,6 +187,8 @@ story("labels waiting prompts without badging delivered, starting, or queued pro
   await timeline.getByLabel("Prompt text", { exact: true }).uncheck()
   await expect(timeline.getByText("notes.json", { exact: true })).toBeVisible()
   await expect(indicator).toBeVisible()
+  // Like a delivered prompt's, a waiting prompt's actions show on hover.
+  await timeline.locator('[data-component="user-message"]').last().hover()
   await timeline.getByRole("button", { name: "Move to queue", exact: true }).click()
   await expect(indicator).toBeHidden()
 })
