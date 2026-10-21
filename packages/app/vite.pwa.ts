@@ -8,9 +8,13 @@ import { VitePWA } from "vite-plugin-pwa"
 const officeAsset =
   /(?:^|\/)(?:(?:docx_\w+|ooxml_opc|pptx_wasm|xlsx_wasm)_bg-[\w-]+\.wasm|residentEngineWorker-[\w-]+\.js|(?:Carlito|Caladea|LiberationSans|LiberationSerif|LiberationMono|NotoSansArabic|NotoNaskhArabic|NotoSansHebrew|Gelasio|ComicRelief|Inter|Roboto|SourceSans3|DMSans|DMSerifDisplay|OpenSans|Montserrat|Poppins|Oswald|Heebo)-[\w-]+\.ttf)$/
 
+// Pierre Highlights inlines its WebAssembly in these chunks (one per realm). It is an opt-in experiment behind
+// Knobs, so the chunks load only when it is picked.
+const highlightsAsset = /(?:^|\/)(?:markdown-)?highlights-[\w-]+\.js$/
+
 /** Whether a built file loads on demand instead of being precached. */
 export function onDemandAsset(path: string) {
-  return officeAsset.test(path)
+  return officeAsset.test(path) || highlightsAsset.test(path)
 }
 
 export function serviceWorker(directory: string) {

@@ -37,7 +37,9 @@ const projections = new Map<string, Projection>()
 
 let highlighter: ReturnType<typeof createHighlighter> | undefined
 
-let highlights: Promise<Highlights> | undefined
+// Undefined once Highlights failed to load or to highlight: this worker then stays on Shiki for the rest of the session,
+// since a load failure (such as a blocked WebAssembly compile) would only repeat on every block.
+let highlights: Promise<Highlights | undefined> | undefined
 
 const highlightQueue = createLatestWorkerQueue<Extract<MarkdownWorkerRequest, { type: "highlight" }>>({
   run: highlight,
@@ -59,9 +61,15 @@ const shikiParser = createMarkdownParser(shikiHtml)
 const highlightsParser = createMarkdownParser(async (code, language) => {
   const lexer = await getHighlights()
 
-  if (lexer.supportsLanguage(language)) return lexer.highlightsHtml(code, language)
+  if (!lexer?.supportsLanguage(language)) return shikiHtml(code, language)
 
-  return shikiHtml(code, language)
+  try {
+    return lexer.highlightsHtml(code, language)
+  } catch (error) {
+    disableHighlights(error)
+
+    return shikiHtml(code, language)
+  }
 })
 
 async function shikiHtml(code: string, language: string) {
@@ -129,9 +137,16 @@ async function highlight(request: Extract<MarkdownWorkerRequest, { type: "highli
     const requested = request.language
 
     if (lexer?.supportsLanguage(requested)) {
-      await highlightWithHighlights(lexer, request, requested)
+      const done = await highlightWithHighlights(lexer, request, requested).then(
+        () => true,
+        (error: unknown) => {
+          disableHighlights(error)
 
-      return
+          return false
+        },
+      )
+
+      if (done) return
     }
 
     const instance = await getHighlighter()
@@ -249,7 +264,10 @@ async function stream(
     previous.highlighter !== highlighter ||
     !request.text.startsWith(previous.source)
 
-  if (reset) previous?.tokenizer.dispose()
+  if (reset) {
+    previous?.tokenizer.dispose()
+    streams.delete(request.key)
+  }
 
   const current = reset ? { language, highlighter, source: "", tokenizer: create() } : previous
   const result = await current.tokenizer.push(request.text.slice(current.source.length))
@@ -259,7 +277,16 @@ async function stream(
 }
 
 function getHighlights() {
-  return (highlights ??= import("./markdown-highlights"))
+  return (highlights ??= import("./markdown-highlights").catch((error: unknown) => {
+    disableHighlights(error)
+
+    return undefined
+  }))
+}
+
+function disableHighlights(error: unknown) {
+  highlights = Promise.resolve(undefined)
+  console.error("Pierre Highlights failed; markdown code uses Shiki for the rest of this session", error)
 }
 
 function getHighlighter() {
