@@ -699,6 +699,10 @@ export function createTimelineVirtualizer(input: Input) {
     // A deferred row can report zero before its contents mount. Its first visible measurement still owns entrance.
     if (size > 0) arrivals.delete(key)
 
+    // A row the promotion glide carries, such as a delivered steer folding its Steering label, shrinks on the glide
+    // instead of queueing behind it, so promotion stays one motion.
+    if (shown !== undefined && size < shown && joinGlide(key, shown, size)) return
+
     // Streamed markdown can lose a line for a moment as it settles (a closing fence, say). While it streams, a followed
     // row never shrinks below what it shows, and gives back what it lost once the text completes. A target that drops
     // but stays above what is shown just bends the growth down to it.
@@ -724,6 +728,24 @@ export function createTimelineVirtualizer(input: Input) {
     }
 
     growth.grow(key, shown, size, arriving, undefined, streaming(rows()[index]))
+  }
+
+  const joinGlide = (key: string, shown: number, size: number) => {
+    const glide = growth.coupled("activity")
+    const glideShown = growth.shown("activity")
+    const glideTarget = growth.target("activity")
+    if (!glide?.gaps.length || glideShown === undefined || glideTarget === undefined) return false
+    const keys = rowKeys()
+    const at = keys.lastIndexOf(key)
+    // Late in the glide the row's share would have to close too fast; it shrinks on its own instead.
+    const ratio = 1 - glideShown / Math.max(1, glideTarget)
+    if (ratio < 0.25 || at <= keys.lastIndexOf(glide.gaps[0]!.key) || at >= keys.lastIndexOf("activity")) return false
+    if (growth.target(key) !== undefined) growth.drop(key)
+    growth.grow("activity", glideShown, glideTarget, false, {
+      gaps: [...glide.gaps, { key, base: size, extra: grid((shown - size) / ratio) }],
+      moveDistance: glide.moveDistance,
+    })
+    return true
   }
 
   const grows = (index: number, shown: number, size: number) => {

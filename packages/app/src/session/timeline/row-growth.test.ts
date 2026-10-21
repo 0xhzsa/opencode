@@ -257,6 +257,41 @@ describe("row growth", () => {
     expect(trace.at(-1)?.wkY).toBe(194)
   })
 
+  test("a row that joins a glide midway shrinks on it from where it stands and lands with Working", async () => {
+    const sizes: Record<string, number[]> = { gap: [], row: [] }
+    const actWrapper = document.createElement("div")
+    actWrapper.appendChild(document.createElement("div"))
+    const growth = createRowGrowth({
+      measure: () => {},
+      resize: (key, size) => {
+        if (key === "activity") return actWrapper
+        sizes[key]?.push(size)
+        return document.createElement("div")
+      },
+      below: () => true,
+      settle: () => {},
+    })
+    growth.grow("activity", 0, 36, false, { gaps: [{ key: "gap", base: 24, extra: 36 }], moveDistance: 160 })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const shown = growth.shown("activity")!
+    const ratio = 1 - shown / 36
+    expect(ratio).toBeGreaterThan(0.25)
+    growth.grow("activity", shown, 36, false, {
+      gaps: [...growth.coupled("activity")!.gaps, { key: "row", base: 37, extra: (61 - 37) / ratio }],
+      moveDistance: 160,
+    })
+    const deadline = performance.now() + 3000
+    while (growth.target("activity") !== undefined && performance.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 16))
+    const row = sizes.row!
+    expect(Math.abs(row[0]! - 61)).toBeLessThanOrEqual(2)
+    expect(row.at(-1)).toBe(37)
+    expect(sizes.gap!.at(-1)).toBe(24)
+    expect(row.every((size, index) => index === 0 || (size <= row[index - 1]! && row[index - 1]! - size <= 8))).toBe(
+      true,
+    )
+  })
+
   test("closes a coupled gap on the spring when Working leaves mid-glide", async () => {
     const gaps: number[] = []
     const actWrapper = document.createElement("div")
