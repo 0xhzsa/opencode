@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import type { ConfigEntry, OpenCodeEvent, SessionMessageInfo, WorktreeDirectory } from "@opencode/client/promise"
-import { NO_PROVIDER, REMOTE_SERVER, SERVER, holdRoute, pageMessagesFrom, project, seed, session } from "../utils/app"
+import { NO_PROVIDER, REMOTE_SERVER, SERVER, holdRoute, project, seed, session } from "../utils/app"
 import { mockMissingLocation, mockOpenCodeServer } from "../utils/mock-server"
 import { mockRemoteServer, mockWorkspace, openSession, openSettings, type WorkspaceInput } from "../utils/workspace"
 
@@ -92,58 +92,6 @@ test("a settings page survives refresh", async ({ page }) => {
   await page.reload()
   await expect(appearance).toHaveAttribute("aria-selected", "true")
   await expect(page).toHaveURL("/settings?tab=appearance")
-})
-
-test("the experimental turn navigator defaults off and can be enabled persistently", async ({ page }) => {
-  const id = "ses_navigator_settings"
-  const messages: SessionMessageInfo[] = Array.from({ length: 60 }, (_, index) => ({
-    id: `msg_navigator_${String(index).padStart(4, "0")}`,
-    type: "user",
-    text: `Prompt ${index}`,
-    time: { created: 1700000000000 + index },
-  }))
-  const indexes: string[] = []
-  page.on("request", (request) => {
-    const url = new URL(request.url())
-
-    if (url.pathname === `/api/session/${id}/message` && url.searchParams.get("type") === "user")
-      indexes.push(request.url())
-  })
-  await openSession(page, {
-    name: "Turn navigator settings",
-    sessions: [{ id, title: "Turn navigator settings" }],
-    pageMessages: pageMessagesFrom({ [id]: messages }),
-  })
-  const navigator = page.locator('[data-component="session-turn-navigator"]')
-  await page.clock.install()
-  await page.reload()
-  await expect(page.locator('[data-component="composer-editor"]')).toBeEditable()
-  await expect(page.locator("#message-msg_navigator_0059")).toBeVisible()
-  await page.clock.fastForward(1500)
-  await expect(navigator).toHaveCount(0)
-  expect(indexes).toHaveLength(0)
-
-  await page.keyboard.press("Control+,")
-  const settings = page.getByTestId("settings-screen")
-  await settings.getByRole("tab", { name: "Experimental", exact: true }).click()
-  await expect(settings.getByRole("heading", { name: "Experimental", exact: true })).toBeVisible()
-  const toggle = settings.getByRole("switch", { name: "Turn navigator", exact: true })
-  await expect(toggle).not.toBeChecked()
-  await toggle.press("Space")
-  await expect(toggle).toBeChecked()
-  await settings.getByRole("button", { name: "Back to app", exact: true }).click()
-  await page.clock.fastForward(1500)
-  await expect(navigator.locator("[data-turn]")).toHaveCount(60)
-  expect(indexes).toHaveLength(1)
-
-  await expect
-    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("settings.v3") ?? "{}").general?.showTurnNavigator))
-    .toBe(true)
-  await page.reload()
-  await expect(page.locator("#message-msg_navigator_0059")).toBeVisible()
-  await page.clock.fastForward(1500)
-  await expect(navigator.locator("[data-turn]")).toHaveCount(60)
-  expect(indexes).toHaveLength(2)
 })
 
 for (const locale of ["en", "ar"]) {

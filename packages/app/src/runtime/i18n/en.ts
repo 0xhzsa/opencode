@@ -755,9 +755,6 @@ export const dict = {
   "settings.experimental.description": "Try experimental features",
   "settings.experimental.row.generatedUI.title": "Generated UI",
   "settings.experimental.row.generatedUI.description": "Let agents show dashboards, charts and forms in the timeline",
-  "settings.experimental.row.turnNavigator.title": "Turn navigator",
-  "settings.experimental.row.turnNavigator.description":
-    "Show a rail beside the timeline to preview and jump between prompts",
   "settings.guiExtensions.title": "Extensions",
   "settings.guiExtensions.description": "Built-in GUI extensions in this window. Development builds only.",
   "settings.guiExtensions.reload": "Reload",

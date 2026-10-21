@@ -86,36 +86,6 @@ it.live("filters message types before paginating in either direction through the
         messages[8],
       ])
       expect((await fixture.api.message.list({ sessionID: fixture.sessionID, type: "shell" })).data).toEqual([])
-      // Before excludes its anchor; the returned cursor continues further back through matching messages.
-      const before = await fixture.api.message.list({ ...input, before: "msg_a" })
-      expect(before.data.map((message) => message.id)).toEqual(["msg_x", "msg_b"])
-      if (!before.cursor.next) throw new Error("Expected a next cursor")
-      expect(
-        (await fixture.api.message.list({ ...input, cursor: before.cursor.next })).data.map((message) => message.id),
-      ).toEqual(["msg_z"])
-      expect(
-        (await fixture.api.message.list({ sessionID: fixture.sessionID, type: "assistant", before: "msg_b", limit: 1 }))
-          .data,
-      ).toEqual([messages[1]])
-      expect(
-        (await fixture.api.message.list({ sessionID: fixture.sessionID, type: "assistant", before: "msg_z" })).data,
-      ).toEqual([])
-    })
-  }),
-)
-
-it.live("rejects before combined with a cursor or ascending order", () =>
-  Effect.gen(function* () {
-    const fixture = yield* setup
-    yield* Effect.promise(async () => {
-      const first = await fixture.api.message.list({ sessionID: fixture.sessionID, limit: 1 })
-      for (const query of ["order=asc", `cursor=${first.cursor.next}`]) {
-        const response = await fixture.handler(
-          new Request(`http://opencode.local/api/session/${fixture.sessionID}/message?before=msg_a&${query}`),
-        )
-        expect(response.status).toBe(400)
-        expect(await response.json()).toMatchObject({ _tag: "InvalidCursorError" })
-      }
     })
   }),
 )

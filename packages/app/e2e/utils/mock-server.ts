@@ -1438,34 +1438,6 @@ function mockHandlers(
           }),
         messageList: (ctx) => {
           const token = ctx.query.cursor
-          const type = ctx.query.type
-
-          // Filter before pagination, matching the server's message index without paging the transcript. A `before`
-          // anchor reads back from a message the same way.
-          if (type || ctx.query.before) {
-            const [order, offset] = token?.startsWith("typed:")
-              ? [token.split(":")[1], Number(token.split(":")[2])]
-              : [ctx.query.order ?? "desc", 0]
-
-            const transcript = config.pageMessages(ctx.params.sessionID, Number.MAX_SAFE_INTEGER).items
-
-            const end = ctx.query.before
-              ? Math.max(
-                  0,
-                  transcript.findIndex((item) => item.id === ctx.query.before),
-                )
-              : transcript.length
-
-            const typed = transcript.slice(0, end).filter((item) => !type || item.type === type)
-            const ordered = order === "asc" ? typed : typed.toReversed()
-            const limit = ctx.query.limit ?? 50
-
-            return Effect.succeed({
-              data: ordered.slice(offset, offset + limit),
-              cursor: { next: offset + limit < ordered.length ? `typed:${order}:${offset + limit}` : undefined },
-            })
-          }
-
           const before = token ? state.cursors.get(token) : undefined
 
           if (token && !before) return Effect.fail(new MockBadRequest({ message: "Invalid cursor" }))

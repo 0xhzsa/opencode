@@ -39,20 +39,6 @@ export const SettingsExperimental: Component = () => {
                 />
               </div>
             </SettingsRow>
-            <SettingsRow
-              title={language.t("settings.experimental.row.turnNavigator.title")}
-              description={language.t("settings.experimental.row.turnNavigator.description")}
-            >
-              <div data-action="settings-turn-navigator">
-                <Switch
-                  checked={settings.general.showTurnNavigator()}
-                  onChange={(checked) => settings.general.setShowTurnNavigator(checked)}
-                  hideLabel
-                >
-                  {language.t("settings.experimental.row.turnNavigator.title")}
-                </Switch>
-              </div>
-            </SettingsRow>
           </SettingsList>
         </div>
       </div>

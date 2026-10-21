@@ -97,13 +97,6 @@ export const clientSettings: Entry<SettingsRootTab>[] = [
     keywords: "genui generative interface dashboards charts forms",
   },
   {
-    tab: "experimental",
-    label: "settings.experimental.row.turnNavigator.title",
-    target: "settings-turn-navigator",
-    description: "settings.experimental.row.turnNavigator.description",
-    keywords: "conversation prompts messages timeline navigation rail",
-  },
-  {
     tab: "appearance",
     label: "settings.general.row.colorScheme.title",
     target: "settings-color-scheme",

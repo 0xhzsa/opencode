@@ -249,7 +249,6 @@ function SessionScreenContent(props: {
           setVisibleRef={timeline.view.setVisibleRef}
           anchor={timeline.view.anchor}
           setRevealMessage={timeline.view.setRevealMessage}
-          onRevealTurn={timeline.actions.revealTurn}
           setRevealPart={timeline.view.setRevealPart}
           reveal={timeline.view.reveal}
           setScrollToEnd={timeline.view.setScrollToEnd}

@@ -93,7 +93,6 @@ describe("settings schema", () => {
         timelineDetail: timelinePresets[2].value,
         showCustomAgents: false,
         showTurnDiffs: false,
-        showTurnNavigator: false,
         backgroundActivity: "left",
         generatedUI: true,
         mobileTitlebarPosition: "top",

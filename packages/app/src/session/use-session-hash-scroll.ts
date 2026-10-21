@@ -100,14 +100,12 @@ export const useSessionHashScroll = (input: {
     cancel()
 
     if (input.currentMessageId() !== message.id) input.setActiveMessage(message)
-    // A mounted prompt is close enough to glide to; any other is first brought in by the virtualizer.
-    const mounted = behavior === "smooth" ? document.getElementById(input.anchor(message.id)) : null
+    input.revealMessage?.(message.id)
 
-    if (mounted) scrollToElement(mounted, behavior)
+    if (seek(message.id, behavior)) {
+      updateHash(message.id)
 
-    if (!mounted) {
-      input.revealMessage?.(message.id)
-      seek(message.id, behavior)
+      return
     }
 
     updateHash(message.id)

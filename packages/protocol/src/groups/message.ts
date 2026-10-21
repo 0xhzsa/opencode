@@ -35,10 +35,6 @@ export const SessionMessagesQuery = Schema.Struct({
         "Opaque pagination cursor returned as cursor.previous or cursor.next in the previous response. Do not combine with order.",
     }),
   ),
-  before: Schema.optional(SessionMessage.ID).annotate({
-    description:
-      "Return only messages that precede this message in the timeline, newest first. Cannot be combined with cursor or ascending order; the returned cursors continue from the page.",
-  }),
   type: Schema.optional(Schema.Literals(Object.keys(MessageTypes) as ReadonlyArray<SessionMessage.Type>)).annotate({
     description:
       "Filter by message type before pagination. When omitted, all message types are returned. Pass the same type when following cursors.",
