@@ -22,7 +22,11 @@ const indexLimit = 1000
 
 // Messages read back from the next turn to find an unloaded turn's reply. One read also fills the replies of the
 // older turns it reaches, so their previews are ready before the pointer gets there.
-const replyScanLimit = 40
+const replyScanLimit = 20
+
+// The prompt previews at once; its reply waits for the pointer to rest, so a sweep across a long rail reads nothing.
+// Rows can carry inline attachments, which makes each read costly in big sessions.
+const replyHoverDelay = 150
 
 // Each tick keeps at least this many pixels; a rail with more turns than fit shows an even sample of them.
 const tickMinPitch = 4
@@ -231,7 +235,8 @@ function TurnRail(props: TurnNavigatorProps & { index?: Map<string, string>; roo
     const id = state.hover
 
     if (!id || loaded().has(id) || state.replies[id] !== undefined) return
-    void loadReply(id).catch(() => undefined)
+    const timer = setTimeout(() => void loadReply(id).catch(() => undefined), replyHoverDelay)
+    onCleanup(() => clearTimeout(timer))
   })
 
   const active = createSelector(activeMarks, (id: string, visible) => visible.has(id))
