@@ -2,11 +2,13 @@ import { createMemo, lazy, onCleanup, Show, Suspense } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createKeyed, onIdle, Panel, Slot, Style, useDrawer, usePanel, type Setup } from "../sdk"
 import type Details from "./index"
-import { DetailsHeader } from "./popover"
+import { DetailsHeader, type DetailsMenus } from "./popover"
 
 const setup: Setup<typeof Details> = (ctx) => {
   const sessions = ctx.sessions
   const changes = ctx.uses.changes
+
+  const menus: DetailsMenus = new Set()
 
   const DetailsPanel = lazy(() =>
     Promise.all([import("./panel"), import("./details.css?inline")]).then(([panel, css]) => {
@@ -23,7 +25,13 @@ const setup: Setup<typeof Details> = (ctx) => {
     at: "session.header",
     order: 20,
     render: (input) => (
-      <DetailsHeader session={input.session} screen={input.screen} active={input.active} panel={DetailsPanel} />
+      <DetailsHeader
+        menus={menus}
+        session={input.session}
+        screen={input.screen}
+        active={input.active}
+        panel={DetailsPanel}
+      />
     ),
   })
 

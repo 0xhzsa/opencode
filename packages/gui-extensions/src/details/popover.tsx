@@ -9,8 +9,12 @@ import { Command, createKeyed, createVisitState, useExtension, type MountedSessi
 import type Details from "./index"
 import type { DetailsPanelProps } from "./panel"
 
+/** Every mounted details menu, so a shortcut finds the one on screen. */
+export type DetailsMenus = Set<{ trigger: () => HTMLButtonElement | undefined; toggle: () => void }>
+
 /** The session details menu of one timeline header. Cached timelines each keep their own. */
 export function DetailsHeader(props: {
+  menus: DetailsMenus
   session: MountedSession
   screen: SessionScreen
   active: boolean
@@ -49,7 +53,7 @@ export function DetailsHeader(props: {
   return (
     <Show when={project()}>
       {(project) => (
-        <DetailsPopover active={props.active} open={open()} onOpenChange={setOpen}>
+        <DetailsPopover menus={props.menus} active={props.active} open={open()} onOpenChange={setOpen}>
           <Suspense>
             <Panel
               menu
@@ -68,10 +72,9 @@ export function DetailsHeader(props: {
   )
 }
 
-/** Every mounted details menu, so a shortcut finds the one on screen. */
-const menus = new Set<{ trigger: () => HTMLButtonElement | undefined; toggle: () => void }>()
-
-function DetailsPopover(props: ParentProps<{ active: boolean; open: boolean; onOpenChange: (open: boolean) => void }>) {
+function DetailsPopover(
+  props: ParentProps<{ menus: DetailsMenus; active: boolean; open: boolean; onOpenChange: (open: boolean) => void }>,
+) {
   const ctx = useExtension()
   const keybinds = ctx.keybinds
 
@@ -79,8 +82,8 @@ function DetailsPopover(props: ParentProps<{ active: boolean; open: boolean; onO
   // A shortcut opens the menu without its trigger, so the trigger is named as the anchor.
   let trigger: HTMLButtonElement | undefined
   const self = { trigger: () => trigger, toggle: () => props.onOpenChange(!props.open) }
-  menus.add(self)
-  onCleanup(() => menus.delete(self))
+  props.menus.add(self)
+  onCleanup(() => props.menus.delete(self))
 
   ctx.add(Command, (): Command | undefined =>
     props.active
@@ -91,7 +94,7 @@ function DetailsPopover(props: ParentProps<{ active: boolean; open: boolean; onO
           section: "session",
           bind: "mod+shift+y",
           // A detached timeline can stay active, so the shortcut toggles the menu whose trigger is on screen.
-          run: () => [...menus].find((menu) => menu.trigger()?.isConnected)?.toggle(),
+          run: () => [...props.menus].find((menu) => menu.trigger()?.isConnected)?.toggle(),
         }
       : undefined,
   )
