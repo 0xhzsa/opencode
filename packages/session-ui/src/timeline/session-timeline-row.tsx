@@ -6,7 +6,17 @@ import type {
 } from "@opencode/client/promise"
 import { useI18n } from "@opencode/ui/context/i18n"
 import { Option, Predicate, Schema } from "effect"
-import { For, Show, createEffect, createMemo, onCleanup, untrack, type Accessor, type JSX } from "solid-js"
+import {
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  untrack,
+  type Accessor,
+  type JSX,
+} from "solid-js"
 import { DiffChanges } from "@opencode/ui/diff-changes"
 import { Icon } from "@opencode/ui/icon"
 import { Spring, frameLoop, prefersReducedMotion } from "@opencode/ui/motion"
@@ -62,10 +72,15 @@ type FramedTimelineRow = Exclude<TimelineRow.TimelineRow, TimelineRow.TurnGap>
 
 type Outcome = "completed" | "error" | "cancelled"
 
+// A stream that pauses mid-line shows its held word once the text has sat still this long; the layout model reads the
+// same release so its height agrees with the row.
+const releasedTails = new Map<string, string>()
+const tailHoldMs = 300
+
 // Hold an incomplete trailing word on an active prose line until its boundary arrives so it never
 // measures short at the end of a line and wraps to the next line as its remaining letters stream in.
-function settledStreamText(raw: string, live: boolean) {
-  if (!live || !raw) return raw
+function settledStreamText(raw: string, live: boolean, partID?: string) {
+  if (!live || !raw || (partID !== undefined && releasedTails.get(partID) === raw)) return raw
   if ((raw.match(/```/g)?.length ?? 0) % 2 === 1) return raw.replace(/\n[ \t]*`{1,2}$/, "")
   const lastNewline = raw.lastIndexOf("\n")
   const line = raw.slice(lastNewline + 1)
@@ -447,13 +462,25 @@ export function createSessionTimelineRowRenderer(input: {
       return item ? contentDefaultOpen(item) : undefined
     })
 
+    const [released, setReleased] = createSignal(0)
     const text = createMemo(() => {
       const value = content()
       const assistant = message()
+      const partID = ref()?.partID
+      released()
       if (value?.type !== "text" && value?.type !== "reasoning") return ""
       const live =
         value.type === "text" && assistant?.time.completed === undefined && assistant?.content.at(-1) === value
-      return settledStreamText(value.text, live)
+      if (!live && partID !== undefined) releasedTails.delete(partID)
+      const shown = settledStreamText(value.text, live, partID)
+      if (shown === value.text || partID === undefined) return shown
+      const raw = value.text
+      const timer = setTimeout(() => {
+        releasedTails.set(partID, raw)
+        setReleased((count) => count + 1)
+      }, tailHoldMs)
+      onCleanup(() => clearTimeout(timer))
+      return shown
     })
 
     const prepared = createMemo(() => {
@@ -1280,7 +1307,7 @@ export function createSessionTimelineRowRenderer(input: {
       const content = Timeline.resolveContent(message, row.group.ref.partID)
       if (message?.type === "assistant" && content?.type === "text") {
         const live = message.time.completed === undefined && message.content.at(-1) === content
-        const text = settledStreamText(content.text, live)
+        const text = settledStreamText(content.text, live, row.group.ref.partID)
         const measured = markdownLayout.layout(
           row.group.ref.partID,
           text,
