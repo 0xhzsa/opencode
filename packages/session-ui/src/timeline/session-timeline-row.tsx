@@ -63,6 +63,20 @@ type FramedTimelineRow = Exclude<TimelineRow.TimelineRow, TimelineRow.TurnGap>
 
 type Outcome = "completed" | "error" | "cancelled"
 
+// Hold an incomplete trailing word on an active prose line until its boundary arrives so it never
+// measures short at the end of a line and wraps to the next line as its remaining letters stream in.
+function settledStreamText(raw: string, live: boolean) {
+  if (!live || !raw || (raw.match(/```/g)?.length ?? 0) % 2 === 1) return raw
+  const line = raw.slice(raw.lastIndexOf("\n") + 1)
+  const edge = line.search(/[ \t]+\S{1,24}$/)
+  if (edge < 0) return raw
+  const prefix = line.slice(0, edge)
+  const tail = line.slice(edge).trimStart()
+  if (!/[A-Za-z0-9\u00C0-\u024F]/.test(prefix)) return raw
+  if (/^`|[.,!?;:)\]]$/.test(tail)) return raw
+  return raw.slice(0, raw.length - tail.length)
+}
+
 export type SessionUserPresentation = {
   displayText?: string
   comments?: SessionUserComment[]
@@ -429,6 +443,15 @@ export function createSessionTimelineRowRenderer(input: {
       return item ? contentDefaultOpen(item) : undefined
     })
 
+    const text = createMemo(() => {
+      const value = content()
+      const assistant = message()
+      if (value?.type !== "text" && value?.type !== "reasoning") return ""
+      const live =
+        value.type === "text" && assistant?.time.completed === undefined && assistant?.content.at(-1) === value
+      return settledStreamText(value.text, live)
+    })
+
     const prepared = createMemo(() => {
       const value = content()
       const assistant = message()
@@ -436,7 +459,7 @@ export function createSessionTimelineRowRenderer(input: {
       if ((value?.type !== "text" && value?.type !== "reasoning") || !assistant || !reference) return
       return markdownLayout.prepare(
         reference.partID,
-        value.text,
+        text(),
         value.type === "text" && assistant.time.completed === undefined,
       )
     })
@@ -447,20 +470,26 @@ export function createSessionTimelineRowRenderer(input: {
       <Show when={message()}>
         {(message) => (
           <Show when={content()}>
-            {(content) => (
-              <SessionAssistantContent
-                message={message()}
-                content={content()}
-                contentID={ref()!.partID}
-                showAssistantCopyPartID={copyContentID(row().userMessageID)}
-                turnDurationMs={duration(row().userMessageID)}
-                defaultOpen={defaultOpen()}
-                toolOpen={input.disclosure.value(disclosureKey()) ?? defaultOpen()}
-                onToolOpenChange={(open) => input.disclosure.set(disclosureKey(), open)}
-                onContentRendered={onSizeChange}
-                preparedMarkdown={prepared()}
-              />
-            )}
+            {(content) => {
+              const item = () => {
+                const value = content()
+                return value.type === "text" ? { ...value, text: text() } : value
+              }
+              return (
+                <SessionAssistantContent
+                  message={message()}
+                  content={item()}
+                  contentID={ref()!.partID}
+                  showAssistantCopyPartID={copyContentID(row().userMessageID)}
+                  turnDurationMs={duration(row().userMessageID)}
+                  defaultOpen={defaultOpen()}
+                  toolOpen={input.disclosure.value(disclosureKey()) ?? defaultOpen()}
+                  onToolOpenChange={(open) => input.disclosure.set(disclosureKey(), open)}
+                  onContentRendered={onSizeChange}
+                  preparedMarkdown={prepared()}
+                />
+              )
+            }}
           </Show>
         )}
       </Show>
@@ -1246,9 +1275,11 @@ export function createSessionTimelineRowRenderer(input: {
       const message = input.projection.messageByID().get(row.group.ref.messageID)
       const content = Timeline.resolveContent(message, row.group.ref.partID)
       if (message?.type === "assistant" && content?.type === "text") {
+        const live = message.time.completed === undefined && message.content.at(-1) === content
+        const text = settledStreamText(content.text, live)
         const measured = markdownLayout.layout(
           row.group.ref.partID,
-          content.text,
+          text,
           message.time.completed === undefined,
           width,
           environment.typography,
@@ -1256,7 +1287,7 @@ export function createSessionTimelineRowRenderer(input: {
         if (measured.source === "dom") return measured
         return {
           source: "pretext",
-          height: !content.text
+          height: !text
             ? 0
             : measured.height +
               (row.spacing === "content" ? 16 : 24 + (row.spacing === "tool" ? 8 : 0)) +

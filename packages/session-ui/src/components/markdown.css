@@ -70,10 +70,8 @@
     margin-bottom: 0;
   }
 
-  /* Pretty wrapping would move settled words as each token arrives, so the growing block stays greedy until it completes. */
-  &[data-streaming] > [data-markdown-block]:last-child {
-    text-wrap-style: auto;
-  }
+  /* Pretty wrapping would rearrange words when a block finishes or a new paragraph starts, and diverge from pretext's greedy line measurement. */
+  text-wrap-style: auto;
 
   /* Headings: Sized by level, distinguished by color and spacing */
   h1 {

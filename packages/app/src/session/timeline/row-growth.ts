@@ -13,8 +13,6 @@ export const growthSpring = motionTuning.spring("timeline.growth", {
   },
 })
 
-const softEdge = 28
-
 const grid = (value: number) => Math.round(value * 64) / 64
 
 type Growth = { spring: Spring; start: number }
@@ -48,12 +46,6 @@ export function createRowGrowth(input: {
     const wrapper = input.resize(key, shown)
 
     if (wrapper === false || resting) growths.delete(key)
-
-    if (wrapper)
-      paintEdge(
-        wrapper,
-        resting ? 0 : Math.min(softEdge, Math.abs(growth.spring.target - value), Math.abs(value - growth.start)),
-      )
 
     if (held && wrapper !== false && input.below(key))
       held.value = Math.max(0, held.value - Math.max(0, shown - before))
@@ -125,9 +117,7 @@ export function createRowGrowth(input: {
     },
     land(key: string, size: number) {
       growths.delete(key)
-      const wrapper = input.resize(key, size)
-
-      if (wrapper) paintEdge(wrapper, 0)
+      input.resize(key, size)
     },
     finish() {
       fresh.clear()
@@ -137,20 +127,10 @@ export function createRowGrowth(input: {
       closing = false
       batch(() =>
         growths.forEach((growth, key) => {
-          const wrapper = input.resize(key, growth.spring.target)
-
-          if (wrapper) paintEdge(wrapper, 0)
+          input.resize(key, growth.spring.target)
         }),
       )
       growths.clear()
     },
   }
-}
-
-function paintEdge(wrapper: HTMLElement, fade: number) {
-  if (fade < 0.5) return wrapper.style.removeProperty("mask-image")
-  wrapper.style.setProperty(
-    "mask-image",
-    `linear-gradient(to bottom, #000 calc(100% - ${fade.toFixed(2)}px), transparent)`,
-  )
 }
