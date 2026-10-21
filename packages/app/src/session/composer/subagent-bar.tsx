@@ -50,7 +50,8 @@ export function SubagentBar(props: {
     >
       <Tooltip
         placement="top"
-        class="min-w-0"
+        class="min-w-0 rounded-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-v2-border-border-focus"
+        triggerTabIndex={0}
         inactive={!props.title && !props.model}
         contentClass="max-w-80"
         value={
