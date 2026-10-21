@@ -6,6 +6,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { useLanguage } from "@/runtime/i18n/language"
 import { useSettings } from "@/settings/model"
 import { AgentOrb } from "@/session/agent-glyph/agent-orb"
+import { CssAgentOrb } from "@/session/agent-glyph/css-agent-orb"
 import "./activity-chips.css"
 
 export type SessionActivityItem = {
@@ -50,8 +51,8 @@ export function SessionActivityChips(props: {
   shells: readonly SessionActivityItem[]
   onOpen: (item: SessionActivityItem) => void
   onStop: (item: SessionActivityItem) => void
-  // Temporary, for the capsule and orb decision: today's chip, a true capsule, or the capsule with the iOS orb.
-  variant?: "today" | "capsule" | "orb"
+  // Temporary decision variants: today's chip, capsule, JS orb, or CSS orb.
+  variant?: "today" | "capsule" | "orb" | "css-orb"
 }) {
   const language = useLanguage()
   const settings = useSettings()
@@ -161,8 +162,15 @@ export function SessionActivityChips(props: {
             class="pointer-events-auto flex h-7 min-w-0 max-w-full items-center gap-2 rounded-[12px] border-[0.5px] border-v2-border-border-muted bg-v2-background-bg-base ps-2.5 pe-2.5 text-[13px] font-[530] leading-text-compact tracking-[-0.04px] whitespace-nowrap tabular-nums text-v2-text-text-base shadow-[var(--v2-elevation-raised)] outline-none duration-150 ease-out motion-reduce:animate-none hover:bg-v2-background-bg-layer-01 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-v2-border-border-focus"
             classList={{ "animate-in fade-in": enter() }}
           >
-            <Show when={props.variant === "orb"} fallback={<SessionProgressIndicatorV2 class="shrink-0" />}>
-              <AgentOrb activity="thinking" />
+            <Show
+              when={props.variant === "css-orb"}
+              fallback={
+                <Show when={props.variant === "orb"} fallback={<SessionProgressIndicatorV2 class="shrink-0" />}>
+                  <AgentOrb activity="thinking" />
+                </Show>
+              }
+            >
+              <CssAgentOrb />
             </Show>
             <span data-slot="session-activity-summary" class="flex min-w-0 items-center gap-2 overflow-hidden">
               {language.activitySummaryRich(
@@ -191,10 +199,17 @@ export function SessionActivityChips(props: {
                 {(item) => (
                   <Menu.Item {...row(item)}>
                     <Show
-                      when={props.variant === "orb"}
-                      fallback={<SessionProgressIndicatorV2 class="shrink-0 text-v2-icon-icon-muted" />}
+                      when={props.variant === "css-orb"}
+                      fallback={
+                        <Show
+                          when={props.variant === "orb"}
+                          fallback={<SessionProgressIndicatorV2 class="shrink-0 text-v2-icon-icon-muted" />}
+                        >
+                          <AgentOrb activity="thinking" />
+                        </Show>
+                      }
                     >
-                      <AgentOrb activity="thinking" />
+                      <CssAgentOrb />
                     </Show>
                     <span class="shrink-0 font-[530]">
                       <bdi>

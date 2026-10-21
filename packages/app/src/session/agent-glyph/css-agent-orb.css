@@ -1,0 +1,46 @@
+[data-component="css-agent-orb"] {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--v2-icon-icon-base);
+
+  > span {
+    position: absolute;
+    width: 1.6px;
+    height: 1.6px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.65;
+    animation: css-agent-orb-pulse 900ms ease-in-out infinite;
+    animation-delay: calc(var(--orb-clock, 0ms) + var(--orb-phase));
+  }
+}
+
+@keyframes css-agent-orb-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  18% {
+    opacity: 0.8;
+    transform: scale(0.95);
+  }
+  55%,
+  80% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-component="css-agent-orb"] > span {
+    animation: none;
+  }
+}
+
+:root[data-motion="reduce"] [data-component="css-agent-orb"] > span {
+  animation: none;
+}

@@ -8,7 +8,7 @@
  * label clears the end cap by 12px. The height stays 28px on touch too; a taller invisible hit area keeps the 44px
  * target without stretching the shape.
  */
-[data-slot="session-activity-chip"]:is([data-variant="capsule"], [data-variant="orb"]) {
+[data-slot="session-activity-chip"]:is([data-variant="capsule"], [data-variant="orb"], [data-variant="css-orb"]) {
   position: relative;
   height: 28px;
   min-height: 0;
