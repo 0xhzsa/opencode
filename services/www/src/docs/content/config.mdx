@@ -410,6 +410,25 @@ interval and 30-minute active window.
 See the [warming guide](/warming) for request behavior, customization,
 and cost considerations.
 
+### Storage
+
+OpenCode keeps sessions forever by default. Set `storage.sessions` to a
+duration to delete sessions whose last activity is older than it. Subagent
+sessions are deleted with the session that started them. OpenCode checks once
+an hour and skips sessions that are still running.
+
+```jsonc
+{
+  "storage": {
+    "sessions": "30 days",
+  },
+}
+```
+
+Deleted sessions can't be recovered. Set this in the global config
+directory; project-level values are ignored, so a project's `opencode.json`
+can't delete sessions from other projects.
+
 ### Skills
 
 Add directories or URLs that OpenCode should search for agent skills.

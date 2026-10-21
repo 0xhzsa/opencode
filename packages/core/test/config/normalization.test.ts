@@ -116,6 +116,13 @@ describe("ConfigNormalize", () => {
     expect(Duration.toMillis(info.warming.duration ?? Duration.zero)).toBe(1_800_000)
   })
 
+  test("keeps storage durations", () => {
+    const result = normalized({ storage: { sessions: "30 days" } })
+    expect(result.encoded.storage).toEqual({ sessions: "2592000000 millis" })
+    const info = Schema.decodeUnknownSync(Info)(result.encoded)
+    expect(Duration.toMillis(info.storage?.sessions ?? Duration.zero)).toBe(2_592_000_000)
+  })
+
   test("preserves arbitrary JSON-round-tripped native configuration", () => {
     const result = Effect.runSync(
       Arbitrary.checkEffect(
