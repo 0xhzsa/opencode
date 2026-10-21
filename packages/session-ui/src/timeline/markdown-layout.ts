@@ -13,6 +13,15 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
   const parser = createMarkdownBase()
   const compiled = new WeakMap<Block, { block: PreparedMarkdownBlock; elements: HTMLElement[] } | null>()
   const lists = new WeakMap<HTMLElement, HTMLElement[]>()
+  const elementMeasurements = new WeakMap<
+    HTMLElement,
+    {
+      width: number
+      typography: TimelineTypography
+      reasoning: boolean
+      box: Box
+    }
+  >()
   const measurements = new WeakMap<
     PreparedMarkdown,
     {
@@ -159,6 +168,21 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
   }
 
   function measure(
+    element: HTMLElement,
+    key: string,
+    width: number,
+    typography: TimelineTypography,
+    reasoning: boolean,
+  ): Box {
+    const cached = elementMeasurements.get(element)
+    if (cached?.width === width && cached.typography === typography && cached.reasoning === reasoning)
+      return cached.box
+    const box = measureUncached(element, key, width, typography, reasoning)
+    elementMeasurements.set(element, { width, typography, reasoning, box })
+    return box
+  }
+
+  function measureUncached(
     element: HTMLElement,
     key: string,
     width: number,

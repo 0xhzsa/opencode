@@ -498,10 +498,9 @@ export function ScrollView(props: ScrollViewProps) {
         class="scroll-view__viewport"
         data-scrollable
         onScroll={(e) => {
-          updateThumb()
-          markScrolling()
-
           if (typeof events.onScroll === "function") events.onScroll(e as any)
+          if (!local.verticalGeometry || horizontal()) updateThumb()
+          markScrolling()
         }}
         // Passive so the compositor never waits on the main thread to scroll; onWheel cannot cancel.
         on:wheel={{

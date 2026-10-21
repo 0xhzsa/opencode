@@ -62,8 +62,29 @@ export function readTimelineTypography(element: Element, revision: number): Time
 
 /** The cache belongs to a session renderer. Width is deliberately absent from preparation keys. */
 export function createTimelineTextLayout() {
-  const text = new Map<string, { signature: string; prepared: PreparedText }>()
-  const rich = new Map<string, { signature: string; prepared: ReturnType<typeof prepareRichInline> }>()
+  const text = new Map<
+    string,
+    {
+      value: string
+      font: string
+      letterSpacing: number
+      whiteSpace: "normal" | "pre-wrap"
+      prepared: PreparedText
+      width?: number
+      lineHeight?: number
+      height?: number
+    }
+  >()
+  const rich = new Map<
+    string,
+    {
+      signature: string
+      prepared: ReturnType<typeof prepareRichInline>
+      width?: number
+      lineHeight?: number
+      height?: number
+    }
+  >()
   let revision = -1
 
   function refresh(next: number) {
@@ -78,32 +99,65 @@ export function createTimelineTextLayout() {
     text(key: string, value: string, width: number, style: TimelineTypography, whiteSpace: "normal" | "pre-wrap") {
       refresh(style.revision)
       const font = `${style.weight} ${style.size}px ${style.family}`
-      const signature = JSON.stringify([value, font, style.letterSpacing, whiteSpace])
+      const targetWidth = Math.max(1, width)
       const previous = text.get(key)
-      const prepared =
-        previous?.signature === signature
-          ? previous.prepared
-          : prepare(value, font, { whiteSpace, letterSpacing: style.letterSpacing })
-      if (previous?.prepared !== prepared) text.set(key, { signature, prepared })
-      return layout(prepared, Math.max(1, width), style.lineHeight).height
+      const sameText =
+        previous?.value === value &&
+        previous.font === font &&
+        previous.letterSpacing === style.letterSpacing &&
+        previous.whiteSpace === whiteSpace
+      if (sameText && previous.width === targetWidth && previous.lineHeight === style.lineHeight && previous.height !== undefined)
+        return previous.height
+      const prepared = sameText
+        ? previous.prepared
+        : prepare(value, font, { whiteSpace, letterSpacing: style.letterSpacing })
+      const height = layout(prepared, targetWidth, style.lineHeight).height
+      text.set(key, {
+        value,
+        font,
+        letterSpacing: style.letterSpacing,
+        whiteSpace,
+        prepared,
+        width: targetWidth,
+        lineHeight: style.lineHeight,
+        height,
+      })
+      return height
     },
     rich(key: string, items: RichInlineItem[], width: number, lineHeight: number, revision: number) {
       refresh(revision)
+      const targetWidth = Math.max(1, width)
       const signature = JSON.stringify(items)
       const previous = rich.get(key)
+      if (
+        previous?.signature === signature &&
+        previous.width === targetWidth &&
+        previous.lineHeight === lineHeight &&
+        previous.height !== undefined
+      )
+        return previous.height
       const prepared = previous?.signature === signature ? previous.prepared : prepareRichInline(items)
-      if (previous?.prepared !== prepared) rich.set(key, { signature, prepared })
-      return measureRichInlineStats(prepared, Math.max(1, width)).lineCount * lineHeight
+      const height = measureRichInlineStats(prepared, targetWidth).lineCount * lineHeight
+      rich.set(key, { signature, prepared, width: targetWidth, lineHeight, height })
+      return height
     },
     ch(style: TimelineTypography) {
       refresh(style.revision)
       const font = `${style.weight} ${style.size}px ${style.family}`
       const key = `ch:${font}`
       const previous = text.get(key)
-      if (previous) return measureNaturalWidth(previous.prepared)
+      if (previous) return previous.height ?? measureNaturalWidth(previous.prepared)
       const prepared = prepare("0", font)
-      text.set(key, { signature: font, prepared })
-      return measureNaturalWidth(prepared)
+      const chWidth = measureNaturalWidth(prepared)
+      text.set(key, {
+        value: "0",
+        font,
+        letterSpacing: 0,
+        whiteSpace: "normal",
+        prepared,
+        height: chWidth,
+      })
+      return chWidth
     },
   }
 }

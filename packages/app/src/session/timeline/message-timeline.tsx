@@ -88,7 +88,7 @@ type MessageTimelineProps = {
   scroll: { overflow: boolean; jump: boolean }
   onResumeScroll: (behavior?: ScrollBehavior) => void
   setScrollRef: (el: HTMLDivElement | undefined) => void
-  onScheduleScrollState: (el: HTMLDivElement) => void
+  onScheduleScrollState: (el: HTMLDivElement, geometry?: { extent: number; viewport: number; offset: number }) => void
   onPin: () => void
   onUnpin: () => void
   onUserScroll: (target?: EventTarget | null) => void
@@ -668,15 +668,36 @@ function createStatusFade(show: Accessor<boolean>, delay: () => number | undefin
   let fade: Animation | undefined
   let shownAt = performance.now()
   let entering = false
+  let animFrom = show() ? 1 : 0
+  let animTo = animFrom
+  let animStart = 0
+  let animWait = 0
+  let animDuration = 0
+
+  const currentOpacity = (visible: boolean) => {
+    if (entering) return 0
+    if (!fade || fade.playState !== "running") return visible ? 0 : 1
+    const elapsed = performance.now() - animStart - animWait
+    if (elapsed <= 0) return animFrom
+    if (elapsed >= animDuration || animDuration <= 0) return animTo
+    const t = elapsed / animDuration
+    return animFrom + (animTo - animFrom) * t
+  }
 
   const run = (visible: boolean, wait = 0) => {
     if (!element) return !visible && setPresent(false)
-    const from = entering ? "0" : getComputedStyle(element).opacity
+    const from = currentOpacity(visible)
     entering = false
     fade?.cancel()
+    const duration = visible ? 150 : 110
+    animFrom = from
+    animTo = visible ? 1 : 0
+    animStart = performance.now()
+    animWait = wait
+    animDuration = duration
 
-    const current = element.animate([{ opacity: from }, { opacity: visible ? 1 : 0 }], {
-      duration: visible ? 150 : 110,
+    const current = element.animate([{ opacity: String(from) }, { opacity: visible ? 1 : 0 }], {
+      duration,
       delay: wait,
       easing: visible ? "cubic-bezier(.2,.8,.2,1)" : "cubic-bezier(.4,0,1,1)",
       fill: "both",
