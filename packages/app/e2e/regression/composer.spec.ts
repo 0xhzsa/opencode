@@ -261,9 +261,7 @@ test("the free usage limit opens the Go dialog once, leaves a readable notice, a
   await expect(view.editor).toHaveText("")
 })
 
-test("the Go usage limit opens the Go limit dialog with its reset time and restores the prompt; ChatGPT's opens its own", async ({
-  page,
-}) => {
+test("the Go usage limit opens the Go limit dialog with its reset time and restores the prompt", async ({ page }) => {
   await page.clock.setFixedTime(T0)
   const sessionID = "ses_go_limit"
   const model = { id: "glm-5-go", providerID: "opencode-go" }
@@ -315,27 +313,48 @@ test("the Go usage limit opens the Go limit dialog with its reset time and resto
   const dialog = page.getByRole("dialog", { name: "Go limit reached" })
   await expect(dialog).toContainText("You've reached your OpenCode Go usage limit. It resets at")
   await expect(dialog.getByRole("button", { name: "Open settings", exact: true })).toBeVisible()
-  await expect(page.getByText(/^You've reached your OpenCode Go usage limit\. It resets at /)).toBeVisible()
+  await expect(
+    page.getByRole("status").filter({ hasText: /^You've reached your OpenCode Go usage limit\. It resets at / }),
+  ).toBeVisible()
   await expect(view.editor).toHaveText("Refactor the parser")
   await expect(page.getByText("OpenCode Go usage limit reached.")).toHaveCount(0)
   await dialog.getByRole("button", { name: "Don't show again", exact: true }).click()
   await expect(dialog).toHaveCount(0)
+})
+
+test("ChatGPT's usage limit opens the ChatGPT usage dialog", async ({ page }) => {
+  await page.clock.setFixedTime(T0)
+  const sessionID = "ses_chatgpt_limit"
+  const model = { id: "gpt-5.5", providerID: "openai" }
+
+  const view = await openSession(page, {
+    name: "ChatGPTLimit",
+    sessions: [{ id: sessionID, agent: "build", model }],
+    onFileWrite: () => undefined,
+    pageMessages: () => ({
+      items: [
+        { id: "msg_chatgpt_user", type: "user", text: "Refactor the parser", time: { created: T0 } },
+        {
+          id: "msg_chatgpt_assistant",
+          type: "assistant",
+          agent: "build",
+          model,
+          content: [],
+          time: { created: T0 + 1 },
+        },
+      ],
+    }),
+  })
+
+  await expect(page.getByText("Refactor the parser", { exact: true })).toBeVisible()
 
   await view.push([
     {
       id: "evt_chatgpt_limit_1",
-      created: T0 + 3,
-      type: "session.step.started",
-      location,
-      durable: durable(2),
-      data: { sessionID, assistantMessageID: "msg_chatgpt_assistant", agent: "build", model, started: T0 + 3 },
-    },
-    {
-      id: "evt_chatgpt_limit_2",
-      created: T0 + 4,
+      created: T0 + 2,
       type: "session.step.failed",
-      location,
-      durable: durable(3),
+      location: { directory: view.directory },
+      durable: { aggregateID: sessionID, seq: 1, version: 1 },
       data: {
         sessionID,
         assistantMessageID: "msg_chatgpt_assistant",
