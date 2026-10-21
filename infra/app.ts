@@ -25,13 +25,8 @@ export const api = new sst.cloudflare.Worker("Api", {
   transform: {
     worker: (args) => {
       args.logpush = true
-      if ($app.stage === "vimtor" || $app.stage === "adam") return
-      // Deleting the class erases every SyncServer Durable Object and its stored share data.
-      args.migrations = {
-        oldTag: $app.stage === "production" || $app.stage === "thdxr" ? undefined : "v1",
-        newTag: "v2",
-        deletedClasses: ["SyncServer"],
-      }
+      // The v2 migration that deleted the SyncServer Durable Object class has been applied. Resending it fails every
+      // deploy with a migration tag precondition error, so the worker no longer declares migrations.
     },
   },
 })
