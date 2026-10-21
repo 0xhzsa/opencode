@@ -27,7 +27,12 @@ import {
   projectMarkdown,
 } from "./markdown-worker"
 import { markdownBlockKey, type MarkdownToken } from "./markdown-worker-protocol"
-import { shouldResetCodeTokens, type RenderedCodeState } from "./markdown-code-state"
+import {
+  diffCodeTokens,
+  projectHighlightedCode,
+  type HighlightedCodeState,
+  type RenderedCodeState,
+} from "./markdown-code-state"
 import {
   getCachedMarkdown,
   getReadyMarkdown,
@@ -91,30 +96,6 @@ function escape(text: string) {
 
 function fallback(markdown: string) {
   return escape(markdown).replace(/\r\n?/g, "\n").replace(/\n/g, "<br>")
-}
-
-async function code(text: string, language: string | undefined, key: string, complete = false) {
-  try {
-    const result = await highlightStreamingCode(key, text, language ?? "text", complete)
-
-    return {
-      language: result.language,
-      generation: result.generation,
-      stable: result.stable,
-      unstable: result.unstable,
-    }
-  } catch (error) {
-    if (
-      !(error instanceof MarkdownWorkerDisposedError) &&
-      !(error instanceof MarkdownWorkerSupersededError) &&
-      !(error instanceof MarkdownWorkerUnavailableError)
-    )
-      console.error("Markdown highlighting worker failed", error)
-
-    const fallbackToken: MarkdownToken = [text, ""]
-
-    return { language: language ?? "text", generation: 0, stable: [], unstable: [fallbackToken] }
-  }
 }
 
 type CopyLabels = {
@@ -631,33 +612,71 @@ export function Markdown(
   const owner = createUniqueId()
   const lifetime = new AbortController()
   const activeCodeKeys = new Set<string>()
+  const highlightedCode = new Map<string, HighlightedCodeState>()
+  const [highlightVersion, setHighlightVersion] = createSignal(0)
   const completedCode = new Map<string, Extract<RenderedBlock, { mode: "code" }>>()
   const settledMarkdown = new Map<string, Exclude<RenderedBlock, { mode: "code" }>>()
   let renderedBlocks: RenderedBlock[] = []
   let streamed = false
 
   const painted = new WeakMap<PreparedMarkdownBlock, RenderedBlock>()
-  const highlighting = new WeakMap<PreparedMarkdownBlock, ReturnType<typeof code>>()
-  const [highlights] = createResource(
-    () => local.prepared?.blocks,
-    async (blocks) =>
-      Promise.all(
-        blocks.flatMap((block, index) => {
-          if (block.mode !== "code") return []
-          const pending =
-            highlighting.get(block) ??
-            code(block.source, block.language, markdownBlockKey(owner, local.cacheKey, index, block.mode), block.complete)
-          highlighting.set(block, pending)
-          return [pending.then((result) => ({ block, result }))]
-        }),
-      ),
-    { initialValue: [] },
-  )
+  const paintedCode = new WeakMap<
+    PreparedMarkdownBlock,
+    { state: HighlightedCodeState | undefined; rendered: Extract<RenderedBlock, { mode: "code" }> }
+  >()
+  const highlighting = new WeakMap<PreparedMarkdownBlock, Promise<HighlightedCodeState | undefined>>()
+
+  async function highlightCode(text: string, language: string | undefined, key: string, complete = false) {
+    const requestedLanguage = language ?? "text"
+    const existing = highlightedCode.get(key)
+    if (
+      existing &&
+      existing.requestedLanguage === requestedLanguage &&
+      existing.source === text &&
+      (!complete || existing.complete)
+    ) {
+      return existing
+    }
+    try {
+      const result = await highlightStreamingCode(key, text, requestedLanguage, complete)
+      const current = highlightedCode.get(key)
+      if (
+        current &&
+        current.requestedLanguage === requestedLanguage &&
+        current.generation === result.generation &&
+        (current.source.length > text.length || (current.complete && !complete)) &&
+        current.source.startsWith(text)
+      ) {
+        return current
+      }
+      const next: HighlightedCodeState = {
+        requestedLanguage,
+        language: result.language,
+        source: text,
+        complete,
+        generation: result.generation,
+        stable: result.stable,
+        unstable: result.unstable,
+      }
+      highlightedCode.set(key, next)
+      if (!lifetime.signal.aborted) setHighlightVersion((version) => version + 1)
+      return next
+    } catch (error) {
+      if (
+        !(error instanceof MarkdownWorkerDisposedError) &&
+        !(error instanceof MarkdownWorkerSupersededError) &&
+        !(error instanceof MarkdownWorkerUnavailableError)
+      )
+        console.error("Markdown highlighting worker failed", error)
+
+      return highlightedCode.get(key)
+    }
+  }
+
   const preparedResult = createMemo((): RenderResult | undefined => {
     const prepared = local.prepared
     if (!prepared || prepared.text !== local.text) return
-    const loaded = highlights.state === "ready" || highlights.state === "refreshing"
-    const colors = new Map((loaded ? highlights.latest : []).map((entry) => [entry.block, entry.result]))
+    highlightVersion()
     return {
       text: prepared.text,
       ready: true,
@@ -670,19 +689,23 @@ export function Markdown(
           painted.set(block, result)
           return result
         }
-        const result = colors.get(block)
-        const plain: MarkdownToken[] = [[block.source, ""]]
-        return {
+        if (!highlighting.has(block)) {
+          highlighting.set(block, highlightCode(block.source, block.language, key, block.complete))
+        }
+        const state = highlightedCode.get(key)
+        const cached = paintedCode.get(block)
+        if (cached && cached.state === state) return cached.rendered
+        const projected = projectHighlightedCode(state, block.source, block.language)
+        const rendered: Extract<RenderedBlock, { mode: "code" }> = {
           key,
           mode: "code",
           raw: block.raw,
           hash: String(block.raw.length),
-          language: block.language,
           complete: block.complete,
-          generation: result?.generation ?? -1,
-          stable: result?.stable ?? [],
-          unstable: result?.unstable ?? plain,
+          ...projected,
         }
+        paintedCode.set(block, { state, rendered })
+        return rendered
       }),
     }
   })
@@ -772,7 +795,8 @@ export function Markdown(
             const cached = completedCode.get(blockKey)
 
             if (block.complete && cached?.raw === block.raw) return cached
-            const result = await code(block.src, block.language, blockKey, block.complete)
+            const state = await highlightCode(block.src, block.language, blockKey, block.complete)
+            const projected = projectHighlightedCode(state, block.src, block.language)
 
             const rendered = {
               key: blockKey,
@@ -780,10 +804,10 @@ export function Markdown(
               raw: block.raw,
               hash: String(block.raw.length),
               complete: !!block.complete,
-              ...result,
+              ...projected,
             }
 
-            if (block.complete) completedCode.set(blockKey, rendered)
+            if (block.complete && state?.source === block.src && state.complete) completedCode.set(blockKey, rendered)
 
             return rendered
           }
@@ -863,7 +887,10 @@ export function Markdown(
     if (!prepared && local.text && renderedBlocks.length && (!result?.ready || result.text !== local.text)) return
     const content =
       prepared?.blocks ??
-      (local.text ? pendingBlocks(result, currentProjection(), local.cacheKey, owner, local.deferUntilReady) : [])
+      (local.text
+        ? (highlightVersion(),
+          pendingBlocks(result, currentProjection(), local.cacheKey, owner, local.deferUntilReady, highlightedCode))
+        : [])
 
     if (!container) return
 
@@ -896,7 +923,10 @@ export function Markdown(
 
     const nextCodeKeys = new Set(content.filter((block) => block.mode === "code").map((block) => block.key))
     activeCodeKeys.forEach((key) => {
-      if (!nextCodeKeys.has(key)) disposeCode(key)
+      if (!nextCodeKeys.has(key)) {
+        highlightedCode.delete(key)
+        disposeCode(key)
+      }
     })
     activeCodeKeys.clear()
     nextCodeKeys.forEach((key) => activeCodeKeys.add(key))
@@ -982,6 +1012,7 @@ export function Markdown(
 
     if (streamed) disposeMarkdownProjection(owner)
     activeCodeKeys.forEach(disposeCode)
+    highlightedCode.clear()
     completedCode.clear()
     settledMarkdown.clear()
     renderedBlocks = []
@@ -1008,6 +1039,7 @@ function pendingBlocks(
   cacheKey: string | undefined,
   owner: string,
   deferUntilReady: boolean | undefined,
+  highlightedCode: Map<string, HighlightedCodeState>,
 ) {
   if (!result) return []
 
@@ -1019,24 +1051,23 @@ function pendingBlocks(
   return projection.blocks.map((block, index) => {
     const current = initial ? undefined : result.blocks[index]
 
-    if (current && canReusePendingBlock(current, block)) return current
-    const key = markdownBlockKey(owner, cacheKey, index, block.mode)
-
-    if (block.mode !== "code")
+    if (block.mode !== "code") {
+      if (current && canReusePendingBlock(current, block)) return current
+      const key = markdownBlockKey(owner, cacheKey, index, block.mode)
       return { key, mode: block.mode, raw: block.raw, hash: String(block.raw.length), html: fallback(block.src) }
+    }
 
-    const fallbackToken: MarkdownToken = [block.src, ""]
+    const key = markdownBlockKey(owner, cacheKey, index, block.mode)
+    if (current?.mode === "code" && current.raw === block.raw && current.complete === !!block.complete) return current
+    const projected = projectHighlightedCode(highlightedCode.get(key), block.src, block.language)
 
     return {
       key,
       mode: block.mode,
       raw: block.raw,
       hash: String(block.raw.length),
-      language: block.language ?? "text",
       complete: !!block.complete,
-      stable: [],
-      generation: 0,
-      unstable: [fallbackToken],
+      ...projected,
     }
   })
 }
@@ -1176,29 +1207,17 @@ function updateCodeBlock(
     if (wrapper instanceof HTMLElement) applyCodeMetadata(wrapper, block.language)
     code.className = `language-${block.language}`
     const previous = renderedCodeTokens.get(next)
+    const validPrevious =
+      previous && code.children.length === previous.stableCount + previous.unstable.length ? previous : undefined
+    const diff = diffCodeTokens(validPrevious, block)
 
-    const reset = shouldResetCodeTokens(previous, {
-      language: block.language,
-      generation: block.generation,
-      stableCount: block.stable.length,
-      raw: block.raw,
-    })
-
-    const stableCount = reset ? 0 : previous!.stableCount
-    const tail = [...block.stable.slice(stableCount), ...block.unstable]
-    const prior = reset ? [] : previous!.unstable
-    const prefix = prior.findIndex((token, index) => !sameToken(token, tail[index]))
-    const keep = stableCount + (prefix < 0 ? Math.min(prior.length, tail.length) : prefix)
-
-    while (code.children.length > keep) code.lastElementChild?.remove()
-    tail
-      .slice(keep - stableCount)
-      .map(createTokenSpan)
-      .forEach((span) => code.appendChild(span))
+    while (code.children.length > diff.keep) code.lastElementChild?.remove()
+    diff.append.map(createTokenSpan).forEach((span) => code.appendChild(span))
     renderedCodeTokens.set(next, {
       language: block.language,
       generation: block.generation,
       stableCount: block.stable.length,
+      stable: block.stable,
       unstable: block.unstable,
       raw: block.raw,
     })
@@ -1226,6 +1245,7 @@ function updateCodeBlock(
     language: block.language,
     generation: block.generation,
     stableCount: block.stable.length,
+    stable: block.stable,
     unstable: block.unstable,
     raw: block.raw,
   })
@@ -1239,10 +1259,6 @@ function updateCodeBlock(
   }
 
   container.appendChild(next)
-}
-
-function sameToken(left: MarkdownToken, right: MarkdownToken | undefined) {
-  return !!right && left[0] === right[0] && left[1] === right[1]
 }
 
 function createTokenSpan(token: MarkdownToken) {
