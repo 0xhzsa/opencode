@@ -149,7 +149,7 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
             {
               height:
                 ((block.source ? block.source.split("\n").length - Number(block.source.endsWith("\n")) : 0) *
-                  Math.round((reasoning ? 20 : typography.size * 1.6) * 64)) /
+                  Math.round((reasoning ? 20 : typography.codeLineHeight) * 64)) /
                   64 +
                 typography.codeInset,
               before: 12,
@@ -198,8 +198,7 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
     reasoning: boolean,
   ): Box {
     const cached = elementMeasurements.get(element)
-    if (cached?.width === width && cached.typography === typography && cached.reasoning === reasoning)
-      return cached.box
+    if (cached?.width === width && cached.typography === typography && cached.reasoning === reasoning) return cached.box
     const box = measureUncached(element, key, width, typography, reasoning)
     elementMeasurements.set(element, { width, typography, reasoning, box })
     return box

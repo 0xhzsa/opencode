@@ -11,6 +11,7 @@ export type TimelineTypography = {
   family: string
   codeFamily: string
   codeInset: number
+  codeLineHeight: number
   rem: number
   size: number
   weight: number
@@ -49,11 +50,13 @@ export function readTimelineTypography(element: Element, revision: number): Time
     (sum, value) => sum + parseFloat(value),
     0,
   )
+  const codeLineHeight = parseFloat(chrome.lineHeight) || 20
   probe.remove()
   return {
     family: style.getPropertyValue("--font-family-sans").trim(),
     codeFamily: style.getPropertyValue("--font-family-mono").trim(),
     codeInset,
+    codeLineHeight,
     rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
     size,
     weight: parseFloat(style.getPropertyValue("--font-weight-regular")),
@@ -113,7 +116,12 @@ export function createTimelineTextLayout() {
         previous.font === font &&
         previous.letterSpacing === style.letterSpacing &&
         previous.whiteSpace === whiteSpace
-      if (sameText && previous.width === targetWidth && previous.lineHeight === style.lineHeight && previous.height !== undefined)
+      if (
+        sameText &&
+        previous.width === targetWidth &&
+        previous.lineHeight === style.lineHeight &&
+        previous.height !== undefined
+      )
         return previous.height
       const prepared = sameText
         ? previous.prepared
