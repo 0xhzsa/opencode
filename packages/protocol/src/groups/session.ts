@@ -72,12 +72,11 @@ const PublicInboxInfo = Schema.Union([
 // Transcripts exported before v2.1 carry older names for native data. The wire stays plain JSON so any export file
 // is accepted; decoding upgrades those names and then validates the current message shape.
 const ImportedMessages = Schema.Array(Schema.Json).pipe(
-  Schema.decodeTo(Schema.Array(Schema.Unknown), {
-    decode: SchemaGetter.transform(SessionLegacy.messages),
-    encode: SchemaGetter.passthrough({ strict: false }),
-  }),
   Schema.decodeTo(Schema.Array(PublicSessionMessage), {
-    decode: SchemaGetter.passthrough({ strict: false }),
+    decode: SchemaGetter.compose(
+      SchemaGetter.transform(SessionLegacy.messages),
+      SchemaGetter.passthrough({ strict: false }),
+    ),
     encode: SchemaGetter.passthrough({ strict: false }),
   }),
 )

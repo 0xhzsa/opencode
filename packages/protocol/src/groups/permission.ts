@@ -114,13 +114,15 @@ export const makePermissionGroup = <
         params: { sessionID: Session.ID },
         success: Schema.Struct({ data: Schema.Array(Permission.Request) }),
         error: [SessionNotFoundError, LocationNotFoundError],
-      }).annotateMerge(
-        OpenApi.annotations({
-          identifier: "session.permission.list",
-          summary: "List session permission requests",
-          description: "Retrieve pending permission requests owned by a session.",
-        }),
-      ),
+      })
+        .middleware(sessionLocationMiddleware)
+        .annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.permission.list",
+            summary: "List session permission requests",
+            description: "Retrieve pending permission requests owned by a session.",
+          }),
+        ),
     )
     .add(
       HttpApiEndpoint.get("session.permission.get", "/api/session/:sessionID/permission/:requestID", {

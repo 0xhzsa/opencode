@@ -13,10 +13,10 @@ export const LocationHandler = HttpApiBuilder.group(Api, "server.location", (han
         "location.get",
         Effect.fn(function* () {
           const location = yield* Location.Service
-          return new Location.Info({
+          return {
             directory: location.directory,
             project: location.project,
-          })
+          }
         }),
       )
       .handle("location.reload", () =>

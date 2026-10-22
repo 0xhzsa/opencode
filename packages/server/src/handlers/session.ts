@@ -44,15 +44,6 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
         sessionID: error.sessionID,
         message: `Session is busy: ${error.sessionID}`,
       })
-    const pendingMutation = (effect: ReturnType<typeof session.cancelInbox>, conflict: string) =>
-      effect.pipe(
-        Effect.catchTag("Session.NotFoundError", missingSession),
-        Effect.catchTag(
-          "Session.InboxConflictError",
-          (error) => new ConflictError({ resource: error.inboxID, message: `${conflict}: ${error.inboxID}` }),
-        ),
-        Effect.as(HttpApiSchema.NoContent.make()),
-      )
 
     return handlers
       .handle(
@@ -225,7 +216,6 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.update",
         Effect.fn(function* (ctx) {
-          yield* session.get(ctx.params.sessionID).pipe(Effect.catchTag("Session.NotFoundError", missingSession))
           if (ctx.payload.title !== undefined) {
             if (ctx.payload.title) {
               yield* session
@@ -532,11 +522,21 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.inbox.update",
         Effect.fn(function* (ctx) {
-          return yield* pendingMutation(
+          return yield* (
             ctx.payload.delivery === "steer"
               ? session.steerInbox({ sessionID: ctx.params.sessionID, inboxID: ctx.params.inboxID })
-              : session.queueInbox({ sessionID: ctx.params.sessionID, inboxID: ctx.params.inboxID }),
-            `Pending input cannot change to ${ctx.payload.delivery}`,
+              : session.queueInbox({ sessionID: ctx.params.sessionID, inboxID: ctx.params.inboxID })
+          ).pipe(
+            Effect.catchTag("Session.NotFoundError", missingSession),
+            Effect.catchTag(
+              "Session.InboxConflictError",
+              (error) =>
+                new ConflictError({
+                  resource: error.inboxID,
+                  message: `Pending input cannot change to ${ctx.payload.delivery}: ${error.inboxID}`,
+                }),
+            ),
+            Effect.as(HttpApiSchema.NoContent.make()),
           )
         }),
       )

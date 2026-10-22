@@ -24,7 +24,7 @@ export const WebSearchGroup = HttpApiGroup.make("server.websearch")
   .add(
     HttpApiEndpoint.post("websearch.query", "/api/websearch", {
       query: LocationQuery,
-      payload: Schema.Struct(WebSearch.Input.fields),
+      payload: WebSearch.Input,
       success: Location.response(WebSearch.Response),
       error: [InvalidRequestError, ServiceUnavailableError],
     })
