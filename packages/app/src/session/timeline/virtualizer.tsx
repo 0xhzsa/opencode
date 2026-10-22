@@ -587,7 +587,7 @@ export function createTimelineVirtualizer(input: Input) {
         virtualContent.style.height = `${nextHeight}px`
       const logicalTop = Math.floor(exact)
       setLayoutState("offset", logicalTop)
-      if (logicalTop !== viewport.top || virtualizer.scrollOffset !== logicalTop) reportOffset?.(logicalTop, false)
+      if (virtualizer.scrollOffset !== logicalTop) reportOffset?.(logicalTop, false)
       if (!pointerHeld && performance.now() - userScrollAt > 250 && root.dataset.hoverStale === undefined)
         root.dataset.hoverStale = ""
       const remainder = wholeTop - exact
@@ -643,7 +643,7 @@ export function createTimelineVirtualizer(input: Input) {
     // Rewriting scrollTop forces pending layout even when the logical offset did not move.
     if (resized || (!committed && previous !== wholeTop)) root.scrollTop = wholeTop
     setLayoutState("offset", wholeTop)
-    if (wholeTop !== viewport.top || virtualizer.scrollOffset !== wholeTop) reportOffset?.(wholeTop, false)
+    if (virtualizer.scrollOffset !== wholeTop) reportOffset?.(wholeTop, false)
     untrack(() => input.onScheduleScrollState(root, scrollGeometry()))
 
     if (wholeTop === exact) return virtualContent?.style.removeProperty("translate")

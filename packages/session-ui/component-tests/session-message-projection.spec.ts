@@ -153,9 +153,9 @@ story("labels waiting prompts without badging delivered, starting, or queued pro
   await expect(indicator.locator("use")).toHaveAttribute("href", "#opencode-v2-icon-outline-steer")
 
   const icon = await indicator.locator("svg").boundingBox()
-  const label = await timeline.locator('[data-slot="user-message-meta"]').boundingBox()
-  if (!icon || !label) throw new Error("Pending metadata geometry is unavailable")
-  expect(Math.abs(icon.y + icon.height / 2 - label.y - label.height / 2)).toBeLessThan(0.5)
+  const bounds = await label.boundingBox()
+  if (!icon || !bounds) throw new Error("Pending metadata geometry is unavailable")
+  expect(Math.abs(icon.y + icon.height / 2 - bounds.y - bounds.height / 2)).toBeLessThan(0.5)
 
   await expect(voice).toHaveCSS("width", "20px")
   await expect(voice).toHaveCSS("height", "20px")

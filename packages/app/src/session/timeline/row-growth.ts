@@ -4,8 +4,9 @@ import { motionTuning } from "@opencode/ui/motion-tuning"
 
 // Like the iOS transcript: while the timeline follows its end, a row's displayed height springs to its measured height.
 export const growthSpring = motionTuning.spring("timeline.growth", {
-  label: "Row growth",
-  group: "Timeline",
+  label: "Row growth, return & send flight",
+  group: "Experiments",
+  card: "Timeline",
   presets: {
     snappy: { duration: 0.32, bounce: 0 },
     smooth: { duration: 0.42, bounce: 0 },
@@ -24,6 +25,7 @@ const softEdge = 28
 export const streamingEdge = motionTuning.choice("timeline.edge", {
   label: "Streaming edge",
   group: "Experiments",
+  card: "Timeline",
   value: "feather",
   labels: { feather: "Feather", fast: "Fast feather", whole: "No mask", fade: "Word fade" },
 })

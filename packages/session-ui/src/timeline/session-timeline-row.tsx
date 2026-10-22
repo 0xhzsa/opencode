@@ -1250,7 +1250,7 @@ export function createSessionTimelineRowRenderer(input: {
   const markdownLayout = createTimelineMarkdownLayout(textLayout)
 
   function layout(row: TimelineRow.TimelineRow, environment: TimelineLayoutEnvironment): TimelineRowLayout {
-    if (row._tag === "TurnGap") return { source: "fixed", height: runs().get(row.userMessageID)?.above ? 4 : 24 }
+    if (row._tag === "TurnGap") return { source: "fixed", height: runs().get(row.userMessageID)?.above ? 4 : menu() ? 24 : 16 }
     if (row._tag === "Activity") return { source: "fixed", height: 36 }
     const width =
       (input.centered?.() && environment.desktop ? Math.min(744, environment.width) : environment.width) -
@@ -1318,7 +1318,7 @@ export function createSessionTimelineRowRenderer(input: {
         if (measured.source === "dom") return measured
         const extra =
           (row.spacing === "content" ? 16 : 24 + (row.spacing === "tool" ? 8 : 0)) +
-          (copyContentID(row.userMessageID) === row.group.ref.partID ? 28 - Math.min(4, measured.trailingMargin) : 0)
+          (!menu() && copyContentID(row.userMessageID) === row.group.ref.partID ? 24 - Math.min(4, measured.trailingMargin) : 0)
         return {
           source: "pretext",
           height: !text ? 0 : measured.height + extra,
@@ -1351,7 +1351,7 @@ export function createSessionTimelineRowRenderer(input: {
         (labelled ? 24 : 0) +
         (imageRows ? imageRows * (46 + 8) : presentation?.voice ? 8 : 0) +
         16 +
-        (joined?.below ? 0 : 28) +
+        (joined?.below || (menu() && !labelled) ? 0 : 24) +
         textLayout.text(TimelineRow.key(row), text, contentWidth, environment.typography, "pre-wrap"),
     }
   }

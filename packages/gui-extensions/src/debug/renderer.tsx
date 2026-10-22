@@ -24,7 +24,9 @@ const setup: Setup<typeof Debug> = (ctx) => {
         return session?.location && simulated({ ...session, location: session.location }) ? session.key : undefined
       },
       () => {
-        bar.update((draft) => { draft.visible = true })
+        void bar.update((draft) => {
+          draft.visible = true
+        })
         setDemo(true)
       },
     )

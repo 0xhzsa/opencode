@@ -1,4 +1,5 @@
 import {
+  createComputed,
   createEffect,
   createMemo,
   createResource,
@@ -6,6 +7,7 @@ import {
   createUniqueId,
   For,
   onCleanup,
+  on,
   onMount,
   Show,
   Suspense,
@@ -395,10 +397,12 @@ export function ComposerEditor(props: ComposerEditorProps) {
                 classList={{ "font-mono! tracking-[-0.04px]": state.mode === "shell" }}
                 style={{ "unicode-bidi": state.mode === "normal" ? "plaintext" : undefined, "text-align": "start" }}
               >
-                {view.placeholder?.() ??
-                  (state.mode === "shell"
-                    ? i18n.t("ui.promptInput.placeholder.shell")
-                    : i18n.t("ui.promptInput.placeholder.normal", { slash: "/", at: "@" }))}
+                <FadingText
+                  text={view.placeholder?.() ??
+                    (state.mode === "shell"
+                      ? i18n.t("ui.promptInput.placeholder.shell")
+                      : i18n.t("ui.promptInput.placeholder.normal", { slash: "/", at: "@" }))}
+                />
               </div>
             </Show>
           </ScrollView>
@@ -1406,9 +1410,23 @@ function ComposerEditorAlternateDelivery(props: { controller: ComposerEditorMode
     return queue.alternate()
   })
 
+  // Sending marks the session busy a moment before the composer clears; a hint that would last only that moment
+  // stays hidden instead of flashing on every send.
+  const [settled, setSettled] = createSignal(action())
+  createEffect(
+    on(
+      action,
+      (value) => {
+        if (!value) return setSettled(undefined)
+        const frame = requestAnimationFrame(() => setSettled(value))
+        onCleanup(() => cancelAnimationFrame(frame))
+      },
+      { defer: true },
+    ),
+  )
   // Appears and leaves on the same frame as the placeholder, so typing never shows a fade.
   return (
-    <Show when={action()} keyed>
+    <Show when={settled()} keyed>
       {(delivery) => (
         <Tooltip placement="top" inactive={delivery !== "steer"} value={i18n.t("ui.promptInput.steerHint")}>
           <Button
