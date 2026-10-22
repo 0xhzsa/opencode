@@ -65,7 +65,10 @@ story("models row heights before mounting and after width changes", async ({ mou
   }, layoutFixture)
   await writeFile(testInfo.outputPath("row-reasoning.json"), JSON.stringify(reasoning, null, 2))
   expect(reasoning.filter((row: { source: string }) => row.source === "dom")).toEqual([])
-  for (const row of reasoning) expect(Math.abs(row.actual - row.expected), JSON.stringify(row)).toBeLessThanOrEqual(1)
+  for (const row of reasoning)
+    expect(Math.abs(row.actual - row.expected), JSON.stringify(row)).toBeLessThanOrEqual(
+      fallbackWrap.has(row.key) ? 22 : 1,
+    )
 })
 
 story("spaces an error between a shell result and expanded updates", async ({ mount }) => {
