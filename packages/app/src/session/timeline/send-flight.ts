@@ -29,7 +29,7 @@ const unclaimed = new Map<string, { bubble: HTMLElement; at: number; offset?: ()
  * `source` hides as the copy takes off from it.
  */
 export function prepareSendFlight(id: string, editor: HTMLElement | undefined, source?: HTMLElement) {
-  if (!editor?.isConnected || prefersReducedMotion()) return
+  if (!editor?.isConnected || document.hidden || prefersReducedMotion()) return
   const range = document.createRange()
   range.selectNodeContents(editor)
   const box = range.getBoundingClientRect()
@@ -117,7 +117,7 @@ export function landSendFlight(id: string, bubble: HTMLElement, offset?: () => n
   waiting.delete(id)
   clearTimeout(flight.expire)
 
-  if (prefersReducedMotion()) {
+  if (document.hidden || prefersReducedMotion()) {
     flight.layer.remove()
 
     return false
@@ -170,11 +170,12 @@ export function landSendFlight(id: string, bubble: HTMLElement, offset?: () => n
   let pending = bubble.closest('[data-component="user-message"]')?.hasAttribute("data-pending") ?? false
 
   const land = () => {
+    document.removeEventListener("visibilitychange", onVisibilityChange)
     bubble.style.removeProperty("opacity")
     flight.layer.remove()
   }
 
-  frameLoop.addMeasured(
+  const stop = frameLoop.addMeasured(
     () => {
       rect = bubble.getBoundingClientRect()
       remaining = offset?.() ?? 0
@@ -224,6 +225,13 @@ export function landSendFlight(id: string, bubble: HTMLElement, offset?: () => n
       return false
     },
   )
+
+  function onVisibilityChange() {
+    if (!document.hidden) return
+    stop()
+    land()
+  }
+  document.addEventListener("visibilitychange", onVisibilityChange)
 
   return true
 }

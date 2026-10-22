@@ -523,6 +523,7 @@ export function createTimelineVirtualizer(input: Input) {
       if (following() && state.pending > growthViewport) {
         landGrowth()
         pinEnd(growthViewport, false)
+        moveGhosts()
         return
       }
       if (!state.held) endGap = false
@@ -784,19 +785,22 @@ export function createTimelineVirtualizer(input: Input) {
   // Project the resting slot from the size model, including room that closing rows are still giving back. The flight
   // measures the real bubble once and adds this correction; it does not chase every intermediate layout position.
   function landingOffset(key: string) {
-    if (!following()) return 0
+    if (!following() || (!growth.growing() && !pendingSizes.size && !heldSpace)) return 0
     const index = rowKeys().lastIndexOf(key)
     let before = 0
     let total = 0
     virtualizer.measurementsCache.forEach((item) => {
       if (streaming(rows()[item.index])) return
       const itemKey = String(item.key)
-      const target = pendingSizes.get(itemKey) ?? growth.target(itemKey) ?? modelHeight(itemKey) ?? item.size
+      const target = pendingSizes.get(itemKey) ?? growth.target(itemKey) ?? item.size
       const delta = target - item.size
       total += delta
       if (item.index < index) before += delta
     })
-    const end = Math.max(0, topOffset() + virtualizer.getTotalSize() + total + bottomInset() - layoutState.viewport)
+    const end = Math.max(
+      0,
+      topOffset() + virtualizer.getTotalSize() + total + bottomInset() - rendering.scrollAdjustment - layoutState.viewport,
+    )
     const remainder = parseFloat(virtualContent?.style.translate.split(" ")[1] ?? "0") || 0
     return grid(before - (end - (deferredTop ?? layoutState.offset - remainder)))
   }
@@ -902,8 +906,14 @@ export function createTimelineVirtualizer(input: Input) {
     )
     const root = listRoot()
     const max = endOffset()
+    // Working can have any number of pending steers below it. Visibility, not a row-count cutoff, owns its exit.
     const canClose =
-      removed >= 1 && previous.length - first <= 4 && !!root && following() && max - layoutState.offset <= 1
+      removed >= 1 &&
+      removed <= layoutState.viewport &&
+      (virtualizer.measurementsCache[first]?.end ?? 0) > layoutState.offset &&
+      !!root &&
+      following() &&
+      max - layoutState.offset <= 1
 
     if (canClose) leaving.forEach((key) => fadeOutRow(key, previous[first - 1], previous))
     leaving.forEach((key) => {
@@ -915,7 +925,7 @@ export function createTimelineVirtualizer(input: Input) {
     })
 
     if (!canClose) return
-    if (first >= keys.length || leaving.includes("activity")) {
+    if (first >= keys.length) {
       const nextSize = shift().size + removed
       setShift({ rows: Math.min(first, Math.max(0, keys.length - 1)), size: nextSize })
       endGap = true
@@ -1337,14 +1347,12 @@ export function createTimelineVirtualizer(input: Input) {
         if (target && revealPart(target)) input.reveal?.done()
         else {
           input.onPin()
-          virtualizer.elementsCache.forEach((element) => {
-            if (element.isConnected) virtualizer.resizeItem(virtualizer.indexFromElement(element), rowHeight(element))
-          })
+          measureMountedRows()
           pinEnd(undefined, false)
         }
 
         reportOffset?.(root.scrollTop, false)
-        settleColdBottom()
+        observeColdBottom()
       })
       input.setRevealPart?.(revealPart)
       input.setRevealMessage?.((id, partID) => {
@@ -1432,6 +1440,13 @@ export function createTimelineVirtualizer(input: Input) {
   let contentObserver: MutationObserver | undefined
   let viewportObserver: ResizeObserver | undefined
 
+  function measureMountedRows() {
+    const sizes = [...virtualizer.elementsCache.values()]
+      .filter((element) => element.isConnected)
+      .map((element) => [virtualizer.indexFromElement(element), rowHeight(element)] as const)
+    batch(() => sizes.forEach(([index, height]) => virtualizer.resizeItem(index, height)))
+  }
+
   const pinColdBottom = () => {
     if (!active()) return
     const root = listRoot()
@@ -1492,9 +1507,7 @@ export function createTimelineVirtualizer(input: Input) {
       // Markdown can finish before ResizeObserver delivers its new box. The
       // normal measureElement path skips reads while scrolling; this gate needs
       // current boxes before expanding the estimated range or revealing it.
-      virtualizer.elementsCache.forEach((element) => {
-        if (element.isConnected) virtualizer.resizeItem(virtualizer.indexFromElement(element), rowHeight(element))
-      })
+      measureMountedRows()
 
       if (pendingSizes.size || pendingMeasurements()) return
       pinColdBottom()
@@ -1519,21 +1532,23 @@ export function createTimelineVirtualizer(input: Input) {
     })
   }
 
-  onMount(() => {
+  function observeColdBottom() {
     if (!coldPending || !virtualContent) return
-    contentObserver = new MutationObserver(settleColdBottom)
+    contentObserver ??= new MutationObserver(settleColdBottom)
     contentObserver.observe(virtualContent, {
       childList: true,
       subtree: true,
       attributes: true,
       attributeFilter: ["data-markdown-ready"],
     })
-    viewportObserver = new ResizeObserver(settleColdBottom)
+    viewportObserver ??= new ResizeObserver(settleColdBottom)
     const root = listRoot()
 
     if (root) viewportObserver.observe(root)
     settleColdBottom()
-  })
+  }
+
+  onMount(observeColdBottom)
 
   let measuredSessionKey = input.sessionKey()
   createEffect(() => {

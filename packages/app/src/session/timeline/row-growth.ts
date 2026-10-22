@@ -211,7 +211,7 @@ export function createRowGrowth(input: {
       const edge = growth.streaming ? streamingEdgeFor() : edges.feather
       if (growth.freshRow) {
         growth.freshRow = false
-        lastTake = 0
+        if (!independent) lastTake = 0
       }
       const coupled = growth.coupled
       if (coupled && coupled.gaps.length > 0) {
@@ -259,9 +259,11 @@ export function createRowGrowth(input: {
       const budget = entranceValue === undefined ? rawBudget : Math.max(0, entranceValue - growth.value)
       const rowMaxTake = independent ? Infinity : maxTake / travelFactor
       const take = rem <= 0 ? 0 : Math.min(rem, budget, done && rem <= rowMaxTake ? rem : rowMaxTake)
-      stepped ||= diff > 0
-      consumed += take
-      lastTake = take * travelFactor
+      if (!independent) {
+        stepped ||= diff > 0
+        consumed += take
+        lastTake = take * travelFactor
+      }
       const nextRowValue = rem <= 0 ? growth.value : growth.value + Math.sign(diff) * take
       const rowDone =
         (done && rem <= rowMaxTake) ||
@@ -329,7 +331,7 @@ export function createRowGrowth(input: {
           if (growth.entering) paintArrival(wrapper, growth, shown)
         }
         if (rowDone) {
-          if (rem > take && spring) spring.value += rem - take
+          if (!independent && rem > take) consumed += rem - take
           if (!growth.entering || !wrapper) growths.delete(key)
         }
       }
@@ -338,7 +340,7 @@ export function createRowGrowth(input: {
         held.value = Math.max(0, held.value - Math.max(0, shown - prevShown))
     })
 
-    if (spring && consumed < nextValue - beforeRaw) {
+    if (spring) {
       spring.value = Math.min(spring.target, beforeRaw + consumed)
     }
 
@@ -614,7 +616,8 @@ function paintEdge(wrapper: HTMLElement, growth: Growth | undefined, fade: numbe
 }
 
 function paintArrival(wrapper: HTMLElement, growth: Growth, shown: number) {
-  const raw = Math.min(1, Math.max(0, shown / Math.max(1, growth.enterSpan)))
+  // Small gaps can land before reaching the entrance span; their fade must still finish and release the frame loop.
+  const raw = shown >= growth.target ? 1 : Math.min(1, Math.max(0, shown / Math.max(1, growth.enterSpan)))
   growth.enterProgress = Math.min(growth.enterProgress + 0.34, Math.max(0.28, easeOut(raw)))
   const p = growth.enterProgress
   if (p >= 0.995) {

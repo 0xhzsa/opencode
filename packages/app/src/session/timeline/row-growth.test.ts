@@ -30,28 +30,45 @@ async function settle(growth: ReturnType<typeof createRowGrowth>, frames: { held
 }
 
 describe("row growth", () => {
-  test.each([0, 800])("opens complete arrivals alongside a streaming row and %s px backlog", (backlog) => {
+  test.each([
+    { backlog: 0, replyFirst: true },
+    { backlog: 800, replyFirst: true },
+    { backlog: 800, replyFirst: false },
+  ])("opens arrivals without changing the stream's pace (%j)", ({ backlog, replyFirst }) => {
     const sizes = new Map<string, number>()
+    const reply: number[] = []
+    const wrappers = new Map<string, HTMLDivElement>()
     const schedule = spyOn(frameLoop, "addMeasured").mockImplementation(() => () => {})
     const growth = createRowGrowth({
       measure: () => {},
       resize: (key, size) => {
         sizes.set(key, size)
+        if (key === "reply") reply.push(size)
+        const wrapper = wrappers.get(key) ?? document.createElement("div")
+        wrappers.set(key, wrapper)
+        return wrapper
       },
       below: () => true,
       settle: () => {},
     })
 
     try {
-      growth.grow("reply", 0, 400, false, undefined, true)
+      if (replyFirst) growth.grow("reply", 0, 400, false, undefined, true)
       growth.grow("tools", 0, 44, true)
+      growth.grow("gap", 0, 4, true)
       if (backlog) growth.grow("later", 0, backlog, true)
+      if (!replyFirst) growth.grow("reply", 0, 400, false, undefined, true)
       const advance = schedule.mock.calls[0]![1]
       advance(1 / 60)
       expect(sizes.get("reply")).toBeGreaterThan(0)
       expect(sizes.get("tools")).toBeGreaterThan(0)
       expect(sizes.get("tools")).toBeLessThan(3)
       if (backlog) expect(sizes.get("later")).toBeGreaterThan(0)
+      Array.from({ length: 180 }, () => advance(1 / 60))
+      expect(Math.max(...reply.map((size, index) => size - (reply[index - 1] ?? 0)))).toBeLessThanOrEqual(16)
+      expect(growth.target("gap")).toBeUndefined()
+      expect(wrappers.get("gap")!.style.opacity).toBe("")
+      expect(growth.growing()).toBe(false)
     } finally {
       growth.finish()
       schedule.mockRestore()
