@@ -1,7 +1,4 @@
 export default {
-  title: "Detalii sesiune",
-  tooltip: "Rezumat",
-  "command.toggle": "Comutați rezumatul",
   noBranch: "Nicio ramură",
   "move.title": "Mută în spațiul de lucru",
   "move.menu": "Mută sesiunea în",

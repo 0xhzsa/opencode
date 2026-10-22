@@ -1,7 +1,4 @@
 export default {
-  title: "פרטי ההפעלה",
-  tooltip: "סיכום",
-  "command.toggle": "הצגה או הסתרה של הסיכום",
   noBranch: "אין ענף",
   "move.title": "מעבר לסביבת עבודה",
   "move.menu": "העברת ההפעלה אל",

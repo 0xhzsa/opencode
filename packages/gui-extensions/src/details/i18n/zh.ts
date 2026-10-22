@@ -1,7 +1,4 @@
 export default {
-  title: "会话详情",
-  tooltip: "摘要",
-  "command.toggle": "切换摘要",
   noBranch: "无分支",
   "move.title": "移至工作区",
   "move.menu": "将会话移至",

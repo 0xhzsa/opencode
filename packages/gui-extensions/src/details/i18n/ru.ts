@@ -1,7 +1,4 @@
 export default {
-  title: "Детали сеанса",
-  tooltip: "Сводка",
-  "command.toggle": "Переключить сводку",
   noBranch: "Нет ветки",
   "move.title": "Перейти в рабочую область",
   "move.menu": "Переместить сеанс в",

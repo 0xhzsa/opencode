@@ -1,7 +1,4 @@
 export default {
-  title: "Sessionsdetaljer",
-  tooltip: "Sammanfattning",
-  "command.toggle": "Växla sammanfattning",
   noBranch: "Ingen gren",
   "move.title": "Flytta till arbetsytan",
   "move.menu": "Flytta session till",

@@ -1,7 +1,4 @@
 export default {
-  title: "Szczegóły sesji",
-  tooltip: "Podsumowanie",
-  "command.toggle": "Przełącz podsumowanie",
   noBranch: "Brak gałęzi",
   "move.title": "Przejdź do obszaru roboczego",
   "move.menu": "Przenieś sesję do",

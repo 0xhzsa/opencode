@@ -4,48 +4,36 @@ import { Button } from "@opencode/ui/button"
 import { Icon } from "@opencode/ui/icon"
 import { TruncatedText } from "@opencode/ui/truncated-text"
 import { useExtension, type MountedSession } from "../sdk"
-import { McpServerControl, useMcpRow, type McpServer, type McpToggle } from "../details/services"
-import type definition from "./index"
+import { McpServerControl, useMcpRow, type McpServer, type McpToggle } from "./services"
 
-/** A collapsible card whose open state lives in the extension's `sections` store. */
+/** A collapsible card, as the context and extensions tabs show their sections. */
 export function Section(props: {
   id: string
   title: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
   summary?: JSX.Element
-  actions?: JSX.Element
   children: JSX.Element
 }) {
-  const sections = useExtension<typeof definition>().stores.sections
-  const open = () => sections.value.open.includes(props.id)
-
   return (
     <Collapsible
       data-section={props.id}
       class="rounded-lg bg-v2-background-bg-layer-01"
-      open={open()}
-      onOpenChange={(value) =>
-        sections.update((draft) => {
-          draft.open = value ? [...draft.open, props.id] : draft.open.filter((id) => id !== props.id)
-        })
-      }
+      open={props.open}
+      onOpenChange={props.onOpenChange}
     >
-      <div class="flex min-h-10 items-center gap-2 ps-3 pe-2">
-        <Collapsible.Trigger class="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-start">
-          <Icon
-            name="chevron-down"
-            size="small"
-            class="shrink-0 text-v2-icon-icon-muted transition-transform"
-            classList={{ "-rotate-90 rtl:rotate-90": !open() }}
-          />
-          <span class="shrink-0 text-[13px] font-medium text-v2-text-text-base">{props.title}</span>
-          <Show when={props.summary}>
-            <span class="min-w-0 truncate text-[13px] text-v2-text-text-faint">{props.summary}</span>
-          </Show>
-        </Collapsible.Trigger>
-        <Show when={props.actions}>
-          <div class="flex shrink-0 items-center">{props.actions}</div>
+      <Collapsible.Trigger class="flex min-h-10 w-full min-w-0 items-center gap-2 ps-3 pe-2 text-start">
+        <Icon
+          name="chevron-down"
+          size="small"
+          class="shrink-0 text-v2-icon-icon-muted transition-transform"
+          classList={{ "-rotate-90 rtl:rotate-90": !props.open }}
+        />
+        <span class="shrink-0 text-[13px] font-medium text-v2-text-text-base">{props.title}</span>
+        <Show when={props.summary}>
+          <span class="min-w-0 truncate text-[13px] text-v2-text-text-faint">{props.summary}</span>
         </Show>
-      </div>
+      </Collapsible.Trigger>
       <Collapsible.Content class="px-3 pb-3">{props.children}</Collapsible.Content>
     </Collapsible>
   )
@@ -97,24 +85,51 @@ export function Loaded(props: {
   )
 }
 
-/** Names with a status dot, as the details panel lists plugins, skills and LSPs. */
-export function NameList(props: { items: readonly { name: string; status?: string; error?: string }[] }) {
+/** Names with a status dot; an item with `open` is a button, e.g. a skill that opens its SKILL.md. */
+export function NameList(props: {
+  items: readonly { name: string; status?: string; error?: string; open?: () => void }[]
+}) {
   const ctx = useExtension()
 
   return (
     <div class="flex flex-col">
       <For each={props.items}>
-        {(item) => (
-          <div class="flex min-h-8 items-center gap-2 text-[13px]" title={item.error ?? item.name}>
-            <StatusDot status={item.status ?? "active"} />
-            <span dir="auto" class="min-w-0 flex-1 truncate text-v2-text-text-base">
-              {item.name}
-            </span>
-            <Show when={item.status === "failed"}>
-              <span class="shrink-0 text-v2-state-fg-danger">{ctx.t("failed")}</span>
+        {(item) => {
+          const content = (
+            <>
+              <Show when={item.open} fallback={<StatusDot status={item.status ?? "active"} />}>
+                <Icon name="file-document" size="small" class="shrink-0 text-v2-icon-icon-muted" />
+              </Show>
+              <span dir="auto" class="min-w-0 flex-1 truncate text-start text-v2-text-text-base">
+                {item.name}
+              </span>
+              <Show when={item.status === "failed"}>
+                <span class="shrink-0 text-v2-state-fg-danger">{ctx.t("failed")}</span>
+              </Show>
+            </>
+          )
+
+          return (
+            <Show
+              when={item.open}
+              fallback={
+                <div class="flex min-h-8 items-center gap-2 text-[13px]" title={item.error ?? item.name}>
+                  {content}
+                </div>
+              }
+            >
+              {(open) => (
+                <button
+                  type="button"
+                  class="-mx-2 flex min-h-8 items-center gap-2 rounded-md px-2 text-[13px] hover:bg-v2-overlay-simple-overlay-hover"
+                  onClick={() => open()()}
+                >
+                  {content}
+                </button>
+              )}
             </Show>
-          </div>
-        )}
+          )
+        }}
       </For>
     </div>
   )
@@ -135,7 +150,7 @@ export function McpList(props: { session: MountedSession; servers: readonly McpS
           })
 
           return (
-            <div class="flex min-h-11 items-center gap-2 py-1">
+            <div data-slot="extensions-mcp-row" class="flex min-h-11 items-center gap-2 py-1">
               <StatusDot status={server().status.status} />
               <div class="flex min-w-0 flex-1 flex-col">
                 <TruncatedText text={server().name} class="text-[13px] text-v2-text-text-base" />

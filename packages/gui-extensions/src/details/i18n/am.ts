@@ -1,7 +1,4 @@
 export default {
-  title: "የክፍለ ጊዜ ዝርዝሮች",
-  tooltip: "ማጠቃለያ",
-  "command.toggle": "ማጠቃለያ ቀያይር",
   noBranch: "ቅርንጫፍ የለም",
   "move.title": "ወደ workspace አንቀሳቅስ",
   "move.menu": "ክፍለ ጊዜን አንቀሳቅስ ወደ",

@@ -1,7 +1,4 @@
 export default {
-  title: "Setuupplýsingar",
-  tooltip: "Samandráttur",
-  "command.toggle": "Skifta samandrátt",
   noBranch: "Eingin grein",
   "move.title": "Flyt til workspace",
   "move.menu": "Flyt setu til",

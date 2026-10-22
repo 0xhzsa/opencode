@@ -1,7 +1,4 @@
 export default {
-  title: "Тафсилоти сессия",
-  tooltip: "Хулоса",
-  "command.toggle": "Гузаронидани хулоса",
   noBranch: "Шоха нест",
   "move.title": "Ба фазои корӣ гузаронед",
   "move.menu": "Сессияро гузаронед ба",

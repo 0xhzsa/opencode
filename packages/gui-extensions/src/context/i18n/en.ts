@@ -33,8 +33,6 @@ export default {
   "stats.sessionId": "Session ID",
   "context.full": "{{percent}}% full",
   "context.empty": "No model response yet",
-  "mcp.section": "MCP servers",
-  "mcp.summary": "{{connected}} of {{total}} connected",
   "systemPrompt.empty": "No system prompt recorded yet",
   "advanced.title": "Advanced",
 }

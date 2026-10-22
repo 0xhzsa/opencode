@@ -1,7 +1,4 @@
 export default {
-  title: "Upplýsingar um setu",
-  tooltip: "Samantekt",
-  "command.toggle": "Skipta yfirliti",
   noBranch: "Engin grein",
   "move.title": "Færa á vinnusvæði",
   "move.menu": "Færa setu í",

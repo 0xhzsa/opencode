@@ -1,7 +1,4 @@
 export default {
-  title: "Podrobnosti o relácii",
-  tooltip: "Súhrn",
-  "command.toggle": "Zobraziť/Skryť súhrn",
   noBranch: "Žiadna vetva",
   "move.title": "Presuňte sa do pracovného priestoru",
   "move.menu": "Presunúť reláciu do",

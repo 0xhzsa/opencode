@@ -1,7 +1,4 @@
 export default {
-  title: "Детаљи сесије",
-  tooltip: "Резиме",
-  "command.toggle": "Прикажи/сакриј резиме",
   noBranch: "Нема гране",
   "move.title": "Пређите у радни простор",
   "move.menu": "Премести сесију на",

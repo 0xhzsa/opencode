@@ -1,7 +1,4 @@
 export default {
-  title: "تفاصيل الجلسة",
-  tooltip: "الملخص",
-  "command.toggle": "إظهار الملخص أو إخفاؤه",
   noBranch: "لا يوجد فرع",
   "move.title": "نقل إلى مساحة عمل",
   "move.menu": "نقل الجلسة إلى",

@@ -1,7 +1,4 @@
 export default {
-  title: "Session detaljer",
-  tooltip: "Resumé",
-  "command.toggle": "Skift sammendrag",
   noBranch: "Ingen gren",
   "move.title": "Flyt til arbejdsområdet",
   "move.menu": "Flyt session til",

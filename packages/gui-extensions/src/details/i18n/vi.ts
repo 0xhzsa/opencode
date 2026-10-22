@@ -1,7 +1,4 @@
 export default {
-  title: "Chi tiết phiên",
-  tooltip: "Tóm tắt",
-  "command.toggle": "Chuyển đổi tóm tắt",
   noBranch: "Không có nhánh",
   "move.title": "Chuyển sang không gian làm việc",
   "move.menu": "Chuyển phiên tới",

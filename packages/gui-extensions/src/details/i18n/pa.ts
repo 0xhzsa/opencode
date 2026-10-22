@@ -1,7 +1,4 @@
 export default {
-  title: "سیشن دیاں تفصیلاں",
-  tooltip: "خلاصہ",
-  "command.toggle": "خلاصہ ٹوگل کرو۔",
   noBranch: "کوئی برانچ نئیں",
   "move.title": "ورک سپیس چ لے جاؤ",
   "move.menu": "سیشن ایتھے لے جاؤ",

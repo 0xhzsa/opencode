@@ -1,7 +1,4 @@
 export default {
-  title: "Sessiya detalları",
-  tooltip: "Xülasə",
-  "command.toggle": "Xülasəni dəyişdirin",
   noBranch: "Branch yoxdur",
   "move.title": "İş sahəsinə köçür",
   "move.menu": "Sessiyanı buraya köçür",

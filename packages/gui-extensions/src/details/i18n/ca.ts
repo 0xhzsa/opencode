@@ -1,7 +1,4 @@
 export default {
-  title: "Detalls de la sessió",
-  tooltip: "Resum",
-  "command.toggle": "Commuta el resum",
   noBranch: "Sense branca",
   "move.title": "Mou a un espai de treball",
   "move.menu": "Mou la sessió a",

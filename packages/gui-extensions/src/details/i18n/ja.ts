@@ -1,7 +1,4 @@
 export default {
-  title: "セッション詳細",
-  tooltip: "概要",
-  "command.toggle": "概要を切り替える",
   noBranch: "ブランチなし",
   "move.title": "ワークスペースに移動",
   "move.menu": "セッションの移動先",

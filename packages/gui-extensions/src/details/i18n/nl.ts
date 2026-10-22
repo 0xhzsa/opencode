@@ -1,7 +1,4 @@
 export default {
-  title: "Sessiedetails",
-  tooltip: "Samenvatting",
-  "command.toggle": "Samenvatting schakelen",
   noBranch: "Geen branch",
   "move.title": "Verplaats naar werkruimte",
   "move.menu": "Sessie verplaatsen naar",

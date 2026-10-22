@@ -1,7 +1,4 @@
 export default {
-  title: "ལཱ་ཡུན་ཁ་གསལ།",
-  tooltip: "བཅུད་བསྡུས།",
-  "command.toggle": "བཅུད་དོན་སོར་བསྒྱུར་",
   noBranch: "ཡན་ལག་མེད།",
   "move.title": "ལཱ་གི་ས་སྒོ་ལུ་སྤོ།",
   "move.menu": "ལཱ་ཡུན་སྤོ་ས།",

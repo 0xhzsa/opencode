@@ -1,7 +1,4 @@
 export default {
-  title: "Istunnon tiedot",
-  tooltip: "Yhteenveto",
-  "command.toggle": "Yhteenveto päälle/pois",
   noBranch: "Ei haaraa",
   "move.title": "Siirrä työtilaan",
   "move.menu": "Siirrä istunto kohteeseen",

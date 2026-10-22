@@ -46,9 +46,9 @@ test.use({
   permissions: ["clipboard-read", "clipboard-write"],
 })
 
-test("the new session screen does not show session details", async ({ page }) => {
+test("the new session screen does not offer extensions", async ({ page }) => {
   await openDraft(page, { name: "Summary" })
-  await expect(page.getByRole("button", { name: "Session details", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Extensions", exact: true })).toHaveCount(0)
 })
 
 test("the combined location picker shows checkout branches and chooses the base for a new worktree", async ({

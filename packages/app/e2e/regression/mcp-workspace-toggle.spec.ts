@@ -12,11 +12,11 @@ const sessionID = "ses_mcp_workspace"
 
 const title = "Workspace MCP routing"
 
-type Surface = "popover" | "dialog"
+type Surface = "tab" | "dialog"
 
 // A session in a worktree of the project. The harness answers the MCP list for each location directory and stores
 // connect/disconnect results per directory; `requests` records every MCP request and the directory it targeted.
-// The popover is the session details' MCP list; the dialog (Ctrl+;) is the app's own MCP manager.
+// The tab is the extensions tab's MCP section; the dialog (Ctrl+;) is the app's own MCP manager.
 async function open(
   page: Page,
   input: { surface: Surface } & Pick<MockServerConfig, "mcp" | "onMcpAction" | "integrations" | "onIntegrationOAuth">,
@@ -47,15 +47,13 @@ async function open(
   await expect(page.getByRole("textbox", { name: "Prompt", exact: true })).toBeEditable()
 
   const panel =
-    input.surface === "popover"
-      ? page.getByRole("group", { name: "MCP", exact: true })
+    input.surface === "tab"
+      ? page.locator('[data-slot="session-extensions-content"] [data-section="mcp"]')
       : page.getByRole("dialog", { name: "MCPs", exact: true })
 
   const show = async () => {
     if (input.surface === "dialog") return page.keyboard.press("Control+;")
-    await page.getByRole("button", { name: "Session details", exact: true }).click()
-    const item = page.getByRole("button", { name: "MCP", exact: true })
-    await item.click()
+    await page.getByRole("button", { name: "Extensions", exact: true }).click()
     await expect(panel).toBeVisible()
   }
 
@@ -65,7 +63,7 @@ async function open(
   return { requests, panel, show, push: mock.push, toggle: panel.getByRole("switch") }
 }
 
-for (const surface of ["popover", "dialog"] as const) {
+for (const surface of ["tab", "dialog"] as const) {
   for (const shared of [true, false]) {
     test(`toggles the workspace MCP from the ${surface} when the default location ${shared ? "has" : "does not have"} the server`, async ({
       page,
@@ -111,19 +109,18 @@ for (const surface of ["popover", "dialog"] as const) {
   }
 }
 
-test("the MCP popover shows a failed server and reconnects it from its details", async ({ page }) => {
+test("the extensions tab shows a failed server and reconnects it from its details", async ({ page }) => {
   const error = "Streamable HTTP error: Error POSTing to endpoint: 404 Not Found"
 
   const view = await open(page, {
-    surface: "popover",
+    surface: "tab",
     mcp: (target) => [
       { name: "figma-desktop", status: target !== workspace ? { status: "connected" } : { status: "failed", error } },
     ],
   })
 
-  const row = view.panel.locator(".session-mcp-row").filter({ hasText: "figma-desktop" })
-  // The red dot is the status, and opens the error.
-  await expect(view.toggle).toHaveAccessibleDescription("Failed")
+  const row = view.panel.locator('[data-slot="extensions-mcp-row"]').filter({ hasText: "figma-desktop" })
+  await expect(row.getByText("Failed", { exact: true })).toBeVisible()
   const failed = row.getByRole("button", { name: "Details for figma-desktop", exact: true })
   view.requests.length = 0
   await failed.click()
@@ -137,7 +134,7 @@ test("the MCP popover shows a failed server and reconnects it from its details",
   ])
 
   if (!(await view.panel.isVisible())) await view.show()
-  await expect(view.toggle).toHaveAccessibleDescription("Connected")
+  await expect(view.toggle).toBeChecked()
 })
 
 for (const surface of ["dialog"] as const) {
@@ -220,7 +217,7 @@ for (const surface of ["dialog"] as const) {
   })
 }
 
-for (const surface of ["popover", "dialog"] as const) {
+for (const surface of ["tab", "dialog"] as const) {
   test(`signs in to an auth-gated MCP from the ${surface}`, async ({ page, context }) => {
     const state = { signedIn: false }
     const attempts: string[] = []
@@ -245,7 +242,8 @@ for (const surface of ["popover", "dialog"] as const) {
 
     // The switch would only start sign-in, so both surfaces offer that action in its place.
     await expect(view.toggle).toHaveCount(0)
-    await expect(view.panel.getByText("Sign in required", { exact: true })).toHaveCount(0)
+    // The tab names the status beside the server; the dialog offers only the action.
+    await expect(view.panel.getByText("Sign in required", { exact: true })).toHaveCount(surface === "tab" ? 1 : 0)
     const popup = page.waitForEvent("popup")
     const signIn = view.panel.getByRole("button", { name: "Sign in to figma-desktop", exact: true })
 
@@ -277,16 +275,12 @@ for (const surface of ["popover", "dialog"] as const) {
 
     if (!(await view.panel.isVisible())) await view.show()
 
-    if (surface === "dialog") await expect(view.toggle).toBeChecked()
-    else
-      await expect(view.panel.getByRole("switch", { name: "figma-desktop", exact: true })).toHaveAccessibleDescription(
-        "Connected",
-      )
+    await expect(view.toggle).toBeChecked()
     await expect(view.panel.getByRole("button", { name: "Sign in to figma-desktop", exact: true })).toHaveCount(0)
   })
 }
 
-for (const surface of ["popover", "dialog"] as const) {
+for (const surface of ["tab", "dialog"] as const) {
   test(`long MCP names keep their status and controls visible in the ${surface}`, async ({ page }) => {
     const names = ["connected", "disabled", "failed", "needs_auth"].map(
       (status) => `long-${status}-mcp-server-for-the-internal-knowledge-base-search`,
@@ -309,14 +303,16 @@ for (const surface of ["popover", "dialog"] as const) {
 
     for (const [index, name] of names.entries()) {
       const row = view.panel
-        .locator(surface === "dialog" ? '[role="option"]' : ".session-mcp-row")
+        .locator(surface === "dialog" ? '[role="option"]' : '[data-slot="extensions-mcp-row"]')
         .filter({ hasText: name })
 
-      // The popover's dot is the status, so the control beside the name must stay whole.
+      // The control beside the name must stay whole.
       const status =
         surface === "dialog" || index === 3
           ? row.getByText(["Connected", "Disabled", "Failed", "Sign in"][index], { exact: true })
-          : row.locator('[data-slot="switch-control"]')
+          : index === 2
+            ? row.getByRole("button", { name: `Details for ${name}`, exact: true })
+            : row.locator('[data-slot="switch-control"]')
 
       await expect(status).toBeVisible()
       await expect

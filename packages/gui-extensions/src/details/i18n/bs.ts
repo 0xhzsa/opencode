@@ -1,7 +1,4 @@
 export default {
-  title: "Detalji sesije",
-  tooltip: "Sažetak",
-  "command.toggle": "Prikaži ili sakrij sažetak",
   noBranch: "Nema grane",
   "move.title": "Premjestite se u radni prostor",
   "move.menu": "Premjesti sesiju na",

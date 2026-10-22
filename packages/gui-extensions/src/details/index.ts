@@ -1,11 +1,16 @@
+import { Schema } from "effect"
 import { Changes } from "../review/contract"
-import { Extension } from "../sdk"
+import { Extension, Store } from "../sdk"
 import en from "./i18n/en"
 
 export default Extension.define({
   id: "details",
   legacy: ["summary"],
   uses: { changes: Changes },
+  stores: {
+    // The extensions tab's collapsed sections; every section starts expanded.
+    sections: Store.global(Schema.Struct({ closed: Schema.Array(Schema.String) }), { closed: [] }),
+  },
   i18n: {
     en,
     am: () => import("./i18n/am"),

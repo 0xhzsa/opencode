@@ -1,7 +1,4 @@
 export default {
-  title: "Seanso informacija",
-  tooltip: "Santrauka",
-  "command.toggle": "Perjungti santrauką",
   noBranch: "Nėra šakos",
   "move.title": "Perkelti į darbo sritį",
   "move.menu": "Perkelti seansą į",

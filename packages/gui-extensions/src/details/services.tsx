@@ -9,9 +9,7 @@ import { createMemo, createResource, createSignal, onCleanup, Show } from "solid
 import { createKeyed, useExtension, type MountedSession } from "../sdk"
 import { configuredLsps } from "./configured-lsp"
 
-// The session server's MCP servers, plugins, skills and LSPs, shared by the details panel and the context tab. Strings
-// resolve through the rendering extension's catalog, which therefore needs this extension's `mcp.*`, `failed`,
-// `connecting` and `needsAuth` keys.
+// The session server's MCP servers, plugins, skills and LSPs, as the extensions tab lists them.
 
 export type McpServer = NonNullable<
   ReturnType<MountedSession["server"]["data"]["location"]["mcp"]["server"]["list"]>
@@ -119,7 +117,7 @@ export function useSkills(source: Source) {
   return {
     list: createMemo(() =>
       (data().location.skill.list({ directory: source.directory() }) ?? [])
-        .map((skill) => ({ name: skill.name, status: "active", error: undefined }))
+        .map((skill) => ({ name: skill.name, path: skill.path }))
         .toSorted((a, b) => a.name.localeCompare(b.name)),
     ),
     loading: () => load.loading,
@@ -347,7 +345,7 @@ function McpErrorDialog(props: { session: MountedSession; directory: string; nam
               description={ctx.t("mcp.error.status")}
             />
           </DialogHeader>
-          <DialogBody class="session-mcp-error-body">
+          <DialogBody class="flex min-h-0 flex-1 flex-col">
             <ErrorDetails error={current().error}>
               <Button
                 class="error-details-copy"

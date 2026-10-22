@@ -1,7 +1,4 @@
 export default {
-  title: "Podrobnosti seje",
-  tooltip: "Povzetek",
-  "command.toggle": "Preklopi povzetek",
   noBranch: "Ni veje",
   "move.title": "Premakni se v delovni prostor",
   "move.menu": "Premakni sejo na",

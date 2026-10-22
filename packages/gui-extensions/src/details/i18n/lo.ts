@@ -1,7 +1,4 @@
 export default {
-  title: "ລາຍລະອຽດເຊດຊັນ",
-  tooltip: "ບົດສະຫຼຸບ",
-  "command.toggle": "ສະຫຼຸບສະຫຼຸບ",
   noBranch: "ບໍ່ມີສາຂາ",
   "move.title": "ຍ້າຍໄປພື້ນທີ່ເຮັດວຽກ",
   "move.menu": "ຍ້າຍເຊດຊັນໄປ",

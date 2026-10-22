@@ -13,11 +13,12 @@ import { Markdown } from "@opencode/session-ui/markdown"
 import type { SessionMessageInfo } from "@opencode/client/promise"
 import { lastAssistantWithUsage } from "@opencode/client/solid"
 import { createKeyed, useExtension, type MountedSession } from "../sdk"
-import { useConfig, useMcpServers, useMcpToggle, usePlugins, useSkills } from "../details/services"
+import { Row, Section } from "../details/cards"
+import { useConfig } from "../details/services"
 import { catalogModel, syncCatalog } from "./catalog"
 import { fetchSessionExport, sessionExportFilename } from "./export"
 import { createSessionContextFormatter } from "./format"
-import { Loaded, McpList, NameList, Row, Section } from "./sections"
+import type definition from "./index"
 
 function RawMessageContent(props: { message: SessionMessageInfo; onRendered: () => void }) {
   const file = createMemo(() => {
@@ -73,7 +74,7 @@ function RawMessage(props: {
 const emptyMessages: SessionMessageInfo[] = []
 
 export default function SessionContextTab(props: { session: MountedSession }) {
-  const ctx = useExtension()
+  const ctx = useExtension<typeof definition>()
   const layout = ctx.layout
   const system = ctx.system
   const i18n = useI18n()
@@ -148,17 +149,22 @@ export default function SessionContextTab(props: { session: MountedSession }) {
       ?.text?.trim(),
   )
 
-  // Plugins, skills and LSPs belong to the session's location; a session without a directory has none to list.
-  const source = {
+  // The configured username; a session without a directory has no configuration to read.
+  const config = useConfig({
     session: () => props.session,
     directory: () => props.session.directory,
     shown: () => !!props.session.directory,
-  }
-  const mcp = useMcpServers(source)
-  const toggle = useMcpToggle(props.session, () => props.session.directory)
-  const plugins = usePlugins(source)
-  const skills = useSkills(source)
-  const config = useConfig(source)
+  })
+  const sections = ctx.stores.sections
+
+  const section = (id: string) => ({
+    id,
+    open: sections.value.open.includes(id),
+    onOpenChange: (open: boolean) =>
+      sections.update((draft) => {
+        draft.open = open ? [...draft.open, id] : draft.open.filter((item) => item !== id)
+      }),
+  })
 
   const username = createMemo(() =>
     config
@@ -287,7 +293,7 @@ export default function SessionContextTab(props: { session: MountedSession }) {
     >
       <div data-slot="session-usage-content" class="px-4 pt-4 pb-6 flex flex-col gap-2 md:px-6 md:pb-10">
         <Section
-          id="context"
+          {...section("context")}
           title={ctx.t("tab.title")}
           summary={context()?.usage != null ? ctx.t("context.full", { percent: String(context()?.usage) }) : undefined}
         >
@@ -315,53 +321,7 @@ export default function SessionContextTab(props: { session: MountedSession }) {
           </div>
         </Section>
 
-        <Show when={props.session.directory}>
-          <Section
-            id="mcp"
-            title={ctx.t("mcp.section")}
-            summary={
-              mcp.list().length
-                ? ctx.t("mcp.summary", {
-                    connected: String(mcp.list().filter((server) => server.status.status === "connected").length),
-                    total: String(mcp.list().length),
-                  })
-                : undefined
-            }
-          >
-            <Loaded source={mcp} empty={mcp.list().length === 0} emptyText={ctx.t("mcp.empty")}>
-              <McpList session={props.session} servers={mcp.list()} toggle={toggle} />
-            </Loaded>
-            <Button
-              size="small"
-              variant="ghost-muted"
-              icon="mcp"
-              class="mt-1 -ms-2"
-              onClick={() => ctx.layout.command("mcp.toggle")}
-            >
-              {ctx.t("mcp.manage")}
-            </Button>
-          </Section>
-
-          <Section id="plugins" title={ctx.t("plugins")} summary={plugins.list().length || undefined}>
-            <Loaded source={plugins} empty={plugins.list().length === 0} emptyText={ctx.t("plugins.empty")}>
-              <NameList items={plugins.list()} />
-            </Loaded>
-          </Section>
-
-          <Section id="skills" title={ctx.t("skills")} summary={skills.list().length || undefined}>
-            <Loaded source={skills} empty={skills.list().length === 0} emptyText={ctx.t("skills.empty")}>
-              <NameList items={skills.list()} />
-            </Loaded>
-          </Section>
-
-          <Section id="lsp" title={ctx.t("lsp")} summary={config.lsps().length || undefined}>
-            <Loaded source={config} empty={config.lsps().length === 0} emptyText={ctx.t("lsp.empty")}>
-              <NameList items={config.lsps().map((name) => ({ name }))} />
-            </Loaded>
-          </Section>
-        </Show>
-
-        <Section id="system" title={ctx.t("systemPrompt.title")}>
+        <Section {...section("system")} title={ctx.t("systemPrompt.title")}>
           <Show
             when={systemPrompt()}
             fallback={<div class="text-[13px] text-v2-text-text-faint">{ctx.t("systemPrompt.empty")}</div>}
@@ -370,7 +330,7 @@ export default function SessionContextTab(props: { session: MountedSession }) {
           </Show>
         </Section>
 
-        <Section id="advanced" title={ctx.t("advanced.title")}>
+        <Section {...section("advanced")} title={ctx.t("advanced.title")}>
           <div class="flex flex-col gap-4">
             <div class="flex flex-col">
               <For each={metadata()}>{(row) => <Row label={ctx.t(row.label)} value={row.value} />}</For>

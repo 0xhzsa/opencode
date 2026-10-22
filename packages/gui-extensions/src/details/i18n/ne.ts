@@ -1,7 +1,4 @@
 export default {
-  title: "सत्र विवरण",
-  tooltip: "सारांश",
-  "command.toggle": "सारांश टगल गर्नुहोस्",
   noBranch: "कुनै शाखा छैन",
   "move.title": "कार्यस्थानमा सार्नुहोस्",
   "move.menu": "सत्र यहाँ सार्नुहोस्",

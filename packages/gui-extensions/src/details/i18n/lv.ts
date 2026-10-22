@@ -1,7 +1,4 @@
 export default {
-  title: "Sesijas informācija",
-  tooltip: "Kopsavilkums",
-  "command.toggle": "Pārslēgt kopsavilkumu",
   noBranch: "Nav zara",
   "move.title": "Pārvietot uz darbvietu",
   "move.menu": "Pārvietot sesiju uz",

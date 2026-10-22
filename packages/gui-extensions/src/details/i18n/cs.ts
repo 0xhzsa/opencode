@@ -1,7 +1,4 @@
 export default {
-  title: "Podrobnosti relace",
-  tooltip: "Souhrn",
-  "command.toggle": "Přepnout souhrn",
   noBranch: "Žádná větev",
   "move.title": "Přesuňte se do pracovního prostoru",
   "move.menu": "Přesunout relaci do",

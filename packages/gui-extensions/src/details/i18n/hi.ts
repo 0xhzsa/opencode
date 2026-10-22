@@ -1,7 +1,4 @@
 export default {
-  title: "सेशन विवरण",
-  tooltip: "सारांश",
-  "command.toggle": "सारांश टॉगल करें",
   noBranch: "कोई शाखा नहीं",
   "move.title": "वर्कस्पेस में ले जाएँ",
   "move.menu": "सेशन यहाँ ले जाएँ",

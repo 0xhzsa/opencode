@@ -1,7 +1,4 @@
 export default {
-  title: "Oturum ayrıntıları",
-  tooltip: "Özet",
-  "command.toggle": "Özeti değiştir",
   noBranch: "Dal yok",
   "move.title": "Çalışma alanına taşı",
   "move.menu": "Oturumu şuraya taşı",

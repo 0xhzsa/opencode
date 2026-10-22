@@ -1,7 +1,4 @@
 export default {
-  title: "รายละเอียดเซสชัน",
-  tooltip: "สรุป",
-  "command.toggle": "สรุปแบบสลับ",
   noBranch: "ไม่มีสาขา",
   "move.title": "ย้ายไปยังพื้นที่ทำงาน",
   "move.menu": "ย้ายเซสชันไปยัง",

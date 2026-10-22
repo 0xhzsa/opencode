@@ -1,7 +1,4 @@
 export default {
-  title: "Dettagli della sessione",
-  tooltip: "Sommario",
-  "command.toggle": "Attiva/disattiva riepilogo",
   noBranch: "Nessun ramo",
   "move.title": "Spostarsi nell'area di lavoro",
   "move.menu": "Sposta la sessione in",

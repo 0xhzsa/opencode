@@ -1,7 +1,4 @@
 export default {
-  title: "Նիստի մանրամասներ",
-  tooltip: "Ամփոփում",
-  "command.toggle": "Փոխել ամփոփագիրը",
   noBranch: "Ճյուղ չկա",
   "move.title": "Տեղափոխել աշխատանքային տարածք",
   "move.menu": "Նիստը տեղափոխել՝",

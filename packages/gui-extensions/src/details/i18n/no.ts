@@ -1,7 +1,4 @@
 export default {
-  title: "Sesjonsdetaljer",
-  tooltip: "Sammendrag",
-  "command.toggle": "Slå sammendrag av/på",
   noBranch: "Ingen gren",
   "move.title": "Flytt til arbeidsområdet",
   "move.menu": "Flytt økt til",

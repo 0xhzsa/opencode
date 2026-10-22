@@ -1,7 +1,4 @@
 export default {
-  title: "Munkamenet részletei",
-  tooltip: "Összegzés",
-  "command.toggle": "Összegzés váltása",
   noBranch: "Nincs ág",
   "move.title": "Áthelyezés munkaterületre",
   "move.menu": "Munkamenet áthelyezése ide:",

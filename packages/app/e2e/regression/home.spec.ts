@@ -408,7 +408,7 @@ for (const state of [
     for (const loaded of state.recovery ? [false, true] : [true]) {
       if (state.recovery && loaded) {
         messages.resolve()
-        await expect(header.getByRole("button", { name: "Session details", exact: true })).toBeVisible()
+        await expect(header.getByRole("button", { name: "Extensions", exact: true })).toBeVisible()
       }
 
       await expect(trigger.locator('[data-slot="session-location-project"]')).toHaveText(name)

@@ -1,7 +1,4 @@
 export default {
-  title: "Sitzungsdetails",
-  tooltip: "Zusammenfassung",
-  "command.toggle": "Zusammenfassung umschalten",
   noBranch: "Kein Branch",
   "move.title": "Wechseln Sie zum Arbeitsbereich",
   "move.menu": "Sitzung verschieben nach",

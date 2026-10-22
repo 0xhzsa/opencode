@@ -1,7 +1,4 @@
 export default {
-  title: "Seansi üksikasjad",
-  tooltip: "Kokkuvõte",
-  "command.toggle": "Lülitab kokkuvõtet",
   noBranch: "Haru puudub",
   "move.title": "Teisalda tööruumi",
   "move.menu": "Teisalda seanss asukohta",

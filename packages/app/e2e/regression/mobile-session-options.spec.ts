@@ -36,7 +36,7 @@ for (const scheme of ["light", "dark"] as const) {
       await drawer.screenshot({ path: testInfo.outputPath("options.png") })
       await testInfo.attach("options", { path: testInfo.outputPath("options.png"), contentType: "image/png" })
 
-      for (const name of ["Files", "Terminal", "Usage", "Session details"]) {
+      for (const name of ["Files", "Terminal", "Usage", "Extensions"]) {
         const option = drawer.getByRole("button", { name, exact: true })
         await expect(option).toHaveCSS("height", "44px")
         await expect

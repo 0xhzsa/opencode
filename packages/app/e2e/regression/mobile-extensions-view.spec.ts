@@ -5,7 +5,7 @@ import { openWithDirection } from "../utils/direction"
 
 for (const scheme of ["light", "dark"] as const) {
   for (const direction of ["ltr", "rtl"] as const) {
-    test(`mobile extensions reuse the session drawer in ${scheme} ${direction}`, async ({ page }, testInfo) => {
+    test(`mobile extensions open as a session view in ${scheme} ${direction}`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width: 390, height: 844 })
       await mockStressTimeline(page)
       await page.addInitScript((scheme) => {
@@ -23,57 +23,31 @@ for (const scheme of ["light", "dark"] as const) {
       await more.click()
       await page
         .getByRole("dialog", { name: "More options", exact: true })
-        .getByRole("button", { name: "Session details", exact: true })
+        .getByRole("button", { name: "Extensions", exact: true })
         .click()
-      const details = page.getByRole("dialog", { name: "Session details", exact: true })
-      await expect(details.getByRole("button", { name: "MCP", exact: true })).toBeVisible()
-      await details.evaluate((element) => element.setAttribute("data-drawer-probe", "single"))
+      const extensions = page.locator('[data-slot="session-extensions-content"]')
 
-      for (const [name, empty] of [
-        ["MCP", "No MCP servers configured"],
-        ["Plugins", "No plugins configured"],
-        ["Skills", "No skills configured"],
-        ["LSP", "No LSP servers configured"],
+      for (const [id, empty] of [
+        ["mcp", "No MCP servers configured"],
+        ["plugins", "No plugins configured"],
+        ["skills", "No skills configured"],
+        ["lsp", "No LSP servers configured"],
       ]) {
-        const trigger = details.getByRole("button", { name, exact: true })
-        await trigger.click()
-        const extension = page.getByRole("dialog", { name, exact: true })
-        await expect(extension.getByText(empty, { exact: true })).toBeVisible()
-        await expect(extension).toHaveAttribute("data-drawer-probe", "single")
-        await expect(page.getByRole("dialog")).toHaveCount(1)
-        await expect(page.locator('[data-slot="mobile-drawer-overlay"]')).toHaveCount(1)
-        await expect(extension.getByRole("button", { name: "Close", exact: true })).toHaveCount(0)
-        await expect(extension.locator(".session-service-flyout")).toHaveCount(0)
-        await expect(extension).toBeInViewport({ ratio: 1 })
-        await extension.getByRole("button", { name: "Navigate back", exact: true }).click()
-        await expect(details.getByRole("button", { name: "MCP", exact: true })).toBeVisible()
-        await expect(trigger).toBeFocused()
+        await expect(extensions.locator(`[data-section="${id}"]`).getByText(empty, { exact: true })).toBeVisible()
       }
 
-      await details.getByRole("button", { name: "Skills", exact: true }).click()
-      await expect(
-        page.getByRole("dialog", { name: "Skills", exact: true }).getByText("No skills configured", { exact: true }),
-      ).toBeVisible()
+      await expect(page.getByRole("dialog")).toHaveCount(0)
       await page.screenshot({ path: testInfo.outputPath("extensions.png") })
       await testInfo.attach("extensions", { path: testInfo.outputPath("extensions.png"), contentType: "image/png" })
-      await page.keyboard.press("Escape")
-      await expect(page.getByRole("dialog")).toHaveCount(0)
-      await expect(more).toBeFocused()
-      await more.click()
-      await expect(
-        page
-          .getByRole("dialog", { name: "More options", exact: true })
-          .getByRole("button", { name: "Files", exact: true }),
-      ).toBeVisible()
       expect(warnings).toEqual([])
     })
   }
 }
 
-test("mobile extension drawers keep configured lists, retry, refresh, and MCP status working", async ({ page }) => {
+test("the mobile extensions view keeps configured lists, retry, and MCP status working", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await mockStressTimeline(page)
-  const state = { fail: true, extra: false, enabled: true }
+  const state = { fail: true, enabled: true }
   await page.route(
     (url) => url.pathname === "/api/plugin",
     (route) => {
@@ -91,16 +65,6 @@ test("mobile extension drawers keep configured lists, retry, refresh, and MCP st
               features: {},
               state: { status: "active" },
             },
-            ...(state.extra
-              ? [
-                  {
-                    id: "extra-plugin",
-                    source: { type: "package", target: "extra-plugin" },
-                    features: {},
-                    state: { status: "active" },
-                  },
-                ]
-              : []),
           ],
         },
       })
@@ -155,50 +119,27 @@ test("mobile extension drawers keep configured lists, retry, refresh, and MCP st
   await tabs.getByRole("tab", { name: "More...", exact: true }).click()
   await page
     .getByRole("dialog", { name: "More options", exact: true })
-    .getByRole("button", { name: "Session details", exact: true })
+    .getByRole("button", { name: "Extensions", exact: true })
     .click()
-  const details = page.getByRole("dialog", { name: "Session details", exact: true })
-  await details.getByRole("button", { name: "Plugins", exact: true }).click()
-  const plugins = page.getByRole("dialog", { name: "Plugins", exact: true })
-  await expect(plugins.getByRole("alert")).toContainText("Request failed")
+  const extensions = page.locator('[data-slot="session-extensions-content"]')
+  const plugins = extensions.locator('[data-section="plugins"]')
+  await expect(plugins.getByText("Request failed")).toBeVisible()
   state.fail = false
   await plugins.getByRole("button", { name: "Retry", exact: true }).click()
   await expect(plugins.getByText("drawer-plugin", { exact: true })).toBeVisible()
-  await plugins.getByRole("button", { name: "Navigate back", exact: true }).click()
-  state.extra = true
-  await details.getByRole("button", { name: "Plugins", exact: true }).click()
-  await expect(plugins.getByText("extra-plugin", { exact: true })).toBeVisible()
-  await plugins.getByRole("button", { name: "Navigate back", exact: true }).click()
+  await expect(extensions.locator('[data-section="skills"]').getByText("drawer-skill", { exact: true })).toBeVisible()
+  await expect(extensions.locator('[data-section="lsp"]').getByText("drawer-lsp", { exact: true })).toBeVisible()
 
-  for (const [name, item] of [
-    ["Skills", "drawer-skill"],
-    ["LSP", "drawer-lsp"],
-  ]) {
-    await details.getByRole("button", { name, exact: true }).click()
-    const extension = page.getByRole("dialog", { name, exact: true })
-    await expect(extension.getByText(item, { exact: true })).toBeVisible()
-    await extension.getByRole("button", { name: "Navigate back", exact: true }).click()
-  }
-
-  await details.getByRole("button", { name: "MCP", exact: true }).click()
-  const mcp = page.getByRole("dialog", { name: "MCP", exact: true })
-  await expect(mcp.locator(".session-mcp-row")).toHaveCount(30)
+  const mcp = extensions.locator('[data-section="mcp"]')
+  await expect(mcp.locator('[data-slot="extensions-mcp-row"]')).toHaveCount(30)
   await expect(mcp.getByRole("switch")).toHaveCount(30)
   const toggle = mcp.getByRole("switch", { name: "mcp-00", exact: true })
   await expect(toggle).toBeChecked()
   await toggle.press("Space")
   await expect(toggle).not.toBeChecked()
   await expect(toggle).toBeEnabled()
-  await expect
-    .poll(() =>
-      mcp
-        .locator('[data-slot="mobile-panel-content"]')
-        .evaluate((element) => element.scrollHeight > element.clientHeight),
-    )
-    .toBe(true)
-  await expect(mcp).toBeInViewport({ ratio: 1 })
 
-  const last = mcp.locator(".session-mcp-row").filter({ hasText: "mcp-29" })
+  const last = mcp.locator('[data-slot="extensions-mcp-row"]').filter({ hasText: "mcp-29" })
   await last.scrollIntoViewIfNeeded()
   await expect(last).toBeInViewport()
   await expect(mcp.getByRole("button", { name: "Manage MCP servers", exact: true })).toBeVisible()

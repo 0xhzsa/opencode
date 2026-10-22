@@ -1,7 +1,4 @@
 export default {
-  title: "Sessiya tafsilotlari",
-  tooltip: "Xulosa",
-  "command.toggle": "Xulosa",
   noBranch: "Branch yo‘q",
   "move.title": "Ish maydoniga ko‘chirish",
   "move.menu": "Sessiyani bu yerga ko‘chirish",

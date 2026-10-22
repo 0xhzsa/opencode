@@ -8,7 +8,7 @@ import { mockRemoteServer, mockWorkspace, openSession } from "../utils/workspace
 const tabs = (page: Page) => page.locator('[data-slot="titlebar-tabs"] a')
 
 for (const direction of ["ltr", "rtl"] as const) {
-  test(`session header groups controls and exposes session details in ${direction}`, async ({ page }) => {
+  test(`session header groups controls and opens extensions in ${direction}`, async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await mockStressTimeline(page)
     await seed(page, {
@@ -19,7 +19,7 @@ for (const direction of ["ltr", "rtl"] as const) {
     const header = page.locator("[data-session-title]")
     const project = header.locator('[data-slot="session-location-trigger"]')
     const review = page.getByRole("button", { name: "Toggle review", exact: true })
-    const details = header.getByRole("button", { name: "Session details", exact: true })
+    const details = header.getByRole("button", { name: "Extensions", exact: true })
     await expect(header.getByRole("heading")).toHaveText(fixture.expected.targetTitle)
     await page.evaluate((direction) => document.documentElement.setAttribute("dir", direction), direction)
     await expect(review).toBeVisible()
@@ -105,16 +105,18 @@ for (const direction of ["ltr", "rtl"] as const) {
     await header.getByRole("textbox").press("Escape")
 
     await details.click()
-    const menu = page.getByRole("dialog", { name: "Session details", exact: true })
-    await expect(menu.getByRole("heading", { name: "Extensions", exact: true })).toBeVisible()
-    await expect(menu.getByRole("button", { name: "MCP", exact: true })).toBeVisible()
-    await expect(menu.getByRole("button", { name: "Plugins", exact: true })).toBeVisible()
-    await expect(menu).not.toContainText(fixture.project.name)
-    await expect(menu.getByText("No changes", { exact: true })).toHaveCount(0)
+    const extensions = page.locator('[data-slot="session-extensions-content"]')
+    await expect(page.getByRole("tab", { name: "Extensions", exact: true })).toHaveAttribute("aria-selected", "true")
+    await expect(extensions.getByRole("button", { name: /^MCP servers/ })).toHaveAttribute("aria-expanded", "true")
+    await expect(extensions.getByRole("button", { name: /^Plugins/ })).toHaveAttribute("aria-expanded", "true")
+    await expect(extensions.getByRole("button", { name: /^Skills/ })).toHaveAttribute("aria-expanded", "true")
+    await expect(extensions.getByRole("button", { name: /^LSP/ })).toHaveAttribute("aria-expanded", "true")
     await expect(details.locator('use[href="#opencode-v2-icon-window-analytics"]')).toHaveCount(1)
+    await expect(details).toHaveAttribute("data-state", "pressed")
 
-    await page.keyboard.press("Escape")
-    await expect(menu).toBeHidden()
+    // Clicking again keeps the tab selected rather than closing it.
+    await details.click()
+    await expect(extensions).toBeVisible()
   })
 }
 

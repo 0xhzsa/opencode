@@ -1,7 +1,4 @@
 export default {
-  title: "Деталі сеансу",
-  tooltip: "Зведення",
-  "command.toggle": "Перемкнути зведення",
   noBranch: "Немає гілки",
   "move.title": "Перейти до робочого простору",
   "move.menu": "Перемістити сеанс до",

@@ -1,7 +1,4 @@
 export default {
-  title: "工作階段詳細資料",
-  tooltip: "摘要",
-  "command.toggle": "切換摘要",
   noBranch: "沒有分支",
   "move.title": "移至工作區",
   "move.menu": "將工作階段移至",

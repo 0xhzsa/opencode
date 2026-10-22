@@ -1,7 +1,4 @@
 export default {
-  title: "စက်ရှင် အသေးစိတ်",
-  tooltip: "အနှစ်ချုပ်",
-  "command.toggle": "အကျဉ်းချုပ်ဖွင့်/ပိတ်",
   noBranch: "ဌာနခွဲ မရှိပါ",
   "move.title": "အလုပ်နေရာသို့ ရွှေ့ပါ",
   "move.menu": "စက်ရှင်ကို ရွှေ့ရန်",

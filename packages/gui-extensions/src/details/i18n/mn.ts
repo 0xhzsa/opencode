@@ -1,7 +1,4 @@
 export default {
-  title: "Сессийн дэлгэрэнгүй",
-  tooltip: "Товчоо",
-  "command.toggle": "Хураангуйг сэлгэх",
   noBranch: "Салаа байхгүй",
   "move.title": "Ажлын талбар руу шилжүүлэх",
   "move.menu": "Сессийг шилжүүлэх газар",

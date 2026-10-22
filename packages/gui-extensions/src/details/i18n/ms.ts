@@ -1,7 +1,4 @@
 export default {
-  title: "Butiran sesi",
-  tooltip: "Ringkasan",
-  "command.toggle": "Togol ringkasan",
   noBranch: "Tiada cawangan",
   "move.title": "Alihkan ke ruang kerja",
   "move.menu": "Alihkan sesi ke",

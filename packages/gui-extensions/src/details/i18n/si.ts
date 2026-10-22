@@ -1,7 +1,4 @@
 export default {
-  title: "සැසි විස්තර",
-  tooltip: "සාරාංශය",
-  "command.toggle": "සාරාංශය ටොගල් කරන්න",
   noBranch: "ශාඛාවක් නැත",
   "move.title": "වැඩබිමට ගෙන යන්න",
   "move.menu": "සැසිය ගෙන යන්න",

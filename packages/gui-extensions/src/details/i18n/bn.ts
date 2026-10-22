@@ -1,7 +1,4 @@
 export default {
-  title: "সেশনের বিবরণ",
-  tooltip: "সারাংশ",
-  "command.toggle": "সারাংশ টগল করুন",
   noBranch: "কোনো ব্রাঞ্চ নেই",
   "move.title": "ওয়ার্কস্পেসে সরান",
   "move.menu": "সেশন এখানে সরান",

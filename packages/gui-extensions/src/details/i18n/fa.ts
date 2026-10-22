@@ -1,7 +1,4 @@
 export default {
-  title: "جزئیات جلسه",
-  tooltip: "خلاصه",
-  "command.toggle": "نمایش یا پنهان کردن خلاصه",
   noBranch: "بدون شاخه",
   "move.title": "انتقال به فضای کاری",
   "move.menu": "انتقال جلسه به",

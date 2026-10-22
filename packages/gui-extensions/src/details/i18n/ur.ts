@@ -1,7 +1,4 @@
 export default {
-  title: "سیشن کی تفصیلات",
-  tooltip: "خلاصہ",
-  "command.toggle": "خلاصہ ٹوگل کریں۔",
   noBranch: "کوئی برانچ نہیں",
   "move.title": "ورک اسپیس میں منتقل کریں",
   "move.menu": "سیشن کو یہاں منتقل کریں",

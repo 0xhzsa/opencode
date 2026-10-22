@@ -1,7 +1,4 @@
 export default {
-  title: "Detajet e sesionit",
-  tooltip: "Përmbledhje",
-  "command.toggle": "Ndrysho përmbledhjen",
   noBranch: "Pa degë",
   "move.title": "Zhvendos në hapësirë pune",
   "move.menu": "Zhvendos sesionin te",

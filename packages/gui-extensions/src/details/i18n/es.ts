@@ -1,7 +1,4 @@
 export default {
-  title: "Detalles de la sesión",
-  tooltip: "Resumen",
-  "command.toggle": "Alternar resumen",
   noBranch: "Sin rama",
   "move.title": "Mover al espacio de trabajo",
   "move.menu": "Mover sesión a",

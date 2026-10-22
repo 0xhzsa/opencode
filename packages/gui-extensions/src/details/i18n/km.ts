@@ -1,7 +1,4 @@
 export default {
-  title: "ព័ត៌មានលម្អិតសម័យ",
-  tooltip: "សង្ខេប",
-  "command.toggle": "បិទ/បើកការជាអង្អែល",
   noBranch: "គ្មានសាខា",
   "move.title": "ផ្លាស់ទីទៅកន្លែងធ្វើការ",
   "move.menu": "ផ្លាស់ទីសម័យទៅ",
