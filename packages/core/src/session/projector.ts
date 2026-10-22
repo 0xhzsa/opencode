@@ -325,7 +325,7 @@ function run(db: DatabaseService, event: MessageEvent) {
             ),
           )
       },
-      getLatestAssistant() {
+      getLatestAssistant(options) {
         return Effect.gen(function* () {
           // A newer step or idle boundary supersedes older assistant projections.
           const row = yield* db
@@ -334,7 +334,9 @@ function run(db: DatabaseService, event: MessageEvent) {
             .where(
               and(
                 eq(SessionMessageTable.session_id, event.data.sessionID),
-                inArray(SessionMessageTable.type, ["assistant", "idle"]),
+                options?.ignoreIdle
+                  ? eq(SessionMessageTable.type, "assistant")
+                  : inArray(SessionMessageTable.type, ["assistant", "idle"]),
               ),
             )
             .orderBy(desc(SessionMessageTable.seq))
