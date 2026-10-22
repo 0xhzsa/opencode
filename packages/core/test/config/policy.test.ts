@@ -229,6 +229,94 @@ describe("ConfigPolicyPlugin.Plugin", () => {
   )
 })
 
+describe("OPENCODE_CONSOLE_REQUIRE_ORG", () => {
+  // The plugin reads the variable once when it activates.
+  const addRequiringPlugin = (required: string | undefined, entries: Entry[]) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const previous = process.env.OPENCODE_CONSOLE_REQUIRE_ORG
+        if (required === undefined) delete process.env.OPENCODE_CONSOLE_REQUIRE_ORG
+        else process.env.OPENCODE_CONSOLE_REQUIRE_ORG = required
+        return previous
+      }),
+      () => addPlugin(entries),
+      (previous) =>
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env.OPENCODE_CONSOLE_REQUIRE_ORG
+          else process.env.OPENCODE_CONSOLE_REQUIRE_ORG = previous
+        }),
+    )
+  const seed = Effect.fn(function* () {
+    const catalog = yield* Provider.Service
+    yield* catalog.transform((catalog) => {
+      catalog.update(Provider.ID.openai, () => {})
+      catalog.update(Provider.ID.anthropic, () => {})
+      catalog.update(Provider.ID.opencode, () => {})
+    })
+    return catalog
+  })
+  const present = Effect.fn(function* () {
+    const catalog = yield* Provider.Service
+    const ids = [Provider.ID.openai, Provider.ID.anthropic, Provider.ID.opencode]
+    const found = yield* Effect.forEach(ids, (id) => catalog.get(id))
+    return ids.filter((_, index) => found[index] !== undefined)
+  })
+
+  it.effect("denies every provider while signed out, even ones authored config allows", () =>
+    Effect.gen(function* () {
+      const catalog = yield* seed()
+      yield* addRequiringPlugin("org_acme", [document(provider("allow", "*"))])
+      expect(yield* present()).toEqual([])
+      const managed = yield* ManagedPolicy.Service
+      expect(ManagedPolicy.statements([], managed.current(), "org_acme")).toEqual([
+        {
+          action: "provider.use",
+          resource: "*",
+          effect: "deny",
+          message: "Sign in to org_acme in OpenCode Console to use OpenCode",
+        },
+      ])
+
+      // Signing in to the required organization lifts the block on the next rebuild.
+      yield* managed.set({ statements: [], organization: "Acme", organizationID: "org_acme" })
+      yield* catalog.reload()
+      expect(yield* present()).toEqual([Provider.ID.openai, Provider.ID.anthropic, Provider.ID.opencode])
+    }),
+  )
+
+  it.effect("applies the required organization's own statements as usual", () =>
+    Effect.gen(function* () {
+      const managed = yield* ManagedPolicy.Service
+      yield* seed()
+      yield* managed.set({
+        statements: [provider("deny", "openai")],
+        organization: "Acme",
+        organizationID: "org_acme",
+      })
+      yield* addRequiringPlugin("org_acme", [])
+      expect(yield* present()).toEqual([Provider.ID.anthropic, Provider.ID.opencode])
+    }),
+  )
+
+  it.effect("ignores the statements of a different organization and denies every provider", () =>
+    Effect.gen(function* () {
+      const managed = yield* ManagedPolicy.Service
+      yield* seed()
+      yield* managed.set({ statements: [provider("allow", "*")], organization: "Other", organizationID: "org_other" })
+      yield* addRequiringPlugin("org_acme", [])
+      expect(yield* present()).toEqual([])
+    }),
+  )
+
+  it.effect("changes nothing when unset", () =>
+    Effect.gen(function* () {
+      yield* seed()
+      yield* addRequiringPlugin(undefined, [])
+      expect(yield* present()).toEqual([Provider.ID.openai, Provider.ID.anthropic, Provider.ID.opencode])
+    }),
+  )
+})
+
 const waitUntil = Effect.fnUntraced(function* (condition: Effect.Effect<boolean>) {
   for (let attempt = 0; attempt < 200; attempt++) {
     if (yield* condition) return

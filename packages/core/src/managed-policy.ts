@@ -12,6 +12,8 @@ export interface State {
   readonly statements: ReadonlyArray<ConfigPolicy.Info>
   /** Organization name for denial messages, when the connection knows it. */
   readonly organization?: string
+  /** Console organization ID the connection signed in to, when known. */
+  readonly organizationID?: string
 }
 
 export interface Interface {
@@ -36,6 +38,7 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const changed =
             state.current.organization !== next.organization ||
+            state.current.organizationID !== next.organizationID ||
             !isDeepStrictEqual(state.current.statements, next.statements)
           state.current = next
           if (!changed) return
@@ -47,13 +50,28 @@ export const layer = Layer.effect(
 
 export const node = makeGlobalNode({ service: Service, layer, deps: [] })
 
-export function statements(entries: readonly Entry[], organization: State) {
+/**
+ * `required` is the Console organization ID a location must be connected to. Any other connection, or none, has its
+ * statements ignored and every provider denied after all authored statements, so nothing can allow one back.
+ */
+export function statements(entries: readonly Entry[], organization: State, required?: string) {
+  const authored = entries
+    .filter((entry): entry is Document => entry.type === "document")
+    .toReversed()
+    .flatMap((entry) => entry.info.policies ?? [])
+    .map((policy) => ({ ...policy, message: "Blocked by configuration policy" }))
+  if (required !== undefined && organization.organizationID !== required)
+    return [
+      ...authored,
+      {
+        action: "provider.use" as const,
+        resource: "*",
+        effect: "deny" as const,
+        message: `Sign in to ${required} in OpenCode Console to use OpenCode`,
+      },
+    ]
   return [
-    ...entries
-      .filter((entry): entry is Document => entry.type === "document")
-      .toReversed()
-      .flatMap((entry) => entry.info.policies ?? [])
-      .map((policy) => ({ ...policy, message: "Blocked by configuration policy" })),
+    ...authored,
     ...organization.statements.map((policy) => ({
       ...policy,
       message: organization.organization

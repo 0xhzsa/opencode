@@ -919,6 +919,7 @@ describe("OpencodePlugin", () => {
               { action: "integration.use", resource: "mcp:restricted", effect: "deny" },
             ],
             organization: "Acme",
+            organizationID: "org_test",
           })
           const hooks = yield* PluginHooks.Service
           const decision = yield* hooks.trigger("permission", "evaluate", {
@@ -973,7 +974,7 @@ describe("OpencodePlugin", () => {
           })
           yield* addPlugin().pipe(inProcess(server))
           yield* drain
-          expect(managed.current()).toEqual({ statements: [sudo], organization: "Acme" })
+          expect(managed.current()).toEqual({ statements: [sudo], organization: "Acme", organizationID: "org_acme" })
 
           for (const malformed of [
             { action: "tool.use", resource: 42, effect: "deny" },
@@ -984,25 +985,25 @@ describe("OpencodePlugin", () => {
             state.policies = [env, malformed]
             yield* TestClock.adjust("1 minute")
             yield* drain
-            expect(managed.current()).toEqual({ statements: [sudo], organization: "Acme" })
+            expect(managed.current()).toEqual({ statements: [sudo], organization: "Acme", organizationID: "org_acme" })
             expect(yield* providers.get(Provider.ID.opencode)).toBeDefined()
           }
 
           state.policies = [env, { action: "tool.use", resource: "shell:*", effect: "future-effect" }]
           yield* TestClock.adjust("1 minute")
           yield* drain
-          expect(managed.current()).toEqual({ statements: [env], organization: "Acme" })
+          expect(managed.current()).toEqual({ statements: [env], organization: "Acme", organizationID: "org_acme" })
 
           state.policies = [{ action: "future.use", future: { values: [true] } }]
           yield* TestClock.adjust("1 minute")
           yield* drain
-          expect(managed.current()).toEqual({ statements: [], organization: "Acme" })
+          expect(managed.current()).toEqual({ statements: [], organization: "Acme", organizationID: "org_acme" })
           expect(yield* providers.get(Provider.ID.opencode)).toBeDefined()
 
           state.policies = [{ action: "future.use", effect: { next: true } }, env]
           yield* TestClock.adjust("1 minute")
           yield* drain
-          expect(managed.current()).toEqual({ statements: [env], organization: "Acme" })
+          expect(managed.current()).toEqual({ statements: [env], organization: "Acme", organizationID: "org_acme" })
         }),
       ({ server }) => Effect.promise(() => server.stop(true)),
     ),
@@ -1052,13 +1053,13 @@ describe("OpencodePlugin", () => {
           yield* drain
           const initial = rebuilds.count
           expect(state.requests).toBe(1)
-          expect(managed.current()).toEqual({ statements: [], organization: "Alpha" })
+          expect(managed.current()).toEqual({ statements: [], organization: "Alpha", organizationID: "org_alpha" })
 
           state.policies.org_alpha = [sudo]
           yield* TestClock.adjust("1 minute")
           yield* drain
           expect(state.requests).toBe(2)
-          expect(managed.current()).toEqual({ statements: [sudo], organization: "Alpha" })
+          expect(managed.current()).toEqual({ statements: [sudo], organization: "Alpha", organizationID: "org_alpha" })
           expect(rebuilds.count).toBe(initial + 1)
 
           yield* TestClock.adjust("1 minute")
@@ -1071,7 +1072,7 @@ describe("OpencodePlugin", () => {
           yield* TestClock.adjust("1 minute")
           yield* drain
           expect(state.requests).toBe(4)
-          expect(managed.current()).toEqual({ statements: [sudo], organization: "Alpha" })
+          expect(managed.current()).toEqual({ statements: [sudo], organization: "Alpha", organizationID: "org_alpha" })
           expect(rebuilds.count).toBe(initial + 1)
 
           state.status = 200
@@ -1081,12 +1082,12 @@ describe("OpencodePlugin", () => {
             Effect.sync(() => managed.current()),
             (current) => current.organization === "Beta",
           )
-          expect(managed.current()).toEqual({ statements: [env], organization: "Beta" })
+          expect(managed.current()).toEqual({ statements: [env], organization: "Beta", organizationID: "org_beta" })
 
           state.status = 404
           yield* TestClock.adjust("1 minute")
           yield* drain
-          expect(managed.current()).toEqual({ statements: [], organization: "Beta" })
+          expect(managed.current()).toEqual({ statements: [], organization: "Beta", organizationID: "org_beta" })
 
           state.status = 200
           yield* credentials.remove(beta.id)
@@ -1094,7 +1095,7 @@ describe("OpencodePlugin", () => {
             Effect.sync(() => managed.current()),
             (current) => current.organization === "Alpha",
           )
-          expect(managed.current()).toEqual({ statements: [sudo], organization: "Alpha" })
+          expect(managed.current()).toEqual({ statements: [sudo], organization: "Alpha", organizationID: "org_alpha" })
 
           yield* credentials.remove(alpha.id)
           yield* eventually(
@@ -1154,13 +1155,13 @@ describe("OpencodePlugin", () => {
           yield* drain
           const url = `${server.url.origin}/console/auth/sso/ssoconn%2F1/start?redirectTo=%2Fconsole%2F`
           expect(yield* status()).toEqual({ status: "needs_auth", message: "Sign in with SSO again to use Acme", url })
-          expect(managed.current()).toEqual({ statements: [sudo], organization: "Acme" })
+          expect(managed.current()).toEqual({ statements: [sudo], organization: "Acme", organizationID: "org_acme" })
 
           state.sso = false
           yield* TestClock.adjust("1 minute")
           yield* drain
           expect(yield* status()).toBeUndefined()
-          expect(managed.current()).toEqual({ statements: [sudo], organization: "Acme" })
+          expect(managed.current()).toEqual({ statements: [sudo], organization: "Acme", organizationID: "org_acme" })
         }),
       ({ server }) => Effect.promise(() => server.stop(true)),
     ),

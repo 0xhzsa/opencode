@@ -13,6 +13,7 @@ export const Plugin = define({
   effect: Effect.fn(function* (ctx) {
     const config = yield* Config.Service
     const managed = yield* ManagedPolicy.Service
+    const required = process.env.OPENCODE_CONSOLE_REQUIRE_ORG?.trim() || undefined
     const reload = State.batch(
       Effect.all([ctx.provider.reload(), ctx.mcp.reload(), ctx.skill.reload()], { discard: true }),
     )
@@ -23,7 +24,7 @@ export const Plugin = define({
     )
     // Authored documents reverse so user-global policy outranks repository policy; organization statements
     // from the connected Console follow every authored one and have the final say.
-    const policies = () => ManagedPolicy.statements(loaded.entries, managed.current())
+    const policies = () => ManagedPolicy.statements(loaded.entries, managed.current(), required)
     const runSync = Effect.runSyncWith(yield* Effect.context())
     yield* ctx.provider.transform((providers) => {
       const current = policies()

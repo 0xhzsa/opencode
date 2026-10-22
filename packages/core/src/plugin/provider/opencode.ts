@@ -225,7 +225,7 @@ export const OpencodePlugin = define<
     let snapshot: {
       config: typeof RemoteResponse.Type | undefined
       connection: ActiveConnection
-      organization: string | undefined
+      organization: { id: string | undefined; name: string | undefined } | undefined
       // Console MCP servers carry the credential in their headers, so a rotated token changes the snapshot.
       mcp:
         | { servers: NonNullable<typeof RemoteResponse.Type.mcp>["servers"]; headers: Record<string, string> }
@@ -256,7 +256,7 @@ export const OpencodePlugin = define<
             Effect.map((config) => ({
               config,
               connection,
-              organization: organizationName(credential),
+              organization: organization(credential),
               mcp: config?.mcp && { servers: config.mcp.servers, headers: credentialHeaders(credential) },
             })),
           )
@@ -368,7 +368,8 @@ export const OpencodePlugin = define<
         [
           managed.set({
             statements: [...(next.config?.experimental?.policies ?? []), ...(next.config?.policies ?? [])],
-            organization: next.organization,
+            organization: next.organization?.name,
+            organizationID: next.organization?.id,
           }),
           voice.host(
             next.connection && next.config?.voice ? consoleVoice(next.connection, next.config.voice) : undefined,
@@ -688,6 +689,12 @@ function connectionStatus(cause: unknown): IntegrationConnection.Status | undefi
 
 function organizationName(credential: Credential.Value) {
   return typeof credential.metadata?.orgName === "string" ? credential.metadata.orgName : undefined
+}
+
+function organization(credential: Credential.Value) {
+  const id = typeof credential.metadata?.orgID === "string" ? credential.metadata.orgID : undefined
+  const name = organizationName(credential)
+  return id === undefined && name === undefined ? undefined : { id, name }
 }
 
 function credentialHeaders(value: Credential.Key | Credential.OAuth): Record<string, string> {

@@ -236,3 +236,34 @@ The Console plugin and the policy plugin cannot be disabled from `plugins`; see
   Policies do not configure endpoints or credentials, and they cannot make an unusable provider usable. They also do not
   sandbox plugin code: a denied provider is blocked on the normal provider and model path.
 </Callout>
+
+### Require an organization
+
+Set `OPENCODE_CONSOLE_REQUIRE_ORG` on the server process to the ID of your Console
+organization. It is the `org_…` segment of your workspace URL, for example
+`https://opencode.ai/console/org_8f3c2a1b9d4e4f6a8b7c5d2e1f0a9b8c`.
+
+```bash
+OPENCODE_CONSOLE_REQUIRE_ORG=org_8f3c2a1b9d4e4f6a8b7c5d2e1f0a9b8c opencode serve
+```
+
+For the shared background server:
+
+```bash
+opencode service set env OPENCODE_CONSOLE_REQUIRE_ORG org_8f3c2a1b9d4e4f6a8b7c5d2e1f0a9b8c
+```
+
+| Connection                              | Result                                                      |
+| --------------------------------------- | ----------------------------------------------------------- |
+| Signed in to that organization          | Normal; the organization's own statements apply             |
+| Signed out, or signed in to another one | Every provider denied; other workspace's statements ignored |
+
+The block acts as a final `provider.use` `deny` on `*`, so no authored policy, local
+provider key, or other workspace can allow a provider back. Signing in with
+`/connect` still works, and the block lifts once the organization's configuration
+loads.
+
+<Callout type="note">
+  This is a deterrent, not tamper-proofing: anyone who controls the server's environment can unset the variable. Service
+  account API keys and `OPENCODE_API_KEY` carry no organization ID, so they are blocked too.
+</Callout>
