@@ -1449,15 +1449,17 @@ test.describe("compaction", () => {
     )
     await expect(compaction).toContainText("Final implementation details.")
     await expect(compaction).not.toContainText("Streamed implementation details.")
-    await expect(compaction.getByText("Session compaction started", { exact: true })).toBeVisible()
-    await expect(compaction.getByText("Session compacted", { exact: true })).toBeVisible()
-    await expect(compaction.getByRole("button", { name: "Summary", exact: true })).toBeVisible()
+
+    // Finished, the summary sits under a single divider that folds it.
+    const done = compaction.getByRole("button", { name: "Session compacted", exact: true })
+    await expect(done).toHaveAttribute("aria-expanded", "true")
+    await expect(compaction.getByText("Session compaction started", { exact: true })).toHaveCount(0)
     await expect
       .poll(async () => {
-        const body = await summary.boundingBox()
-        const done = await compaction.getByText("Session compacted", { exact: true }).boundingBox()
+        const body = await compaction.locator('[data-component="text-part"]').boundingBox()
+        const divider = await done.boundingBox()
 
-        return !!body && !!done && done.y >= body.y + body.height
+        return !!body && !!divider && body.y >= divider.y + divider.height
       })
       .toBe(true)
     await expect(compaction.getByRole("status")).toHaveCount(0)
@@ -1475,9 +1477,9 @@ test.describe("compaction", () => {
     await expect(compaction.getByText("Streamed folded details.")).toBeHidden()
 
     await timeline.send(compactionEnded({ sessionID, reason: "auto", text: "Final folded details." }))
-    await expect(compaction.getByText("Session compacted", { exact: true })).toBeVisible()
-    const trigger = compaction.getByRole("button", { name: "Summary", exact: true })
+    const trigger = compaction.getByRole("button", { name: "Session compacted", exact: true })
     await expect(trigger).toHaveAttribute("aria-expanded", "false")
+    await expect(compaction.getByText("Session compaction started", { exact: true })).toHaveCount(0)
     await expect(compaction.getByText("Final folded details.")).toBeHidden()
 
     await trigger.click()
@@ -1518,7 +1520,10 @@ test.describe("compaction", () => {
   for (const names of [["failed", "cancelled"], ["interrupted"]] as const) {
     test(`ends running compactions as ${names.join(", then ")}`, async ({ page }) => {
       // Expanded notices show the partial summary while it streams.
-      const settings = { timelineDetail: { ...detailed, notices: { placement: "grouped", details: "expanded" } } } as const
+      const settings = {
+        timelineDetail: { ...detailed, notices: { placement: "grouped", details: "expanded" } },
+      } as const
+
       const timeline = await setupTimeline(
         page,
         names[0] === "interrupted"

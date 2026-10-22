@@ -37,9 +37,11 @@ describe("settings timeline detail migration", () => {
 
   test("gives saved notices the compaction summary detail their placement showed", () => {
     const { details: _, ...everythingNotices } = timelinePresets[0].value.notices
+
     const everything = decode({
       general: { timelineDetail: { ...timelinePresets[0].value, notices: everythingNotices } },
     })
+
     const grouped = decode({ general: { timelineDetail: { notices: { placement: "grouped" } } } })
 
     expect(everything.general.timelineDetail).toEqual(timelinePresets[0].value)
