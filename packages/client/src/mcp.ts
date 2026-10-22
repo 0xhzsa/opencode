@@ -1,11 +1,3 @@
-import {
-  deserializeMessage,
-  McpServer,
-  type JSONRPCMessage,
-  type ServerContext,
-  type Transport,
-} from "@modelcontextprotocol/server"
-
 export type ClientMcpOptions = {
   /** Base URL of the opencode server, for example `http://127.0.0.1:4096`. Its query params are kept. */
   readonly url: string
@@ -15,25 +7,62 @@ export type ClientMcpOptions = {
   readonly directory?: string
   /** Handshake headers, such as `authorization`. Browsers cannot send them; use a ticket in `url` instead. */
   readonly headers?: Record<string, string>
-  /** Adds tools to a fresh `McpServer`. Called once per connection, including after every reconnect. */
-  readonly register: (server: McpServer) => void
+  readonly tools: ReadonlyArray<ClientMcpTool>
   readonly WebSocket?: typeof WebSocket
+}
+
+export type ClientMcpTool = {
+  /** `[a-zA-Z0-9_-]+` */
+  readonly name: string
+  readonly description?: string
+  /** JSON Schema for the arguments. Defaults to `{ type: "object" }`. Arguments are not validated here. */
+  readonly inputSchema?: Record<string, unknown>
+  readonly handler: (
+    args: Record<string, unknown>,
+    ctx: ClientMcpToolContext,
+  ) => ClientMcpToolResult | Promise<ClientMcpToolResult>
+}
+
+export type ClientMcpToolContext = {
+  /** The opencode session that issued the call. */
+  readonly sessionID?: string
+}
+
+export type ClientMcpToolResult = {
+  readonly content: ReadonlyArray<
+    | { readonly type: "text"; readonly text: string }
+    | { readonly type: "image"; readonly data: string; readonly mimeType: string }
+  >
+  readonly isError?: boolean
 }
 
 export type ClientMcpConnection = {
   close(): Promise<void>
 }
 
+type Message = {
+  readonly id?: string | number | null
+  readonly method?: string
+  readonly params?: {
+    readonly protocolVersion?: unknown
+    readonly name?: unknown
+    readonly arguments?: Record<string, unknown>
+    readonly _meta?: Record<string, unknown>
+  }
+}
+
 const SESSION_ID_META_KEY = "ai.opencode/sessionID"
+const PROTOCOL_VERSION = "2025-11-25"
 const RECONNECT_MIN = 500
 const RECONNECT_MAX = 10_000
 
 /**
- * Exposes tools to the opencode server: opens a WebSocket to `/api/experimental/client-mcp` and serves an
- * MCP server over it, so the opencode server is the MCP client. Reconnects with backoff until `close()`.
+ * Exposes tools to the opencode server: opens a WebSocket to `/api/experimental/client-mcp` and answers MCP
+ * JSON-RPC over it (one message per text frame), so the opencode server is the MCP client. Reconnects with
+ * backoff until `close()`.
  */
 export function connectClientMcp(options: ClientMcpOptions): ClientMcpConnection {
-  const state: { disposed: boolean; delay: number; timer?: ReturnType<typeof setTimeout>; server?: McpServer } = {
+  const state: { disposed: boolean; delay: number; timer?: ReturnType<typeof setTimeout>; socket?: WebSocket } = {
     disposed: false,
     delay: RECONNECT_MIN,
   }
@@ -45,16 +74,21 @@ export function connectClientMcp(options: ClientMcpOptions): ClientMcpConnection
       ? // Bun and Node accept a `{ headers }` init as the second argument; the DOM typings only know protocols.
         new Socket(endpoint(options), { headers: options.headers } as unknown as string[])
       : new Socket(endpoint(options))
-    const server = new McpServer({ name: options.name, version: "1.0.0" })
-    state.server = server
-    options.register(server)
-    // Reset backoff only once the opencode server finished initializing, so a failed attach keeps backing off.
-    server.server.oninitialized = () => {
-      state.delay = RECONNECT_MIN
-    }
-    void server.connect(createTransport(socket)).catch(() => socket.close())
+    state.socket = socket
+    socket.addEventListener("message", (event) => {
+      if (typeof event.data !== "string") return
+      const message = parse(event.data)
+      if (!message) return send(socket, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } })
+      // Reset backoff only once the opencode server finished initializing, so a failed attach keeps backing off.
+      if (message.method === "notifications/initialized") state.delay = RECONNECT_MIN
+      // Notifications and responses need no reply.
+      if (message.id === undefined || message.method === undefined) return
+      void respond(options, message.method, message.params).then((reply) =>
+        send(socket, { jsonrpc: "2.0", id: message.id, ...reply }),
+      )
+    })
     socket.addEventListener("close", () => {
-      if (state.server === server) state.server = undefined
+      if (state.socket === socket) state.socket = undefined
       if (state.disposed) return
       state.timer = setTimeout(connect, state.delay)
       state.delay = Math.min(state.delay * 2, RECONNECT_MAX)
@@ -67,15 +101,65 @@ export function connectClientMcp(options: ClientMcpOptions): ClientMcpConnection
     async close() {
       state.disposed = true
       clearTimeout(state.timer)
-      await state.server?.close()
+      state.socket?.close(1000)
     },
   }
 }
 
-/** The opencode session that issued a tool call, read from the request `_meta`. */
-export function sessionID(ctx: Pick<ServerContext, "mcpReq">) {
-  const value = ctx.mcpReq._meta?.[SESSION_ID_META_KEY]
-  return typeof value === "string" ? value : undefined
+async function respond(options: ClientMcpOptions, method: string, params: Message["params"]) {
+  switch (method) {
+    case "initialize":
+      return {
+        result: {
+          // The opencode server only offers versions it supports, so echo its choice.
+          protocolVersion: typeof params?.protocolVersion === "string" ? params.protocolVersion : PROTOCOL_VERSION,
+          capabilities: { tools: {} },
+          serverInfo: { name: options.name, version: "1.0.0" },
+        },
+      }
+    case "ping":
+      return { result: {} }
+    case "tools/list":
+      return {
+        result: {
+          tools: options.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema ?? { type: "object" },
+          })),
+        },
+      }
+    case "tools/call": {
+      const tool = options.tools.find((tool) => tool.name === params?.name)
+      if (!tool) return { error: { code: -32602, message: `Unknown tool: ${String(params?.name)}` } }
+      const meta = params?._meta?.[SESSION_ID_META_KEY]
+      return Promise.resolve()
+        .then(() => tool.handler(params?.arguments ?? {}, { sessionID: typeof meta === "string" ? meta : undefined }))
+        .then(
+          (result) => ({ result }),
+          (error) => ({
+            result: {
+              content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+              isError: true,
+            },
+          }),
+        )
+    }
+  }
+  return { error: { code: -32601, message: `Method not found: ${method}` } }
+}
+
+function send(socket: WebSocket, message: object) {
+  if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message))
+}
+
+function parse(text: string): Message | undefined {
+  try {
+    const value: unknown = JSON.parse(text)
+    return typeof value === "object" && value !== null && !Array.isArray(value) ? value : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function endpoint(options: ClientMcpOptions) {
@@ -87,58 +171,4 @@ function endpoint(options: ClientMcpOptions) {
   url.searchParams.set("name", options.name)
   url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:"
   return url
-}
-
-/**
- * One JSON-RPC message per text frame. Frames that arrive before `start()` are buffered. Invalid frames are
- * reported through `onerror` and the connection stays open. Nothing is replayed after a disconnect.
- */
-function createTransport(socket: WebSocket) {
-  const state: { started: boolean; closed: boolean; buffer: string[] } = { started: false, closed: false, buffer: [] }
-
-  const end = () => {
-    if (state.closed) return
-    state.closed = true
-    state.buffer.length = 0
-    transport.onclose?.()
-  }
-
-  const receive = (text: string) => {
-    const message = parse(text)
-    if (message instanceof Error) return transport.onerror?.(message)
-    transport.onmessage?.(message)
-  }
-
-  const transport: Transport = {
-    async start() {
-      state.started = true
-      while (!state.closed && state.buffer.length > 0) receive(state.buffer.shift()!)
-    },
-    async send(message: JSONRPCMessage) {
-      if (state.closed || socket.readyState !== socket.OPEN) throw new Error("Not connected")
-      socket.send(JSON.stringify(message))
-    },
-    async close() {
-      if (state.closed) return
-      socket.close(1000)
-      end()
-    },
-  }
-
-  socket.addEventListener("message", (event) => {
-    if (state.closed) return
-    if (typeof event.data !== "string") return transport.onerror?.(new Error("Expected a text frame"))
-    if (!state.started) return void state.buffer.push(event.data)
-    receive(event.data)
-  })
-  socket.addEventListener("close", end)
-  return transport
-}
-
-function parse(text: string) {
-  try {
-    return deserializeMessage(text)
-  } catch (cause) {
-    return new Error("Invalid JSON-RPC frame", { cause })
-  }
 }

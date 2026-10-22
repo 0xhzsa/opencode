@@ -34,7 +34,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.0.0",
     "@opencode/schema": "workspace:*",
     "@opencode/protocol": "workspace:*"
   },

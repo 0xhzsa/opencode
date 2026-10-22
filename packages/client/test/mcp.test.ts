@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, jest, test } from "bun:test"
 import { Client, type JSONRPCMessage, type Transport } from "@modelcontextprotocol/client"
 import type { ServerWebSocket } from "bun"
-import { connectClientMcp, sessionID } from "../src/mcp"
+import { connectClientMcp } from "../src/mcp"
 
 type Peer = {
   readonly request: Request
@@ -24,11 +24,24 @@ describe("connectClientMcp", () => {
       name: "tui",
       directory: "/repo",
       headers: { authorization: "Basic secret" },
-      register(mcp) {
-        mcp.registerTool("whoami", { description: "Return the calling session" }, (ctx) => ({
-          content: [{ type: "text", text: sessionID(ctx) ?? "none" }],
-        }))
-      },
+      tools: [
+        {
+          name: "whoami",
+          description: "Return the calling session",
+          handler: (_args, ctx) => ({ content: [{ type: "text", text: ctx.sessionID ?? "none" }] }),
+        },
+        {
+          name: "echo",
+          inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+          handler: (args) => ({ content: [{ type: "text", text: String(args.text) }] }),
+        },
+        {
+          name: "fail",
+          handler: () => {
+            throw new Error("boom")
+          },
+        },
+      ],
     })
     const peer = await server.next()
 
@@ -39,7 +52,15 @@ describe("connectClientMcp", () => {
     expect(url.searchParams.get("location[directory]")).toBe("/repo")
     expect(peer.request.headers.get("authorization")).toBe("Basic secret")
 
-    expect((await peer.client.listTools()).tools.map((tool) => tool.name)).toEqual(["whoami"])
+    await peer.client.ping()
+    expect((await peer.client.listTools()).tools).toEqual([
+      { name: "whoami", description: "Return the calling session", inputSchema: { type: "object" } },
+      {
+        name: "echo",
+        inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+      },
+      { name: "fail", inputSchema: { type: "object" } },
+    ])
     expect(
       await peer.client.callTool({ name: "whoami", arguments: {}, _meta: { "ai.opencode/sessionID": "ses_1" } }),
     ).toMatchObject({ content: [{ type: "text", text: "ses_1" }] })
@@ -47,20 +68,25 @@ describe("connectClientMcp", () => {
       content: [{ type: "text", text: "none" }],
     })
 
+    expect(await peer.client.callTool({ name: "echo", arguments: { text: "hi" } })).toMatchObject({
+      content: [{ type: "text", text: "hi" }],
+    })
+    expect(await peer.client.callTool({ name: "fail", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "boom" }],
+      isError: true,
+    })
+    await expect(peer.client.callTool({ name: "missing", arguments: {} })).rejects.toThrow("Unknown tool: missing")
+
     await connection.close()
     await peer.closed
   })
 
   test("reconnects after the server drops the socket", async () => {
     const server = serve()
-    const registered: string[] = []
     const connection = connectClientMcp({
       url: server.url,
       name: "tui",
-      register(mcp) {
-        registered.push("tools")
-        mcp.registerTool("ping", {}, () => ({ content: [{ type: "text", text: "pong" }] }))
-      },
+      tools: [{ name: "ping", handler: () => ({ content: [{ type: "text", text: "pong" }] }) }],
     })
     const first = await server.next()
     expect((await first.client.listTools()).tools).toHaveLength(1)
@@ -70,7 +96,6 @@ describe("connectClientMcp", () => {
     expect(await second.client.callTool({ name: "ping", arguments: {} })).toMatchObject({
       content: [{ type: "text", text: "pong" }],
     })
-    expect(registered).toEqual(["tools", "tools"])
 
     await connection.close()
   })
@@ -78,7 +103,7 @@ describe("connectClientMcp", () => {
   test("close cancels a pending reconnect", async () => {
     const server = serve()
     const socket = trackedSocket()
-    const connection = connectClientMcp({ url: server.url, name: "tui", register() {}, WebSocket: socket.WebSocket })
+    const connection = connectClientMcp({ url: server.url, name: "tui", tools: [], WebSocket: socket.WebSocket })
     const peer = await server.next()
 
     jest.useFakeTimers()
@@ -110,7 +135,7 @@ describe("connectClientMcp", () => {
     const connection = connectClientMcp({
       url: server.url.href,
       name: "tui",
-      register() {},
+      tools: [],
       WebSocket: socket.WebSocket,
     })
 
