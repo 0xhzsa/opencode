@@ -134,6 +134,7 @@ type Growth = {
   enterProgress: number
   enter?: () => void
   coupled?: NormalizedCoupled
+  entrance?: Spring
 }
 
 /**
@@ -170,17 +171,13 @@ export function createRowGrowth(input: {
     const streamEdge = streamingRow ? streamingEdgeFor() : undefined
     const tuned = growthSpring()
     spring.tune(streamEdge ? { ...tuned, duration: tuned.duration * streamEdge.spring } : tuned)
-    // A complete row's duration belongs to its own remaining distance. Queued rows must not accelerate its entrance.
-    const arriving = [...growths.values()].find((growth) => growth.target > growth.value)
-    if (arriving && !arriving.streaming && !arriving.coupled)
-      spring.set(spring.value + arriving.target - arriving.value, arriving.freshRow ? { velocity: 0 } : undefined)
     const before = grid(spring.value)
     const beforeRaw = spring.value
     const nextValue = spring.step(dt)
     const target = spring.target
     // A growth bent toward a nearer target keeps its speed and would pass it, then come back: it lands there instead.
-    const done = spring.resting || (target - before) * (target - nextValue) <= 0
-    const rawBudget = done ? Infinity : Math.max(0, nextValue - beforeRaw)
+    const sharedDone = spring.resting || (target - before) * (target - nextValue) <= 0
+    const rawBudget = sharedDone ? Infinity : Math.max(0, nextValue - beforeRaw)
     const scale = Math.max(1, motionTuning.timeScale())
     let stepped = false
     let consumed = 0
@@ -198,7 +195,8 @@ export function createRowGrowth(input: {
         if (!growth.entering || !wrapper) growths.delete(key)
         return
       }
-      if (stepped && diff >= 0) {
+      const independent = diff > 0 && !growth.streaming && !growth.coupled
+      if (stepped && diff >= 0 && !independent) {
         if (growth.coupled && growth.coupled.gaps.length > 0) {
           const shown = grid(growth.value)
           const ratio = Math.max(0, Math.min(1, 1 - shown / Math.max(1, growth.target)))
@@ -253,8 +251,14 @@ export function createRowGrowth(input: {
       }
       // A complete arriving row follows the duration spring. Per-frame stream caps made a long sent prompt take
       // seconds to open at lower refresh rates, long after its flight had arrived.
-      const rowMaxTake = !growth.streaming && !coupled && diff > 0 ? Infinity : maxTake / travelFactor
-      const take = rem <= 0 ? 0 : Math.min(rem, rawBudget, done && rem <= rowMaxTake ? rem : rowMaxTake)
+      // Its own spring lets complete arrivals open together without inheriting another row's speed or backlog.
+      const entrance = independent ? (growth.entrance ??= Spring.fromDuration(growth.value, tuned)) : undefined
+      entrance?.tune(tuned).set(growth.target)
+      const entranceValue = entrance?.step(dt)
+      const done = entrance ? entrance.resting || entranceValue! >= growth.target : sharedDone
+      const budget = entranceValue === undefined ? rawBudget : Math.max(0, entranceValue - growth.value)
+      const rowMaxTake = independent ? Infinity : maxTake / travelFactor
+      const take = rem <= 0 ? 0 : Math.min(rem, budget, done && rem <= rowMaxTake ? rem : rowMaxTake)
       stepped ||= diff > 0
       consumed += take
       lastTake = take * travelFactor
@@ -420,11 +424,13 @@ export function createRowGrowth(input: {
         if (normalized) {
           running.value = from
           running.coupled = normalized
+          running.entrance = undefined
         } else if (oldRem <= 1e-4 && !streaming && !running.streaming) {
           running.freshRow = true
         }
         // Completing the stream must not remove its catch-up cap while the displayed row is still behind.
         running.streaming ||= streaming
+        if (running.streaming) running.entrance = undefined
         running.target = to
         const newRem = Math.abs(to - running.value)
         if (onEnter && !running.enter) running.enter = onEnter

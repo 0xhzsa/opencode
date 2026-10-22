@@ -30,7 +30,7 @@ async function settle(growth: ReturnType<typeof createRowGrowth>, frames: { held
 }
 
 describe("row growth", () => {
-  test.each([0, 800])("starts the next complete row independently of a streaming row and %s px backlog", (backlog) => {
+  test.each([0, 800])("opens complete arrivals alongside a streaming row and %s px backlog", (backlog) => {
     const sizes = new Map<string, number>()
     const schedule = spyOn(frameLoop, "addMeasured").mockImplementation(() => () => {})
     const growth = createRowGrowth({
@@ -47,9 +47,11 @@ describe("row growth", () => {
       growth.grow("tools", 0, 44, true)
       if (backlog) growth.grow("later", 0, backlog, true)
       const advance = schedule.mock.calls[0]![1]
-      for (let frame = 0; frame < 600 && !sizes.has("tools"); frame++) advance(1 / 60)
+      advance(1 / 60)
+      expect(sizes.get("reply")).toBeGreaterThan(0)
       expect(sizes.get("tools")).toBeGreaterThan(0)
       expect(sizes.get("tools")).toBeLessThan(3)
+      if (backlog) expect(sizes.get("later")).toBeGreaterThan(0)
     } finally {
       growth.finish()
       schedule.mockRestore()
