@@ -177,8 +177,7 @@ export function createTimelineVirtualizer(input: Input) {
 
   const knownKeys = new Set(rowKeys())
   const addedKeys = new Set<string>()
-  // Rows added after the first one already shown, at the end or among the last rows. While following, they grow in
-  // instead of landing.
+  // Rows added after the first one already shown, at the end or among the last rows, grow in while visible.
   const arrivals = new Set<string>()
   const [leavingKeys, setLeavingKeys] = createSignal<string[]>([])
   const leavingCleanups = new Map<string, () => void>()
@@ -358,9 +357,9 @@ export function createTimelineVirtualizer(input: Input) {
     },
     initialOffset: () => (input.pinned() ? Number.MAX_SAFE_INTEGER : 0),
     initialMeasurementsCache: initialMeasurements,
-    // A row arriving at a followed end grows in from nothing, so it never paints first at the estimate.
+    // Visible arrivals start empty even when unpinned, so their first measurement never follows a full-height paint.
     estimateSize: (index) =>
-      arrivals.has(getItemKey()(index)) && following() ? 0 : (modelHeight(getItemKey()(index)) ?? fallbackItemSize),
+      arrivals.has(getItemKey()(index)) && canAnimate() ? 0 : (modelHeight(getItemKey()(index)) ?? fallbackItemSize),
     // A newly observed element gets a real ResizeObserver box before paint. Reuse
     // its snapshot on attachment, but later explicit measurements must read layout
     // so deferred/rewrapped content cannot keep stale, clipped heights (TanStack/virtual#1183).
@@ -735,7 +734,8 @@ export function createTimelineVirtualizer(input: Input) {
     shrinks.delete(key)
 
     if (shown === undefined || !grows(index, shown, size)) {
-      if (growth.target(key) !== undefined) return growth.land(key, size)
+      // Offscreen or oversized arrivals settle immediately and must release their initial hidden opacity too.
+      if ((arriving && size > 0) || growth.target(key) !== undefined) return growth.land(key, size)
 
       return resizeItem(index, size)
     }
@@ -774,27 +774,19 @@ export function createTimelineVirtualizer(input: Input) {
     return (
       !!root &&
       !!item &&
-      (following() ||
-        (active() &&
-          layoutState.visible &&
-          !coldPending &&
-          !prefersReducedMotion() &&
-          item.start < layoutState.offset + layoutState.viewport - bottomInset())) &&
+      (following() || (canAnimate() && item.start < layoutState.offset + layoutState.viewport - bottomInset())) &&
       (delta >= 1 / 64 || growth.target(String(item.key)) !== undefined) &&
       delta <= layoutState.viewport &&
       item.start + shown > layoutState.offset
     )
   }
 
+  function canAnimate() {
+    return active() && layoutState.visible && !coldPending && !prefersReducedMotion()
+  }
+
   function following() {
-    return (
-      active() &&
-      layoutState.visible &&
-      input.pinned() &&
-      !coldPending &&
-      touchStart === undefined &&
-      !prefersReducedMotion()
-    )
+    return canAnimate() && input.pinned() && touchStart === undefined
   }
 
   // Project the resting slot from the size model, including room that closing rows are still giving back. The flight
@@ -936,7 +928,7 @@ export function createTimelineVirtualizer(input: Input) {
       (virtualizer.measurementsCache[first]?.end ?? 0) > layoutState.offset &&
       !!root &&
       following() &&
-      max - layoutState.offset <= 1
+      (resumeSpring !== undefined || max - layoutState.offset <= 1)
 
     if (canClose) leaving.forEach((key) => fadeOutRow(key, previous[first - 1], previous))
     leaving.forEach((key) => {
@@ -1908,7 +1900,7 @@ export function createTimelineVirtualizer(input: Input) {
           ref={(wrapper) => {
             if (
               (arrivals.has(rowProps.rowKey) || growth.entering(rowProps.rowKey)) &&
-              following() &&
+              canAnimate() &&
               !Predicate.isTagged(initialRow, "TurnGap")
             ) {
               wrapper.style.opacity = "0"

@@ -48,7 +48,7 @@ story("reveals mixed modeled and measured rows without starving input", async ({
   await expect(root.locator("[data-scrollable]")).toBeHidden()
 })
 
-for (const action of ["wheel", "resume", "backlog", "unpinned"] as const) {
+for (const action of ["wheel", "resume", "resume-removal", "backlog", "unpinned"] as const) {
   story(`keeps in-flight row growth continuous during ${action}`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "no-preference" })
     await page.evaluate(
@@ -72,13 +72,18 @@ for (const action of ["wheel", "resume", "backlog", "unpinned"] as const) {
       const viewport = host.querySelector<HTMLElement>("[data-scrollable]")!
       const row = host.querySelector<HTMLElement>('[data-timeline-key="user-message:message-8"]')!
       const next = host.querySelector<HTMLElement>('[data-timeline-key="user-message:message-9"]')!
+      const content = host.querySelector<HTMLElement>("[data-timeline-virtual-content]")!
       return new Promise<{
-        before: { height: number; top: number }
-        after: { height: number; top: number }
+        before: { height: number; top: number; extent: number }
+        after: { height: number; top: number; extent: number }
         rise: number
       }>((resolve) => {
         let change:
-          | { before: { height: number; top: number }; after: { height: number; top: number }; rise: number }
+          | {
+              before: { height: number; top: number; extent: number }
+              after: { height: number; top: number; extent: number }
+              rise: number
+            }
           | undefined
         const observer = new ResizeObserver(() => {
           if (row.getBoundingClientRect().height <= 64) return
@@ -89,15 +94,30 @@ for (const action of ["wheel", "resume", "backlog", "unpinned"] as const) {
             resolve(change)
             return
           }
-          const before = { height: row.getBoundingClientRect().height, top: next.getBoundingClientRect().top }
-          if (action !== "backlog") viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -90, bubbles: true }))
-          if (action === "resume") host.querySelector<HTMLButtonElement>('[data-testid="resume"]')!.click()
+          if (action === "resume-removal") {
+            viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -90, bubbles: true }))
+            viewport.scrollTop -= 90
+            viewport.dispatchEvent(new Event("scroll"))
+          }
+          const before = {
+            height: row.getBoundingClientRect().height,
+            top: next.getBoundingClientRect().top,
+            extent: content.getBoundingClientRect().height,
+          }
+          if (action !== "backlog" && action !== "resume-removal")
+            viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -90, bubbles: true }))
+          if (action.startsWith("resume")) host.querySelector<HTMLButtonElement>('[data-testid="resume"]')!.click()
+          if (action === "resume-removal") host.querySelector<HTMLButtonElement>('[data-testid="remove-row"]')!.click()
           change = {
             before,
-            after: { height: row.getBoundingClientRect().height, top: next.getBoundingClientRect().top },
+            after: {
+              height: row.getBoundingClientRect().height,
+              top: next.getBoundingClientRect().top,
+              extent: content.getBoundingClientRect().height,
+            },
             rise: 0,
           }
-          if (action === "resume" && change.after.height < 184) return
+          if (action.startsWith("resume") && change.after.height < 184) return
           observer.disconnect()
           resolve(change)
         })
@@ -109,12 +129,42 @@ for (const action of ["wheel", "resume", "backlog", "unpinned"] as const) {
     expect(change.before.height).toBeLessThan(184)
     expect(Math.abs(change.after.height - change.before.height)).toBeLessThanOrEqual(1 / 64)
     expect(Math.abs(change.after.top - change.before.top)).toBeLessThanOrEqual(1 / 64)
+    expect(Math.abs(change.after.extent - change.before.extent)).toBeLessThanOrEqual(1 / 64)
     expect(change.rise).toBeLessThanOrEqual(1 / 64)
     await expect(root.getByTestId("timeline-controls")).toHaveAttribute(
       "data-pinned",
       String(action !== "wheel" && action !== "unpinned"),
     )
     await expect(growing).toHaveCSS("height", "184px")
+  })
+}
+
+for (const height of [64, 512]) {
+  story(`starts new unpinned ${height}px rows at zero height before their first measurement`, async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "no-preference" })
+    await page.evaluate(
+      async ({ url, height }) => {
+        const { mountTimelineVirtualizer } = await import(url)
+        mountTimelineVirtualizer({ count: 10, rowHeight: 64, modeled: 11, viewportHeight: 300, insertedHeight: height })
+      },
+      { url: fixture, height },
+    )
+    const root = page.getByTestId("timeline-virtualizer-fixture")
+    await root.getByRole("button", { name: "Complete Markdown", exact: true }).click()
+    await expect(root.locator("[data-timeline-virtual-content]")).toHaveCSS("visibility", "visible")
+    const first = await root.evaluate((host) => {
+      const viewport = host.querySelector<HTMLElement>("[data-scrollable]")!
+      viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true }))
+      const next = host.querySelector<HTMLElement>('[data-timeline-key="user-message:message-9"]')!
+      const top = next.getBoundingClientRect().top
+      host.querySelector<HTMLButtonElement>('[data-testid="insert-row"]')!.click()
+      const row = host.querySelector<HTMLElement>('[data-timeline-key="user-message:inserted"]')!
+      return { height: row.getBoundingClientRect().height, travel: next.getBoundingClientRect().top - top }
+    })
+    expect(first.height).toBe(0)
+    expect(Math.abs(first.travel)).toBeLessThanOrEqual(1 / 64)
+    await expect(root.locator('[data-timeline-key="user-message:inserted"]')).toHaveCSS("height", `${height}px`)
+    await expect(root.locator('[data-timeline-key="user-message:inserted"]')).toHaveCSS("opacity", "1")
   })
 }
 

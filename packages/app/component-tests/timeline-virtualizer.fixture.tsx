@@ -1,5 +1,5 @@
 import { TimelineRow } from "@opencode/session-ui/timeline/projection"
-import { onCleanup } from "solid-js"
+import { createMemo, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { render } from "solid-js/web"
 import { LanguageProvider } from "../src/runtime/i18n/language"
@@ -12,6 +12,7 @@ export function mountTimelineVirtualizer(input: {
   modeled?: number
   growthRows?: number
   viewportHeight?: number
+  insertedHeight?: number
 }) {
   const host = document.createElement("main")
   host.dataset.testid = "timeline-virtualizer-fixture"
@@ -21,17 +22,23 @@ export function mountTimelineVirtualizer(input: {
   document.body.appendChild(host)
 
   function Fixture() {
-    const [state, setState] = createStore({ pinned: true, ready: false, growth: 0 })
+    const [state, setState] = createStore({ pinned: true, ready: false, growth: 0, inserted: false, removed: false })
 
-    const rows = Array.from(
+    const initial = Array.from(
       { length: input.count },
       (_, index) => new TimelineRow.UserMessage({ userMessageID: `message-${index}` }),
     )
 
-    const rowByKey = new Map(rows.map((row) => [TimelineRow.key(row), row]))
-    const indexes = new Map(rows.map((row, index) => [row.userMessageID, index]))
+    const inserted = new TimelineRow.UserMessage({ userMessageID: "inserted" })
+    const rows = createMemo(() =>
+      (state.inserted ? [...initial.slice(0, -1), inserted, initial.at(-1)!] : initial).filter(
+        (row) => !state.removed || row.userMessageID !== `message-${input.count - 3}`,
+      ),
+    )
+    const rowByKey = createMemo(() => new Map(rows().map((row) => [TimelineRow.key(row), row])))
+    const indexes = new Map([...initial, inserted].map((row, index) => [row.userMessageID, index]))
     const height = (id: string) =>
-      input.rowHeight +
+      (id === "inserted" ? (input.insertedHeight ?? input.rowHeight) : input.rowHeight) +
       (indexes.get(id)! >= input.count - 1 - (input.growthRows ?? 1) && indexes.get(id)! < input.count - 1
         ? state.growth
         : 0)
@@ -43,8 +50,8 @@ export function mountTimelineVirtualizer(input: {
     const timeline = createTimelineVirtualizer({
       sessionKey: () => "cold-reveal-fixture",
       projection: {
-        rows: () => rows,
-        rowByKey: () => rowByKey,
+        rows,
+        rowByKey,
         activeMessageID: () => undefined,
         messageByID: () => new Map(),
         messageRowIndex: () => indexes,
@@ -114,6 +121,12 @@ export function mountTimelineVirtualizer(input: {
         </button>
         <button type="button" data-testid="grow-row" onClick={() => setState("growth", 120)}>
           Grow penultimate row
+        </button>
+        <button type="button" data-testid="insert-row" onClick={() => setState("inserted", true)}>
+          Insert row
+        </button>
+        <button type="button" data-testid="remove-row" onClick={() => setState("removed", true)}>
+          Remove row
         </button>
         <button
           type="button"
