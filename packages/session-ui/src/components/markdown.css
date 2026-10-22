@@ -468,6 +468,19 @@
   }
 }
 
+/* The streaming-edge experiment (Knobs, Experiments): No mask shows new words at once; Word fade fades them longer. */
+:root[data-streaming-edge="whole"] {
+  [data-component="markdown"] :is([data-markdown-word], code, [data-component="markdown-code"])[data-markdown-enter] {
+    animation: none;
+  }
+}
+
+:root[data-streaming-edge="fade"] {
+  [data-component="markdown"] :is([data-markdown-word], code, [data-component="markdown-code"])[data-markdown-enter] {
+    animation-duration: calc(360ms * var(--motion-time-scale, 1));
+  }
+}
+
 :root[data-motion="reduce"] {
   [data-component="markdown"] :is([data-markdown-word], code, [data-component="markdown-code"])[data-markdown-enter] {
     animation: none;

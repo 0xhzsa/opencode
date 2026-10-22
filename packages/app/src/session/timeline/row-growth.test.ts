@@ -130,14 +130,11 @@ describe("row growth", () => {
     expect(sizes.every((size, index) => size <= (sizes[index - 1] ?? 148))).toBe(true)
   })
 
-  test("offers streaming edges from Smooth, as shipped, to Instant lines, with Adaptive between them by pace", () => {
-    expect(streamingEdgeFor(0, "smooth")).toEqual({ catchUp: 1, feather: 28, floor: 18, fadeOut: 1.8, spring: 1 })
-    const [smooth, snappy, lines] = (["smooth", "snappy", "lines"] as const).map((style) => streamingEdgeFor(0, style))
-    expect(smooth!.catchUp < snappy!.catchUp && snappy!.catchUp < lines!.catchUp).toBe(true)
-    expect(smooth!.feather > snappy!.feather && snappy!.feather > lines!.feather).toBe(true)
-    expect(streamingEdgeFor(10, "adaptive")).toEqual(smooth!)
-    expect(streamingEdgeFor(200, "adaptive")).toEqual(lines!)
-    expect(streamingEdgeFor(50, "adaptive").catchUp).toBeCloseTo((smooth!.catchUp + lines!.catchUp) / 2)
+  test("offers streaming edges from Feather, as shipped, to unmasked lines", () => {
+    const [feather, fast, whole, fade] = (["feather", "fast", "whole", "fade"] as const).map(streamingEdgeFor)
+    expect(feather).toEqual({ catchUp: 1, feather: 28, floor: 18, fadeOut: 1.8, spring: 1, clip: true })
+    expect(fast!.catchUp > feather!.catchUp && fast!.feather < feather!.feather && fast!.clip).toBe(true)
+    expect([whole!.clip, whole!.feather, fade!.clip, fade!.feather]).toEqual([false, 0, false, 0])
   })
 
   test("computes WorkingHandoffPose curves for copy handoff and reduced motion", () => {

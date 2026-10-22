@@ -17,38 +17,37 @@ const grid = (value: number) => Math.round(value * 64) / 64
 
 const softEdge = 28
 
-// How a streaming row's newest line lands. Smooth, as shipped, scrolls each line in under a long feather; the others
-// trade some of that smoothness for less time masked.
-export const streamingEdge = motionTuning.choice("timeline.streamingEdge", {
+// How a streaming row's newest line lands, an experiment for Kit to pick from. Feather, as shipped, grows each line in
+// under a long soft mask; Fast feather gains each line's height sooner so the mask shows for less time; No mask lets the
+// line draw whole while the row's height, and so the scroll, still glides; Word fade does the same with its new words
+// fading in place.
+export const streamingEdge = motionTuning.choice("timeline.edge", {
   label: "Streaming edge",
-  group: "Timeline",
-  value: "smooth",
-  labels: { smooth: "Smooth", snappy: "Snappier", lines: "Instant lines", adaptive: "Adaptive" },
+  group: "Experiments",
+  value: "feather",
+  labels: { feather: "Feather", fast: "Fast feather", whole: "No mask", fade: "Word fade" },
 })
 
-type Edge = { catchUp: number; feather: number; floor: number; fadeOut: number; spring: number }
+type Edge = { catchUp: number; feather: number; floor: number; fadeOut: number; spring: number; clip: boolean }
 
+const feather = { catchUp: 1, feather: softEdge, floor: 18, fadeOut: 1.8, spring: 1, clip: true }
+const unmasked = { catchUp: 1, feather: 0, floor: 0, fadeOut: softEdge, spring: 1, clip: false }
 const edges = {
-  smooth: { catchUp: 1, feather: softEdge, floor: 18, fadeOut: 1.8, spring: 1 },
-  snappy: { catchUp: 2.2, feather: 16, floor: 10, fadeOut: 3, spring: 0.6 },
-  lines: { catchUp: 6, feather: 10, floor: 0, fadeOut: 6, spring: 0.3 },
-} satisfies Record<string, Edge>
+  feather,
+  fast: { catchUp: 2.4, feather: 12, floor: 6, fadeOut: 4, spring: 0.55, clip: true },
+  whole: unmasked,
+  fade: unmasked,
+} satisfies Record<ReturnType<typeof streamingEdge>, Edge>
 
-/** The streaming edge for a row whose backlog has averaged `pace` px: Adaptive goes from Smooth to Instant lines as a
- * fast stream builds a backlog past a line or two. */
-export function streamingEdgeFor(pace: number, style = streamingEdge()): Edge {
-  if (style !== "adaptive") return edges[style]
-  const t = Math.max(0, Math.min(1, (pace - 20) / 60))
-  if (t === 0) return edges.smooth
-  if (t === 1) return edges.lines
-  const mix = (a: number, b: number) => a + (b - a) * t
-  return {
-    catchUp: mix(edges.smooth.catchUp, edges.lines.catchUp),
-    feather: mix(edges.smooth.feather, edges.lines.feather),
-    floor: mix(edges.smooth.floor, edges.lines.floor),
-    fadeOut: mix(edges.smooth.fadeOut, edges.lines.fadeOut),
-    spring: mix(edges.smooth.spring, edges.lines.spring),
-  }
+export function streamingEdgeFor(style = streamingEdge()): Edge {
+  return edges[style]
+}
+
+// The markdown's word fade follows the choice too: No mask shows new words at once and Word fade fades them longer.
+if (typeof document !== "undefined") {
+  const mark = () => (document.documentElement.dataset.streamingEdge = streamingEdge())
+  mark()
+  motionTuning.subscribe(mark)
 }
 
 export const workingHandoffDuration = 0.34
@@ -129,7 +128,7 @@ type Growth = {
   streaming: boolean
   cruiseStep: number
   /** The row's backlog, averaged over about a third of a second: how far a stream runs ahead of its growth. */
-  pace: number
+  unclipped?: boolean
   entering: boolean
   enterSpan: number
   enterProgress: number
@@ -168,7 +167,7 @@ export function createRowGrowth(input: {
       return
     }
     const streamingRow = [...growths.values()].find((growth) => growth.streaming)
-    const streamEdge = streamingRow ? streamingEdgeFor(streamingRow.pace) : undefined
+    const streamEdge = streamingRow ? streamingEdgeFor() : undefined
     const tuned = growthSpring()
     spring.tune(streamEdge ? { ...tuned, duration: tuned.duration * streamEdge.spring } : tuned)
     const before = grid(spring.value)
@@ -207,8 +206,7 @@ export function createRowGrowth(input: {
         return
       }
       const slowWorking = input.movesWorking?.(key) ?? false
-      if (growth.streaming) growth.pace += (rem - growth.pace) * Math.min(1, dt * 3)
-      const edge = growth.streaming ? streamingEdgeFor(growth.pace) : edges.smooth
+      const edge = growth.streaming ? streamingEdgeFor() : edges.feather
       if (growth.freshRow) {
         growth.freshRow = false
         lastTake = 0
@@ -302,7 +300,12 @@ export function createRowGrowth(input: {
         if (unconsumed > 0) spring?.set(Math.max(spring.value, spring.target - unconsumed))
       } else {
         if (wrapper) {
-          if (rowDone || growth.target <= shown || coupled) {
+          if (!edge.clip && growth.streaming && !coupled) {
+            // The line draws whole past the row's growing edge, over the gap below it.
+            paintEdge(wrapper, growth, 0)
+            growth.unclipped = !rowDone
+            wrapper.style.overflow = rowDone ? "clip" : "visible"
+          } else if (rowDone || growth.target <= shown || coupled) {
             paintEdge(wrapper, growth, 0)
           } else {
             const leftToGrow = Math.max(0, growth.target - shown)
@@ -435,12 +438,11 @@ export function createRowGrowth(input: {
         value: from,
         target: to,
         opaque: Math.max(0, from),
-        maskValue: streaming ? Math.min(16, streamingEdgeFor(rem).feather) : Math.min(softEdge, rem),
+        maskValue: streaming ? Math.min(16, streamingEdgeFor().feather) : Math.min(softEdge, rem),
         maskPx: 0,
         freshRow: true,
         streaming,
         cruiseStep: 0,
-        pace: rem,
         entering: entering && from === 0,
         enterSpan: Math.min(28, Math.max(12, to)),
         enterProgress: 0,
@@ -482,6 +484,10 @@ export function createRowGrowth(input: {
       const running = growths.get(key)
       if (!running) return
       const rem = Math.abs(running.target - running.value)
+      if (running.unclipped) {
+        const wrapper = input.resize(key, running.target)
+        if (wrapper) wrapper.style.overflow = "clip"
+      }
       if (running.coupled) {
         running.coupled.gaps.forEach((gap) => {
           const cWrapper = input.resize(gap.key, gap.base)
