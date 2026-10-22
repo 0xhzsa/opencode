@@ -2,7 +2,7 @@ import { useWorkspaceLocation } from "@/workspaces/location"
 import { Persist, persisted } from "@/runtime/persistence/storage"
 import type { SessionStepFailed } from "@opencode/client/promise"
 import { onCleanup } from "solid-js"
-import { Schema } from "effect"
+import { Option, Schema } from "effect"
 import { Persistence } from "@/runtime/persistence/schema"
 import { useSessionLayout } from "./session-layout"
 import { useDialog, useI18n } from "@opencode/ui/context"
@@ -26,7 +26,19 @@ const MAX_RETRY_AFTER_MS = 7 * 86_400_000
 
 const CHATGPT_USAGE_LIMIT_WINDOW = 86_400_000 // 24 hrs
 
-function formatLimitReset(locale: string, created: number, retryAfterMs: number | undefined) {
+// Sessions whose Go limit is still in effect, with when Go is back. The composer's Go-limit tray shows the limit; a
+// free-limit error in one of these sessions comes from a Go subscriber who switched to a free model, so the tray
+// answers it too instead of the free-tier upsell.
+export const goLimited = new Map<string, number | undefined>()
+
+export function goLimitActive(sessionID: string | undefined) {
+  if (!sessionID || !goLimited.has(sessionID)) return false
+  const at = goLimited.get(sessionID)
+
+  return at === undefined || at > Date.now()
+}
+
+export function formatLimitReset(locale: string, created: number, retryAfterMs: number | undefined) {
   if (
     retryAfterMs === undefined ||
     !Number.isFinite(retryAfterMs) ||
@@ -47,6 +59,17 @@ function formatLimitReset(locale: string, created: number, retryAfterMs: number 
     locale,
     sameDay ? { timeStyle: "short" } : { dateStyle: "medium", timeStyle: "short" },
   ).format(at)
+}
+
+const GoLimitBody = Schema.fromJsonString(Schema.Struct({ metadata: Schema.Struct({ workspace: Schema.String }) }))
+
+const decodeGoLimitBody = Schema.decodeUnknownOption(GoLimitBody)
+
+/** The Console page where a Go subscriber turns on usage from their balance, scoped to the workspace that hit the limit. */
+export function goLimitLink(error: SessionStepFailed["data"]["error"]) {
+  const workspace = Option.getOrUndefined(decodeGoLimitBody(error.response?.body))?.metadata.workspace
+
+  return workspace ? `https://opencode.ai/console/${encodeURIComponent(workspace)}/go` : "https://opencode.ai/console"
 }
 
 export const GoUpsellState = Persistence.struct({
@@ -139,7 +162,9 @@ export function useUsageExceededDialogs(input?: {
       if (evt.data.sessionID !== params.id || dialog.active) return
       const error = evt.data.error
 
-      if (error.type === "provider.free-limit") return whenGoUpsellReady(showFreeLimitDialog, evt)
+      // A Go limit, and running out of free models while one is in effect, show in the composer's Go-limit tray.
+      if (error.type === "provider.free-limit" && !goLimitActive(params.id))
+        return whenGoUpsellReady(showFreeLimitDialog, evt)
 
       if (error.type !== "provider.chatgpt-limit") return
 

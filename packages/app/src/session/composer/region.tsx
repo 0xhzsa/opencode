@@ -33,6 +33,7 @@ import { createSessionRevert } from "../revert"
 import { SessionComposerRegion } from "./session-composer-region"
 import { createSessionComposerController, type SessionComposerController } from "./controller"
 import { SessionQueuePanel } from "./queue-panel"
+import { SessionGoLimitTray } from "./go-limit-tray"
 import { SessionActivityChips, type SessionActivityItem } from "./activity-chips"
 import { useOpenSessionRoute } from "../session-identity-header"
 import { resolveSessionComposerSelection } from "./selection"
@@ -473,6 +474,10 @@ export function ActiveSessionComposerRegion(props: {
         <Show when={!missing() && !props.session.data.isChild()}>
           <SessionActivityChips subagents={subagents()} shells={shells()} onOpen={open} onStop={stop} />
           <SessionQueuePanel queue={props.model.queue} hidden={props.model.region.state.blocked()} />
+          <SessionGoLimitTray
+            sessionID={props.session.identity.params.id}
+            selection={() => props.model.composer.model.selection}
+          />
         </Show>
       }
       composer={
