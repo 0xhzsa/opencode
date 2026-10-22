@@ -7,6 +7,11 @@ type Flight = {
   text: HTMLElement
   layer: HTMLElement
   from: Rect
+  /** How far the composer had scrolled through a prompt taller than it, from 0 at its start to 1 at its end. */
+  reveal: number
+  /** The copy's full text: `above` of it sits over the lines that take off. */
+  above: number
+  textHeight: number
   expire: ReturnType<typeof setTimeout>
   source?: HTMLElement
 }
@@ -30,6 +35,10 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined, s
   const box = range.getBoundingClientRect()
 
   if (box.width < 1 || box.height < 1) return
+  // Only the lines the composer shows take off; a long prompt's scrolled-out lines stay hidden.
+  const view = scroller(editor)?.getBoundingClientRect()
+  const above = Math.max(0, (view?.top ?? box.top) - box.top)
+  const below = Math.max(0, box.bottom - (view?.bottom ?? box.bottom))
   const style = getComputedStyle(editor)
   const text = document.createElement("div")
   text.setAttribute("aria-hidden", "true")
@@ -45,6 +54,7 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined, s
     color: style.color,
     whiteSpace: "pre-wrap",
     overflowWrap: "anywhere",
+    clipPath: above || below ? `inset(${above}px -8px ${below}px -8px)` : "",
   })
   editor.childNodes.forEach((node) => text.append(node.cloneNode(true)))
   text.querySelectorAll("[contenteditable]").forEach((node) => node.removeAttribute("contenteditable"))
@@ -71,7 +81,10 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined, s
     text,
     layer,
     source,
-    from: { x: box.left, y: box.top, w: box.width, h: box.height },
+    from: { x: box.left, y: box.top + above, w: box.width, h: Math.max(1, box.height - above - below) },
+    reveal: above + below > 0 ? above / (above + below) : 0,
+    above,
+    textHeight: box.height,
     expire: setTimeout(() => {
       waiting.delete(id)
       text
@@ -147,7 +160,10 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
   flight.source?.style.setProperty("visibility", "hidden")
 
   const spring = Spring.fromDuration(0, growthSpring()).set(1)
+  const radius = style.borderRadius
   let rect = bubble.getBoundingClientRect()
+  // A prompt that wraps differently in its bubble crosses over quickly, so the two wraps barely overlap.
+  const rewraps = Math.abs(rect.height - top - bottom - flight.textHeight) > 2
   let clip = viewport.getBoundingClientRect()
   let pending = bubble.closest('[data-component="user-message"]')?.hasAttribute("data-pending") ?? false
 
@@ -181,13 +197,20 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
         w: start.w + (rect.width - start.w) * p,
         h: start.h + (rect.height - start.h) * p,
       }
+      // The copy keeps its proportions, so its text never squishes: it scales with the width and shows as much of its
+      // height as the flight has reached, from the part the composer had scrolled to.
+      const scale = at.w / rect.width
+      const shown = Math.min(rect.height, at.h / scale)
+      const from = flight.reveal * (rect.height - shown)
       host.style.width = `${rect.width}px`
       host.style.height = `${rect.height}px`
-      host.style.transform = `translate3d(${at.x - clip.left}px, ${at.y - clip.top}px, 0) scale(${at.w / rect.width}, ${at.h / rect.height})`
-      host.style.opacity = `${Math.min(1, p / 0.5)}`
+      host.style.transform = `translate3d(${at.x - clip.left}px, ${at.y - from * scale - clip.top}px, 0) scale(${scale})`
+      host.style.clipPath =
+        shown < rect.height - 0.5 ? `inset(${from}px 0 ${rect.height - from - shown}px 0 round ${radius})` : ""
+      host.style.opacity = `${rewraps ? Math.min(1, Math.max(0, (p - 0.1) / 0.3)) : Math.min(1, p / 0.5)}`
 
-      flight.text.style.transform = `translate3d(${at.x + left - clip.left}px, ${at.y + top - clip.top}px, 0)`
-      flight.text.style.opacity = `${Math.max(0, 1 - p / 0.4)}`
+      flight.text.style.transform = `translate3d(${at.x + left - clip.left}px, ${at.y + top - flight.above - clip.top}px, 0)`
+      flight.text.style.opacity = `${Math.max(0, 1 - p / (rewraps ? 0.25 : 0.4))}`
 
       if (!spring.resting) return true
       land()
@@ -197,4 +220,11 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
   )
 
   return true
+}
+
+// The box that clips the composer's text, when the prompt is taller than it.
+function scroller(editor: HTMLElement) {
+  for (let node = editor.parentElement; node && node !== document.body; node = node.parentElement)
+    if (node.scrollHeight > node.clientHeight + 1 && getComputedStyle(node).overflowY !== "visible") return node
+  return undefined
 }
