@@ -7,6 +7,8 @@ description: Use when interactively running, debugging, or verifying opencode's 
 
 Workflow for interactively exercising the CLI/TUI and server while developing in this repo. All commands below run from `packages/cli` unless noted otherwise.
 
+The CLI is published as `@opencode/cli`. The `opencode-ai` npm package is the legacy V1 CLI; don't use it as a reference for current behavior or APIs.
+
 ## Server/client model
 
 opencode is a client/server system, not a single monolithic process:
