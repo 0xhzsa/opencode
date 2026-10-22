@@ -4,6 +4,7 @@ import { growthSpring } from "./row-growth"
 type Rect = { x: number; y: number; w: number; h: number }
 
 type Flight = {
+  at: number
   text: HTMLElement
   layer: HTMLElement
   from: Rect
@@ -78,6 +79,7 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined, s
   layer.append(text)
   waiting.get(id)?.layer.remove()
   waiting.set(id, {
+    at: performance.now(),
     text,
     layer,
     source,
@@ -99,7 +101,8 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined, s
 
   const early = unclaimed.get(id)
   unclaimed.delete(id)
-  if (early && performance.now() - early.at < 400 && early.bubble.isConnected) landSendFlight(id, early.bubble, early.offset)
+  if (early && performance.now() - early.at < 400 && early.bubble.isConnected)
+    landSendFlight(id, early.bubble, early.offset)
 }
 
 /** Flies the waiting copy for `id` onto `bubble`. Returns false when nothing was waiting for it. */
@@ -189,11 +192,14 @@ export function landSendFlight(id: string, bubble: HTMLElement, offset?: () => n
         return false
       }
 
-      // A delayed frame must not skip most of a new flight before its first paint.
-      const elapsed = fresh ? 1 / 60 : Math.min(dt, 1 / 30)
+      // Sends can share their first paint after a busy frame. Preserve their distinct launch times instead of
+      // restarting them together, which makes their copies collide along the same path out of the composer.
+      const elapsed = fresh ? Math.max(0, (performance.now() - flight.at) / 1000) : Math.min(dt, 1 / 30)
       fresh = false
       spring.tune(growthSpring())
-      const p = Math.min(1, Math.max(0, spring.step(elapsed)))
+      // Spring.step bounds one integration to 100 ms; a delayed first paint can span several integrations.
+      for (let remaining = elapsed; remaining > 0; remaining -= 0.1) spring.step(Math.min(remaining, 0.1))
+      const p = Math.min(1, Math.max(0, spring.value))
       flight.layer.style.visibility = "visible"
       host.toggleAttribute("data-pending", pending)
       const at = {
