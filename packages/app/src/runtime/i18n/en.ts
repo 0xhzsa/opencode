@@ -1259,6 +1259,32 @@ export const dict = {
   "usage.signedOut.body": "Connect OpenCode Console to see your workspace's budgets and Go usage.",
   "usage.error": "Usage limits couldn't be loaded.",
   "usage.retry": "Try again",
+||||||| parent of 129d613244 (feat(app): add a review tour floater for dev and Beta builds)
+
+  "tour.position": "{{current}}/{{total}}",
+  "tour.previous": "Previous stop (⌥,)",
+  "tour.next": "Next stop (⌥.)",
+  "tour.collapse": "Collapse",
+  "tour.expand": "Show the tour",
+  "tour.close": "End the tour",
+  "tour.ship": "Ship",
+  "tour.changes": "Changes",
+  "tour.skip": "Skip",
+  "tour.pick": "Pick",
+  "tour.note": "What should change?",
+  "tour.send": "Send",
+  "tour.cancel": "Cancel",
+  "tour.sending": "Sending…",
+  "tour.sent": "Sent to the coordinator",
+  "tour.recorded": "Recorded",
+  "tour.failed": "Couldn't send: {{error}}",
+  "tour.noServer": "no server is connected",
+  "tour.problem": "Setup didn't finish: {{error}}",
+  "tour.loadFailed": "Couldn't load the tour: {{error}}",
+  "tour.verdict.ship": "Shipped",
+  "tour.verdict.changes": "Changes sent",
+  "tour.verdict.skip": "Skipped",
+  "tour.verdict.pick": "Picked {{option}}",
 }
 
 export default dict
