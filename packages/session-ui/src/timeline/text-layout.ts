@@ -42,7 +42,7 @@ export function readTimelineTypography(element: Element, revision: number): Time
   probe.dataset.component = "markdown"
   probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none"
   const code = document.createElement("pre")
-  code.className = "shiki"
+  code.className = "highlights"
   probe.append(code)
   element.append(probe)
   const chrome = getComputedStyle(code)
