@@ -10,6 +10,8 @@ export function mountTimelineVirtualizer(input: {
   rowHeight: number
   immediate?: boolean
   modeled?: number
+  growthRows?: number
+  viewportHeight?: number
 }) {
   const host = document.createElement("main")
   host.dataset.testid = "timeline-virtualizer-fixture"
@@ -19,7 +21,7 @@ export function mountTimelineVirtualizer(input: {
   document.body.appendChild(host)
 
   function Fixture() {
-    const [state, setState] = createStore({ pinned: true, ready: false })
+    const [state, setState] = createStore({ pinned: true, ready: false, growth: 0 })
 
     const rows = Array.from(
       { length: input.count },
@@ -28,6 +30,12 @@ export function mountTimelineVirtualizer(input: {
 
     const rowByKey = new Map(rows.map((row) => [TimelineRow.key(row), row]))
     const indexes = new Map(rows.map((row, index) => [row.userMessageID, index]))
+    const height = (id: string) =>
+      input.rowHeight +
+      (indexes.get(id)! >= input.count - 1 - (input.growthRows ?? 1) && indexes.get(id)! < input.count - 1
+        ? state.growth
+        : 0)
+    let scrollToEnd = (_behavior?: ScrollBehavior) => {}
     let viewport!: HTMLDivElement
     let content!: HTMLDivElement
     let container!: HTMLDivElement
@@ -45,7 +53,7 @@ export function mountTimelineVirtualizer(input: {
       showHeader: () => false,
       layout: (row) =>
         row._tag === "UserMessage" && indexes.get(row.userMessageID)! < (input.modeled ?? 0)
-          ? { source: "fixed", height: input.rowHeight }
+          ? { source: "fixed", height: height(row.userMessageID) }
           : { source: "dom", reason: "deferred fixture content" },
       pinned: () => state.pinned,
       scroll: () => ({ overflow: false, jump: false }),
@@ -59,6 +67,7 @@ export function mountTimelineVirtualizer(input: {
         reveal.observe(element, { attributes: true, attributeFilter: ["style"] })
       },
       onPin: () => setState("pinned", true),
+      setScrollToEnd: (scroll) => (scrollToEnd = scroll),
       onUnpin: () => setState("pinned", false),
       onScheduleScrollState: (element) => {
         host.dataset.scrolls = String(Number(host.dataset.scrolls) + 1)
@@ -103,6 +112,19 @@ export function mountTimelineVirtualizer(input: {
         <button type="button" onClick={() => setState("ready", true)}>
           Complete Markdown
         </button>
+        <button type="button" data-testid="grow-row" onClick={() => setState("growth", 120)}>
+          Grow penultimate row
+        </button>
+        <button
+          type="button"
+          data-testid="resume"
+          onClick={() => {
+            setState("pinned", true)
+            scrollToEnd("smooth")
+          }}
+        >
+          Resume following
+        </button>
         <button type="button" onClick={() => (container.style.display = "none")}>
           Hide viewport
         </button>
@@ -121,7 +143,7 @@ export function mountTimelineVirtualizer(input: {
         >
           Reconnect ready rows
         </button>
-        <div ref={container} style={{ height: "180px", width: "400px" }}>
+        <div ref={container} style={{ height: `${input.viewportHeight ?? 180}px`, width: "400px" }}>
           <timeline.View
             header={null}
             deferred={() => false}
@@ -129,7 +151,7 @@ export function mountTimelineVirtualizer(input: {
               <div
                 data-component="markdown"
                 data-markdown-ready={state.ready ? "" : undefined}
-                style={{ height: `${input.rowHeight}px` }}
+                style={{ height: `${height(row().userMessageID)}px` }}
               >
                 {row().userMessageID}
               </div>

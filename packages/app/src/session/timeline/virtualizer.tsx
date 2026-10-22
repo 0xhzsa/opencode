@@ -36,10 +36,10 @@ import type { createTimelineProjection } from "./projection"
 import { observeElementOffsetReconnectAware } from "./observe-element-offset"
 import { filterVirtualIndexes } from "./virtual-items"
 import { holdLandingWidth } from "@/shell/panel-motion"
-import { frameLoop, prefersReducedMotion } from "@opencode/ui/motion"
+import { frameLoop, prefersReducedMotion, Spring } from "@opencode/ui/motion"
 import { motionTuning } from "@opencode/ui/motion-tuning"
 import { landSendFlight } from "./send-flight"
-import { createRowGrowth, workingHandoffDuration, workingHandoffPose } from "./row-growth"
+import { createRowGrowth, growthSpring, workingHandoffDuration, workingHandoffPose } from "./row-growth"
 
 const fallbackItemSize = 60
 
@@ -453,6 +453,8 @@ export function createTimelineVirtualizer(input: Input) {
     track: Math.max(0, layoutState.viewport - bottomInset()),
   }))
   const endOffset = () => Math.max(0, scrollGeometry().extent - scrollGeometry().viewport)
+  const drawnOffset = () =>
+    deferredTop ?? layoutState.offset - (parseFloat(virtualContent?.style.translate.split(" ")[1] ?? "0") || 0)
 
   createEffect(() => {
     const values = layouts()
@@ -473,6 +475,8 @@ export function createTimelineVirtualizer(input: Input) {
   // Space held under the last row so the end eases onto the composer instead of stopping there.
   let lift = 0
   let heldSpace = 0
+  let resumeSpring: Spring | undefined
+  let cancelResume: (() => void) | undefined
   let insetSpacer: HTMLDivElement | undefined
   const [shift, setShift] = createSignal({ rows: 0, size: 0 })
   // Whether the held gap is space the composer freed under the last row, rather than a row's place in the list.
@@ -493,6 +497,7 @@ export function createTimelineVirtualizer(input: Input) {
       virtualizer.options.anchorTo = "start"
       try {
         resizeItem(index, size)
+        applyTouchAdjustment()
       } finally {
         resizingGrowth = false
         virtualizer.options.anchorTo = input.pinned() && !following() ? "end" : "start"
@@ -519,13 +524,6 @@ export function createTimelineVirtualizer(input: Input) {
       return grid(actItem.start - originItem.start + shown)
     },
     settle: (state) => {
-      // A backlog longer than a screen opens at its end instead of replaying the missed growth.
-      if (following() && state.pending > growthViewport) {
-        landGrowth()
-        pinEnd(growthViewport, false)
-        moveGhosts()
-        return
-      }
       if (!state.held) endGap = false
 
       if (state.held !== shift().size) setShift((value) => ({ rows: state.held ? value.rows : 0, size: state.held }))
@@ -541,7 +539,7 @@ export function createTimelineVirtualizer(input: Input) {
     lift = 0
     holdSpace(grid(held))
 
-    if (root && input.pinned()) pinEnd(growthViewport, true)
+    if (root && input.pinned() && !touchScrolling) pinEnd(growthViewport, true)
   }
 
   function contentHeight() {
@@ -566,7 +564,12 @@ export function createTimelineVirtualizer(input: Input) {
     if (!root) return
     writeScroll(
       root,
-      topOffset() + virtualizer.getTotalSize() + bottomInset() + heldSpace - (viewport ?? layoutState.viewport),
+      topOffset() +
+        virtualizer.getTotalSize() +
+        bottomInset() +
+        heldSpace -
+        (viewport ?? layoutState.viewport) -
+        (resumeSpring?.value ?? 0),
       defer,
     )
   }
@@ -591,11 +594,18 @@ export function createTimelineVirtualizer(input: Input) {
       if (remainder === 0) virtualContent?.style.removeProperty("translate")
       else virtualContent?.style.setProperty("translate", `0 ${remainder}px`)
       untrack(() => input.onScheduleScrollState(root, scrollGeometry()))
-      if (!growth.growing() && heldSpace === 0 && !pendingSizes.size) {
+      if (!resumeSpring && !growth.growing() && heldSpace === 0 && !pendingSizes.size) {
         flushScrollFrame ??= frameLoop.addMeasured(
           () => {
             const currentRoot = listRoot()
-            if (!currentRoot || deferredTop === undefined || growth.growing() || heldSpace > 0 || pendingSizes.size > 0)
+            if (
+              !currentRoot ||
+              deferredTop === undefined ||
+              resumeSpring ||
+              growth.growing() ||
+              heldSpace > 0 ||
+              pendingSizes.size > 0
+            )
               return
             const target = Math.max(0, Math.min(deferredTop, endOffset()))
             const nextWhole = Math.floor(target)
@@ -607,7 +617,7 @@ export function createTimelineVirtualizer(input: Input) {
           },
           () => {
             flushScrollFrame = undefined
-            if (growth.growing() || heldSpace > 0 || pendingSizes.size > 0) return false
+            if (resumeSpring || growth.growing() || heldSpace > 0 || pendingSizes.size > 0) return false
             flushDeferredScroll()
             return false
           },
@@ -764,7 +774,12 @@ export function createTimelineVirtualizer(input: Input) {
     return (
       !!root &&
       !!item &&
-      following() &&
+      (following() ||
+        (active() &&
+          layoutState.visible &&
+          !coldPending &&
+          !prefersReducedMotion() &&
+          item.start < layoutState.offset + layoutState.viewport - bottomInset())) &&
       (delta >= 1 / 64 || growth.target(String(item.key)) !== undefined) &&
       delta <= layoutState.viewport &&
       item.start + shown > layoutState.offset
@@ -785,10 +800,12 @@ export function createTimelineVirtualizer(input: Input) {
   // Project the resting slot from the size model, including room that closing rows are still giving back. The flight
   // measures the real bubble once and adds this correction; it does not chase every intermediate layout position.
   function landingOffset(key: string) {
-    if (!following() || (!growth.growing() && !pendingSizes.size && !heldSpace)) return 0
+    if (!active() || !layoutState.visible || (!resumeSpring && !growth.growing() && !pendingSizes.size && !heldSpace))
+      return 0
     const index = rowKeys().lastIndexOf(key)
     let before = 0
     let total = 0
+    let adjustment = 0
     virtualizer.measurementsCache.forEach((item) => {
       if (streaming(rows()[item.index])) return
       const itemKey = String(item.key)
@@ -796,13 +813,19 @@ export function createTimelineVirtualizer(input: Input) {
       const delta = target - item.size
       total += delta
       if (item.index < index) before += delta
+      if (!input.pinned() && aboveFold(item)) adjustment += delta
     })
+    if (!input.pinned()) return grid(before - adjustment)
     const end = Math.max(
       0,
-      topOffset() + virtualizer.getTotalSize() + total + bottomInset() - rendering.scrollAdjustment - layoutState.viewport,
+      topOffset() +
+        virtualizer.getTotalSize() +
+        total +
+        bottomInset() -
+        rendering.scrollAdjustment -
+        layoutState.viewport,
     )
-    const remainder = parseFloat(virtualContent?.style.translate.split(" ")[1] ?? "0") || 0
-    return grid(before - (end - (deferredTop ?? layoutState.offset - remainder)))
+    return grid(before - (end - drawnOffset()))
   }
 
   // A row near the end leaves while the timeline follows it: the neighbour row absorbs its height and closes the gap on
@@ -1144,14 +1167,7 @@ export function createTimelineVirtualizer(input: Input) {
           if (index < 0) return
           commitSize(index, key, size)
 
-          // TanStack recalculates its range after each resize. Advance the
-          // logical fold before deciding whether the next row needs anchoring.
-          if (!touchAdjustment) return
-          setRendering("scrollAdjustment", (value) => value + touchAdjustment)
-          touchAdjustment = 0
-          const root = listRoot()
-
-          if (root) reportOffset?.(layoutState.offset, virtualizer.isScrolling)
+          applyTouchAdjustment()
         })
       })
       batchingColdSizes = false
@@ -1177,25 +1193,41 @@ export function createTimelineVirtualizer(input: Input) {
   }
 
   onCleanup(() => pendingSizes.clear())
-  // Following stops, or the timeline is put away: growing rows land where the reader left them.
+  // Scrolling stops following, not the visible rows' in-flight growth. Landing those rows here moves the content
+  // below them in one frame. Hidden timelines can settle immediately because they have no painted intermediate state.
   createEffect(
     on(
-      () => input.pinned() && active() && layoutState.visible,
-      (following) => {
-        if (!following) landGrowth()
+      [input.pinned, active, () => layoutState.visible],
+      ([pinned, active, visible]) => {
+        if (!pinned || !active || !visible) {
+          stopResume()
+          if (!active || !visible) landGrowth()
+          else flushDeferredScroll()
+        }
       },
       { defer: true },
     ),
   )
-  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, delta, instance) => {
-    if (resizingGrowth || following()) return false
+  function aboveFold(item: VirtualItem) {
     // Prepended rows can resize more than once as deferred content mounts. Keep
     // compensating while they remain entirely above the visible content fold.
-    const first = instance.range?.startIndex
-
-    const adjust = addedKeys.has(String(item.key))
-      ? item.end <= (instance.scrollOffset ?? 0) + instance.scrollAdjustments + instance.options.scrollMargin
+    const first = virtualizer.range?.startIndex
+    return addedKeys.has(String(item.key))
+      ? item.end <= (virtualizer.scrollOffset ?? 0) + virtualizer.scrollAdjustments + virtualizer.options.scrollMargin
       : first !== undefined && item.index < first
+  }
+
+  function applyTouchAdjustment() {
+    // Advance the logical fold before the next row decides whether it needs anchoring.
+    if (!touchAdjustment) return
+    setRendering("scrollAdjustment", (value) => value + touchAdjustment)
+    touchAdjustment = 0
+    if (listRoot()) reportOffset?.(layoutState.offset, virtualizer.isScrolling)
+  }
+
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, delta) => {
+    if ((resizingGrowth && input.pinned()) || following()) return false
+    const adjust = aboveFold(item)
 
     if (!touchScrolling || input.pinned()) return adjust
 
@@ -1290,12 +1322,25 @@ export function createTimelineVirtualizer(input: Input) {
     if (rendering.anchor) setRendering("anchor", undefined)
   }
 
-  function prepareNavigation() {
-    landGrowth()
+  function prepareNavigation(animate = false) {
+    stopResume()
+    if (!animate) landGrowth()
     releaseAnchor()
 
     if (touchStart === undefined) touchScrolling = false
     flushTouchAdjustment()
+  }
+
+  function stopResume() {
+    cancelResume?.()
+    cancelResume = undefined
+    resumeSpring = undefined
+  }
+
+  function interruptResume() {
+    if (!resumeSpring) return
+    stopResume()
+    input.onUnpin()
   }
 
   function flushTouchAdjustment() {
@@ -1378,6 +1423,7 @@ export function createTimelineVirtualizer(input: Input) {
         const root = listRoot()
 
         if (!active() || !root?.isConnected) return
+        if (resumeSpring) return
 
         // Already following its end (sending a prompt resumes it): rows growing in keep growing.
         if (
@@ -1388,13 +1434,26 @@ export function createTimelineVirtualizer(input: Input) {
           endOffset() - layoutState.offset <= 1
         )
           return
-        prepareNavigation()
+        const animate = behavior === "smooth" && !prefersReducedMotion()
+        prepareNavigation(animate)
         input.onPin()
 
-        // Glide only the final screen. Crossing the whole history smoothly would stream every row through the virtualizer.
-        if (behavior === "smooth") {
-          virtualizer.scrollToOffset(Math.max(layoutState.offset, endOffset() - layoutState.viewport))
-          virtualizer.scrollToEnd({ behavior })
+        if (animate) {
+          // Close the distance to the end, rather than chasing its changing offset. Growth then follows 1:1
+          // without making the newest rows drift downward while the return spring catches up.
+          const spring = Spring.fromDuration(Math.max(0, endOffset() - drawnOffset()), growthSpring()).set(0)
+          resumeSpring = spring
+          let fresh = true
+          cancelResume = frameLoop.add((dt) => {
+            spring.tune(growthSpring())
+            writeScroll(root, endOffset() - spring.step(fresh ? 1 / 60 : Math.min(dt, 1 / 30)), true)
+            fresh = false
+            if (!spring.resting) return true
+            resumeSpring = undefined
+            cancelResume = undefined
+            flushDeferredScroll()
+            return false
+          })
           return
         }
         pinEnd(undefined, false)
@@ -1639,6 +1698,7 @@ export function createTimelineVirtualizer(input: Input) {
   // Upward input is the one intent geometry cannot recover: nudging up while still a pixel from
   // the end must stop following, even though the resulting position still looks like the end.
   const handleListWheel = (event: WheelEvent & { currentTarget: HTMLDivElement }) => {
+    interruptResume()
     flushDeferredScroll()
     userScrollAt = performance.now()
     releaseAnchor()
@@ -1648,6 +1708,7 @@ export function createTimelineVirtualizer(input: Input) {
   }
 
   const handleListTouchStart = (event: TouchEvent) => {
+    interruptResume()
     flushDeferredScroll()
     userScrollAt = performance.now()
     clearTouchTarget()
@@ -1708,6 +1769,7 @@ export function createTimelineVirtualizer(input: Input) {
   // Drag-selecting past the edge and dragging the scrollbar both scroll without a wheel or key,
   // so a held pointer is what separates those from the virtualizer's own measurement adjustments.
   const handleListPointerDown = (event: PointerEvent) => {
+    interruptResume()
     flushDeferredScroll()
     releaseAnchor()
     input.onUserScroll(event.target)
@@ -1735,6 +1797,7 @@ export function createTimelineVirtualizer(input: Input) {
     if (!isScrollKeyTarget(event.target, key)) return
 
     if (scrollKeyOwner(event.currentTarget, event.target, key) !== event.currentTarget) return
+    interruptResume()
     flushDeferredScroll()
     userScrollAt = performance.now()
     releaseAnchor()
@@ -2031,6 +2094,7 @@ export function createTimelineVirtualizer(input: Input) {
   }
 
   onCleanup(() => {
+    stopResume()
     flushScrollFrame?.()
     flushScrollFrame = undefined
     landGrowth()

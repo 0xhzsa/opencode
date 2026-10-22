@@ -203,9 +203,10 @@ export function createSessionTimelineInteraction(session: SessionModel) {
   })
 
   const resume = (behavior?: ScrollBehavior) => {
+    const scroll = behavior ?? (pinned() ? undefined : "smooth")
     setState("messageID", undefined)
     pin()
-    scrollToEnd(behavior)
+    scrollToEnd(scroll)
     clearMessageHash()
 
     if (scroller) scheduleScrollState(scroller)

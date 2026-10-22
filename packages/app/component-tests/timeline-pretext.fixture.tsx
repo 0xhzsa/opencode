@@ -112,7 +112,7 @@ export function mountLongTimeline(count = 1800) {
       return {
         count: projection.rows().length,
         fallbacks: projection.rows().filter((row) => sizes.get(TimelineRow.key(row))?.source === "dom").length,
-        expected: [...sizes.values()].reduce((sum, value) => sum + (value.source === "dom" ? 0 : value.height), 80),
+        expected: [...sizes.values()].reduce((sum, value) => sum + (value.source === "dom" ? 0 : value.height), 82),
         extent: viewport?.scrollHeight ?? 0,
         offset: viewport?.scrollTop ?? 0,
         viewport: viewport?.clientHeight ?? 0,

@@ -48,6 +48,76 @@ story("reveals mixed modeled and measured rows without starving input", async ({
   await expect(root.locator("[data-scrollable]")).toBeHidden()
 })
 
+for (const action of ["wheel", "resume", "backlog", "unpinned"] as const) {
+  story(`keeps in-flight row growth continuous during ${action}`, async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "no-preference" })
+    await page.evaluate(
+      async ({ url, action }) => {
+        const { mountTimelineVirtualizer } = await import(url)
+        mountTimelineVirtualizer({
+          count: 10,
+          rowHeight: 64,
+          viewportHeight: 300,
+          growthRows: action === "backlog" ? 3 : 1,
+        })
+      },
+      { url: fixture, action },
+    )
+    const root = page.getByTestId("timeline-virtualizer-fixture")
+    await root.getByRole("button", { name: "Complete Markdown", exact: true }).click()
+    await expect(root.locator("[data-timeline-virtual-content]")).toHaveCSS("visibility", "visible")
+    const growing = root.locator('[data-timeline-key="user-message:message-8"]')
+    await expect(growing).toHaveCSS("height", "64px")
+    const change = await root.evaluate(async (host, action) => {
+      const viewport = host.querySelector<HTMLElement>("[data-scrollable]")!
+      const row = host.querySelector<HTMLElement>('[data-timeline-key="user-message:message-8"]')!
+      const next = host.querySelector<HTMLElement>('[data-timeline-key="user-message:message-9"]')!
+      return new Promise<{
+        before: { height: number; top: number }
+        after: { height: number; top: number }
+        rise: number
+      }>((resolve) => {
+        let change:
+          | { before: { height: number; top: number }; after: { height: number; top: number }; rise: number }
+          | undefined
+        const observer = new ResizeObserver(() => {
+          if (row.getBoundingClientRect().height <= 64) return
+          if (change) {
+            change.rise = Math.max(change.rise, next.getBoundingClientRect().top - change.after.top)
+            if (row.getBoundingClientRect().height < 184) return
+            observer.disconnect()
+            resolve(change)
+            return
+          }
+          const before = { height: row.getBoundingClientRect().height, top: next.getBoundingClientRect().top }
+          if (action !== "backlog") viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -90, bubbles: true }))
+          if (action === "resume") host.querySelector<HTMLButtonElement>('[data-testid="resume"]')!.click()
+          change = {
+            before,
+            after: { height: row.getBoundingClientRect().height, top: next.getBoundingClientRect().top },
+            rise: 0,
+          }
+          if (action === "resume" && change.after.height < 184) return
+          observer.disconnect()
+          resolve(change)
+        })
+        observer.observe(row)
+        if (action === "unpinned") viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -90, bubbles: true }))
+        host.querySelector<HTMLButtonElement>('[data-testid="grow-row"]')!.click()
+      })
+    }, action)
+    expect(change.before.height).toBeLessThan(184)
+    expect(Math.abs(change.after.height - change.before.height)).toBeLessThanOrEqual(1 / 64)
+    expect(Math.abs(change.after.top - change.before.top)).toBeLessThanOrEqual(1 / 64)
+    expect(change.rise).toBeLessThanOrEqual(1 / 64)
+    await expect(root.getByTestId("timeline-controls")).toHaveAttribute(
+      "data-pinned",
+      String(action !== "wheel" && action !== "unpinned"),
+    )
+    await expect(growing).toHaveCSS("height", "184px")
+  })
+}
+
 story("spaces the first mobile message without changing desktop spacing", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.evaluate(async (fixture) => {
@@ -117,7 +187,7 @@ for (const input of [
       await expect(content.locator("[data-timeline-key]")).toHaveCount(1)
 
       if (input.name === "offset-only") {
-        await expect(root).toHaveAttribute("data-last-scroll-top", "484")
+        await expect(root).toHaveAttribute("data-last-scroll-top", "502")
         await root.locator("[data-scrollable]").dispatchEvent("wheel", { deltaY: -1 })
         await expect(root.getByTestId("timeline-controls")).toHaveAttribute("data-pinned", "false")
       }
