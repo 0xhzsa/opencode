@@ -37,8 +37,12 @@ export default function ExtensionsTab(props: { session: MountedSession; shown: b
   })
 
   return (
-    <ScrollView class="h-full">
-      <div data-slot="session-extensions-content" class="flex flex-col gap-2 px-4 pt-4 pb-6 md:px-6 md:pb-10">
+    <ScrollView class="@container h-full">
+      {/* Cards keep a readable width; a wide tab fits two columns of them, start-aligned like the context tab. */}
+      <div
+        data-slot="session-extensions-content"
+        class="grid grid-cols-[minmax(0,28rem)] items-start justify-start gap-2 px-4 pt-4 pb-6 md:px-6 md:pb-10 @[46rem]:grid-cols-[repeat(2,minmax(0,28rem))]"
+      >
         <Section
           {...section("mcp")}
           title={ctx.t("mcp.section")}
