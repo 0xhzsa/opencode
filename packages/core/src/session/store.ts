@@ -51,10 +51,23 @@ export type MessagesInput = {
   }
 }
 
+export type SearchInput = {
+  /** Every whitespace-separated term must appear, case-insensitively, in the message text. */
+  query: string
+  limit: number
+}
+
 export interface Interface {
   readonly get: (sessionID: Session.ID) => Effect.Effect<Session.Info | undefined>
   readonly list: (input?: ListInput) => Effect.Effect<Session.Info[]>
   readonly messages: (input: MessagesInput) => Effect.Effect<SessionMessage.Info[], MessageDecodeError>
+  /** User and assistant messages whose text matches, newest first, across every session. */
+  readonly search: (
+    input: SearchInput,
+  ) => Effect.Effect<
+    Array<{ readonly sessionID: Session.ID; readonly message: SessionMessage.Info }>,
+    MessageDecodeError
+  >
   readonly context: (sessionID: Session.ID) => Effect.Effect<SessionMessage.Info[], MessageDecodeError>
   readonly message: (
     messageID: SessionMessage.ID,
@@ -177,6 +190,29 @@ const layer = Layer.effect(
         return yield* Effect.forEach(
           direction === "previous" ? rows.toReversed() : rows,
           SessionHistory.decodeMessageRow,
+        )
+      }),
+      search: Effect.fn("SessionStore.search")(function* (input) {
+        // A user message's text, or the text parts of an assistant message. Reasoning and tool parts are left out.
+        const text = sql`coalesce(json_extract(${SessionMessageTable.data}, '$.text'), '') || char(10) || coalesce((select group_concat(json_extract(part.value, '$.text'), char(10)) from json_each(${SessionMessageTable.data}, '$.content') as part where json_extract(part.value, '$.type') = 'text'), '')`
+        const rows = yield* db
+          .select()
+          .from(SessionMessageTable)
+          .where(
+            and(
+              or(eq(SessionMessageTable.type, "user"), eq(SessionMessageTable.type, "assistant")),
+              ...input.query
+                .split(/\s+/)
+                .filter(Boolean)
+                .map((term) => sql`${text} like ${`%${term.replace(/[\\%_]/g, "\\$&")}%`} escape '\\'`),
+            ),
+          )
+          .orderBy(desc(SessionMessageTable.time_created), desc(SessionMessageTable.id))
+          .limit(input.limit)
+          .all()
+          .pipe(Effect.orDie)
+        return yield* Effect.forEach(rows, (row) =>
+          SessionHistory.decodeMessageRow(row).pipe(Effect.map((message) => ({ sessionID: row.session_id, message }))),
         )
       }),
       context: Effect.fn("SessionStore.context")((sessionID) => SessionHistory.load(db, sessionID, "latest")),

@@ -5,11 +5,13 @@ import type { Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { Model } from "@opencode/schema/model"
 import { AbsolutePath } from "@opencode/schema/schema"
-import { Session } from "@opencode/schema/session"
-import { Effect, Schema } from "effect"
+import { DateTime, Effect, Schema } from "effect"
 import { FileAccess } from "../../file-access.js"
 import { Git } from "../../git.js"
 import { Permission } from "../../permission.js"
+import { Session } from "../../session.js"
+import type { SessionMessage } from "../../session/message.js"
+import { SessionRecentText } from "../../session/recent-text.js"
 import { Worktree } from "../../worktree.js"
 
 export const RenameInput = Schema.Struct({
@@ -27,6 +29,72 @@ export const MoveInput = Schema.Struct({
 })
 
 const MoveOutput = Schema.Struct({ sessionID: Session.ID, directory: AbsolutePath })
+
+export const SessionListInput = Schema.Struct({
+  search: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
+    description: "Words to find in session titles and messages. Every word must match.",
+  }),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))).annotate({
+    description: "Maximum number of sessions. Defaults to 20.",
+  }),
+  cursor: Schema.optionalKey(Session.ListCursor).annotate({
+    description: "Cursor from a previous response, to list the next page. Searches return a single page.",
+  }),
+})
+
+const SessionListOutput = Schema.Struct({
+  sessions: Schema.Array(
+    Schema.Struct({
+      sessionID: Session.ID,
+      title: Schema.optional(Schema.String),
+      directory: Schema.String,
+      parentID: Schema.optional(Session.ID),
+      updated: Schema.Number.annotate({ description: "Unix timestamp in milliseconds." }),
+      matches: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            snippet: Schema.String,
+            cursor: Schema.String.annotate({ description: "Pass to session_read to read from this message." }),
+          }),
+        ),
+      ).annotate({ description: "Messages that matched the search, newest first." }),
+    }),
+  ).annotate({ description: "Most recently updated first." }),
+  cursor: Schema.optional(Session.ListCursor).annotate({ description: "Omitted on the last page." }),
+})
+
+export const SessionReadInput = Schema.Struct({
+  sessionID: Session.ID,
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))).annotate({
+    description: "Maximum number of messages. Defaults to 20.",
+  }),
+  cursor: Schema.optionalKey(Schema.String).annotate({
+    description:
+      "Cursor from session_read or a session_list match. Omit to read the latest messages; the returned cursor continues in the same direction.",
+  }),
+  tools: Schema.optionalKey(Schema.Boolean).annotate({ description: "Include tool calls and their output." }),
+})
+
+const SessionReadOutput = Schema.Struct({
+  messages: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      role: Schema.String,
+      text: Schema.optional(Schema.String),
+      tools: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            name: Schema.String,
+            input: Schema.String,
+            output: Schema.optional(Schema.String),
+            error: Schema.optional(Schema.String),
+          }),
+        ),
+      ),
+    }),
+  ).annotate({ description: "Oldest first. Long text is shortened." }),
+  cursor: Schema.optional(Schema.String).annotate({ description: "Omitted when there is nothing more to read." }),
+})
 
 export const WorktreeCreateInput = Schema.Struct({
   name: Schema.Trim.check(Schema.isNonEmpty()).annotate({ description: "Worktree name." }),
@@ -89,6 +157,7 @@ export const Plugin = {
   effect: Effect.fn("OpenCodeTools.Plugin")(function* (ctx: Context) {
     const access = yield* FileAccess.Service
     const permission = yield* Permission.Service
+    const sessions = yield* Session.Service
     const hook = (event: SessionHooks["context"]) =>
       Effect.sync(() => {
         event.system.push(
@@ -149,6 +218,98 @@ export const Plugin = {
             }).pipe(
               Effect.mapError(
                 (error) => new ToolFailure({ message: `Unable to move session to ${input.directory}`, error }),
+              ),
+            ),
+        })
+        draft.add({
+          name: "session_list",
+          description:
+            "List sessions across all projects, most recently updated first. With search, find sessions whose title or messages mention something, then pass a match's cursor to session_read to read that part of the conversation, including history from before compaction.",
+          input: SessionListInput,
+          output: SessionListOutput,
+          options: { namespace: "opencode", codemode: true },
+          execute: (input) =>
+            Effect.gen(function* () {
+              const limit = input.limit ?? 20
+              if (input.search === undefined) {
+                const page = yield* sessions.list({ limit, cursor: input.cursor })
+                return {
+                  output: { sessions: page.data.map((session) => listEntry(session)), cursor: page.cursor.next },
+                }
+              }
+              const search = input.search
+              const titled = (yield* sessions.list({ search, limit })).data
+              const found = yield* sessions.search({ query: search, limit: 200 })
+              const matches = Map.groupBy(found, (hit) => hit.sessionID)
+              const others = yield* Effect.forEach(
+                Array.from(matches.keys()).filter((id) => !titled.some((session) => session.id === id)),
+                (id) => sessions.get(id).pipe(Effect.option),
+              )
+              const listed = [
+                ...titled,
+                ...others.flatMap((session) => (session._tag === "Some" ? [session.value] : [])),
+              ]
+                .toSorted(
+                  (left, right) =>
+                    DateTime.toEpochMillis(right.time.updated) - DateTime.toEpochMillis(left.time.updated),
+                )
+                .slice(0, limit)
+                .map((session) => {
+                  const hits = matches.get(session.id)?.slice(0, 3)
+                  return listEntry(
+                    session,
+                    hits?.map((hit) => ({
+                      snippet: snippet(messageText(hit.message), search),
+                      cursor: `from:${hit.message.id}`,
+                    })),
+                  )
+                })
+              return { output: { sessions: listed } }
+            }).pipe(Effect.mapError((error) => new ToolFailure({ message: "Unable to list sessions", error }))),
+        })
+        draft.add({
+          name: "session_read",
+          description:
+            "Read a session's messages, including those from before compaction. Omit cursor to read the latest messages, or pass a cursor from a session_list match to read from that message onward.",
+          input: SessionReadInput,
+          output: SessionReadOutput,
+          options: { namespace: "opencode", codemode: true },
+          execute: (input) =>
+            Effect.gen(function* () {
+              const limit = input.limit ?? 20
+              const cursor = input.cursor === undefined ? undefined : /^(before|from|after):(.+)$/.exec(input.cursor)
+              if (input.cursor !== undefined && !cursor)
+                return yield* new ToolFailure({ message: `Invalid cursor: ${input.cursor}` })
+              const direction = cursor?.[1] ?? "before"
+              const id = cursor?.[2] as SessionMessage.ID | undefined
+              const start =
+                direction === "from" && id !== undefined
+                  ? yield* sessions.message({ sessionID: input.sessionID, messageID: id })
+                  : undefined
+              if (direction === "from" && !start)
+                return yield* new ToolFailure({ message: `Message ${id} is not in session ${input.sessionID}` })
+              const rows = yield* sessions.messages({
+                sessionID: input.sessionID,
+                limit: start ? limit - 1 : limit,
+                order: direction === "before" ? "desc" : "asc",
+                cursor: id === undefined ? undefined : { id, direction: "next" },
+              })
+              const page = direction === "before" ? rows.toReversed() : start ? [start, ...rows] : rows
+              const edge = direction === "before" ? page[0] : page.at(-1)
+              return {
+                output: {
+                  messages: page.flatMap((message) => readEntry(message, input.tools === true) ?? []),
+                  cursor:
+                    page.length === limit && edge
+                      ? `${direction === "before" ? "before" : "after"}:${edge.id}`
+                      : undefined,
+                },
+              }
+            }).pipe(
+              Effect.mapError((error) =>
+                error instanceof ToolFailure
+                  ? error
+                  : new ToolFailure({ message: `Unable to read session ${input.sessionID}`, error }),
               ),
             ),
         })
@@ -283,6 +444,93 @@ export const Plugin = {
       })
       .pipe(Effect.orDie)
   }),
+}
+
+const TEXT_MAX_CHARS = 2_000
+
+function listEntry(session: Session.Info, matches?: ReadonlyArray<{ snippet: string; cursor: string }>) {
+  return {
+    sessionID: session.id,
+    title: session.title,
+    directory: session.location.directory,
+    parentID: session.parentID,
+    updated: DateTime.toEpochMillis(session.time.updated),
+    matches,
+  }
+}
+
+function messageText(message: SessionMessage.Info) {
+  if (message.type === "user") return message.text
+  if (message.type !== "assistant") return ""
+  return message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
+}
+
+// A short window of the text around the first matching word.
+function snippet(text: string, search: string) {
+  const flat = text.replace(/\s+/g, " ").trim()
+  const lower = flat.toLowerCase()
+  const index = Math.max(
+    0,
+    Math.min(
+      ...search
+        .toLowerCase()
+        .split(/\s+/)
+        .map((term) => lower.indexOf(term))
+        .filter((index) => index >= 0),
+    ),
+  )
+  const start = Math.max(0, index - 60)
+  const end = Math.min(flat.length, index + 140)
+  return `${start > 0 ? "…" : ""}${flat.slice(start, end)}${end < flat.length ? "…" : ""}`
+}
+
+function clip(text: string) {
+  if (text.length <= TEXT_MAX_CHARS) return text
+  return `${text.slice(0, TEXT_MAX_CHARS)}… [${text.length - TEXT_MAX_CHARS} more characters]`
+}
+
+function readEntry(message: SessionMessage.Info, tools: boolean) {
+  if (message.type === "user" || message.type === "synthetic" || message.type === "system" || message.type === "skill")
+    return { id: message.id, role: message.type, text: clip(message.text) }
+  if (message.type === "compaction")
+    return message.status === "completed"
+      ? { id: message.id, role: "compaction", text: clip(message.summary) }
+      : undefined
+  if (message.type === "shell")
+    return tools
+      ? {
+          id: message.id,
+          role: "shell",
+          text: clip([`$ ${message.command}`, message.output?.output].filter(Boolean).join("\n")),
+        }
+      : undefined
+  if (message.type !== "assistant") return undefined
+  const text = messageText(message)
+  const calls = tools
+    ? message.content.flatMap((part) => {
+        if (part.type !== "tool") return []
+        return [
+          {
+            name: part.name,
+            input: SessionRecentText.truncateToolOutput(
+              typeof part.state.input === "string" ? part.state.input : JSON.stringify(part.state.input),
+            ),
+            output:
+              (part.state.status === "completed" || part.state.status === "error") && part.state.content
+                ? SessionRecentText.truncateToolOutput(SessionRecentText.serializeToolContent(part.state.content))
+                : undefined,
+            error: part.state.status === "error" ? part.state.error.message : undefined,
+          },
+        ]
+      })
+    : []
+  if (!text && calls.length === 0) return undefined
+  return {
+    id: message.id,
+    role: "assistant",
+    text: text ? clip(text) : undefined,
+    tools: calls.length > 0 ? calls : undefined,
+  }
 }
 
 // Worktree errors carry no model-facing message, and Git's own text suggests forcing removal.

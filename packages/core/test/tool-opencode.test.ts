@@ -10,12 +10,14 @@ import { ProjectTable } from "@opencode/core/project/sql"
 import { Provider } from "@opencode/core/provider"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
+import { SessionMessage } from "@opencode/core/session/message"
+import { SessionMessageTable } from "@opencode/core/session/sql"
 import { Tool } from "@opencode/core/tool"
 import { OpenCodeTools } from "@opencode/core/tool/plugin/opencode"
 import { WorktreeTable } from "@opencode/core/worktree/sql"
 import { WorktreeStrategies } from "@opencode/core/worktree/strategies"
 import { Model } from "@opencode/schema/model"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { initRepo } from "./fixture/git"
 import { tmpdirScoped } from "./fixture/tmpdir"
 import { testEffect } from "./lib/effect"
@@ -141,6 +143,146 @@ it.effect("groups available models by provider with paging", () =>
     })
     expect(yield* run({ query: "old" })).toMatchObject({ total: 1, providers: [{ models: [gammaOld] }] })
     expect(yield* run({ provider: "other", query: "alpha" })).toEqual({ providers: [], total: 0, next: null })
+  }),
+)
+
+it.effect("searches session messages and reads them past compaction", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const sessions = yield* Session.Service
+    const location = yield* Location.Service
+    const database = yield* Database.Service
+    yield* OpenCodeTools.Plugin.effect(yield* PluginHost.make(plugins))
+    const ref = Location.Ref.make({ directory: location.directory })
+    const discussed = yield* sessions.create({ location: ref, title: "Compaction rework" })
+    const titled = yield* sessions.create({ location: ref, title: "Chains of accepts notes" })
+    yield* sessions.create({ location: ref, title: "Unrelated" })
+    const model = { providerID: "test", id: "alpha" }
+    const messages = [
+      { id: "msg_1", type: "user", text: "why not chains of accepts?", time: { created: 1 } },
+      {
+        id: "msg_2",
+        type: "assistant",
+        agent: "build",
+        model,
+        content: [
+          { type: "text", text: "We dropped chains of accepts because the mapping breaks." },
+          {
+            type: "tool",
+            id: "call_1",
+            name: "read",
+            state: { status: "completed", input: { path: "evolve.ts" }, content: [{ type: "text", text: "toolonly" }] },
+            time: { created: 2 },
+          },
+        ],
+        time: { created: 2 },
+      },
+      {
+        id: "msg_3",
+        type: "compaction",
+        status: "completed",
+        reason: "auto",
+        summary: "Summary",
+        time: { created: 3 },
+      },
+      { id: "msg_4", type: "user", text: "now fix the tests", time: { created: 4 } },
+      {
+        id: "msg_5",
+        type: "assistant",
+        agent: "build",
+        model,
+        content: [{ type: "text", text: "Done." }],
+        time: { created: 5 },
+      },
+    ]
+    yield* database.db
+      .insert(SessionMessageTable)
+      .values(
+        messages.map((message, index) => {
+          const { id, type, ...data } = Schema.encodeSync(SessionMessage.Info)(
+            Schema.decodeUnknownSync(SessionMessage.Info)(message),
+          )
+          return {
+            id: SessionMessage.ID.make(id),
+            session_id: discussed.id,
+            type,
+            seq: index + 1,
+            time_created: message.time.created,
+            data,
+          }
+        }),
+      )
+      .run()
+      .pipe(Effect.orDie)
+    const registry = yield* Tool.Service
+    const call = (name: string, input: Record<string, unknown>) =>
+      executeTool(registry, {
+        sessionID: discussed.id,
+        ...toolIdentity,
+        call: {
+          type: "tool-call",
+          id: `call-${name}-${JSON.stringify(input)}`,
+          name: "execute",
+          input: { code: `return await tools.opencode.${name}(${JSON.stringify(input)})` },
+        },
+      }).pipe(Effect.map((result) => (result.content?.[0]?.type === "text" ? result.content[0].text : "")))
+    const run = (name: string, input: Record<string, unknown>) => call(name, input).pipe(Effect.map(JSON.parse))
+
+    // Titles and message text both match; tool output does not.
+    const found = yield* run("session_list", { search: "chains of accepts" })
+    expect(found.sessions.map((session: { sessionID: string }) => session.sessionID).toSorted()).toEqual(
+      [discussed.id, titled.id].toSorted(),
+    )
+    expect(found.sessions.find((session: { sessionID: string }) => session.sessionID === discussed.id).matches).toEqual(
+      [
+        { snippet: "We dropped chains of accepts because the mapping breaks.", cursor: "from:msg_2" },
+        { snippet: "why not chains of accepts?", cursor: "from:msg_1" },
+      ],
+    )
+    expect((yield* run("session_list", { search: "toolonly" })).sessions).toEqual([])
+
+    // A match's cursor reads from that message onward, across the compaction.
+    expect(yield* run("session_read", { sessionID: discussed.id, cursor: "from:msg_2" })).toEqual({
+      messages: [
+        { id: "msg_2", role: "assistant", text: "We dropped chains of accepts because the mapping breaks." },
+        { id: "msg_3", role: "compaction", text: "Summary" },
+        { id: "msg_4", role: "user", text: "now fix the tests" },
+        { id: "msg_5", role: "assistant", text: "Done." },
+      ],
+    })
+
+    // Without a cursor it reads the latest messages and pages back to the start.
+    const latest = yield* run("session_read", { sessionID: discussed.id, limit: 2 })
+    expect(latest).toEqual({
+      messages: [
+        { id: "msg_4", role: "user", text: "now fix the tests" },
+        { id: "msg_5", role: "assistant", text: "Done." },
+      ],
+      cursor: "before:msg_4",
+    })
+    const earlier = yield* run("session_read", {
+      sessionID: discussed.id,
+      limit: 2,
+      cursor: latest.cursor,
+      tools: true,
+    })
+    expect(earlier).toEqual({
+      messages: [
+        {
+          id: "msg_2",
+          role: "assistant",
+          text: "We dropped chains of accepts because the mapping breaks.",
+          tools: [{ name: "read", input: '{"path":"evolve.ts"}', output: "toolonly" }],
+        },
+        { id: "msg_3", role: "compaction", text: "Summary" },
+      ],
+      cursor: "before:msg_2",
+    })
+    expect(yield* run("session_read", { sessionID: discussed.id, limit: 2, cursor: earlier.cursor })).toEqual({
+      messages: [{ id: "msg_1", role: "user", text: "why not chains of accepts?" }],
+    })
+
+    expect(yield* call("session_read", { sessionID: discussed.id, cursor: "nope" })).toContain("Invalid cursor: nope")
   }),
 )
 
