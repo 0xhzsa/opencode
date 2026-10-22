@@ -1,15 +1,15 @@
 ---
 name: opencode-dev
-description: Use when interactively running, debugging, or verifying opencode's own V2 CLI/TUI or server during development in this repo — starting the dev TUI, driving it with termctrl, comparing V2 against the legacy TUI, hitting the V2 server/API directly, reading log files, or attaching Bun's inspector.
+description: Use when interactively running, debugging, or verifying opencode's own CLI/TUI or server during development in this repo — starting the dev TUI, driving it with termctrl, hitting the server/API directly, reading log files, or attaching Bun's inspector.
 ---
 
 # Debugging opencode itself
 
-Workflow for interactively exercising the V2 CLI/TUI and server while developing in this repo. All commands below run from `packages/cli` unless noted otherwise.
+Workflow for interactively exercising the CLI/TUI and server while developing in this repo. All commands below run from `packages/cli` unless noted otherwise.
 
 ## Server/client model
 
-opencode V2 is a client/server system, not a single monolithic process:
+opencode is a client/server system, not a single monolithic process:
 
 - **Server process** runs the Effect HTTP API (`packages/server`) and owns all domain state: sessions, database, plugins, permissions, Location services. It's started by the `serve` command (`packages/cli/src/commands/handlers/serve.ts`).
 - **TUI process** is a separate process that runs no application logic itself — it's an HTTP/SSE client of the server via `@opencode/client` (`OpenCode.make`).
@@ -31,62 +31,44 @@ opencode V2 is a client/server system, not a single monolithic process:
 - Use a dedicated session name and do not reuse or kill an unrelated session.
 
 ```bash
-termctrl start opencode-v2-dev --host opentui --cols 112 --rows 34 -- bun dev
-termctrl wait opencode-v2-dev "Ask anything" --timeout 20000
-termctrl show opencode-v2-dev
+termctrl start opencode-dev --host opentui --cols 112 --rows 34 -- bun dev
+termctrl wait opencode-dev "Ask anything" --timeout 20000
+termctrl show opencode-dev
 ```
 
 - Wait for visible text before interacting instead of relying on fixed sleeps. Use the text expected from the screen under test, such as `Ask anything` or `Connect a provider`.
 - Drive the running TUI with `termctrl send`. Prefix typed input with `text:` and send control keys separately so the interaction matches real terminal input.
 
 ```bash
-termctrl send opencode-v2-dev 'text:example prompt' enter
-termctrl send opencode-v2-dev ctrl-c
+termctrl send opencode-dev 'text:example prompt' enter
+termctrl send opencode-dev ctrl-c
 ```
 
 - Use `termctrl show` after each meaningful interaction and inspect the full visible screen for rendering errors, stale state, error toasts, and unexpected exits.
 - Save PNG evidence for every user-visible bug and fix. Do not save text captures; inspect the rendered PNG. Write temporary captures outside the repository unless the artifact is intended to be committed.
 
 ```bash
-termctrl save opencode-v2-dev --format png --out /tmp/opencode/v2-tui.png
+termctrl save opencode-dev --format png --out /tmp/opencode/tui.png
 ```
 
 - For resize-sensitive changes, resize the viewport, wait for the expected content, and capture the screen again:
 
 ```bash
-termctrl resize opencode-v2-dev --cols 100 --rows 30
-termctrl show opencode-v2-dev
+termctrl resize opencode-dev --cols 100 --rows 30
+termctrl show opencode-dev
 ```
 
-- Source changes may require restarting the process. Use `termctrl restart opencode-v2-dev` rather than assuming the running TUI reloaded the change. Restarting the TUI does not restart the shared background service, so run `bun dev service restart` after server-side changes, or use `--standalone`.
+- Source changes may require restarting the process. Use `termctrl restart opencode-dev` rather than assuming the running TUI reloaded the change. Restarting the TUI does not restart the shared background service, so run `bun dev service restart` after server-side changes, or use `--standalone`.
 - To exercise background-service behavior, use `bun dev service start`, `bun dev service status`, and `bun dev service stop`.
 - Always clean up the Terminal Control session when the check is complete:
 
 ```bash
-termctrl stop opencode-v2-dev
+termctrl stop opencode-dev
 ```
-
-## Comparing V2 against the legacy TUI
-
-The legacy V1 CLI is still published as `opencode-ai` on npm; V2 is `@opencode/cli`. Run both versions in separate Terminal Control sessions and save PNG-only captures at equivalent states:
-
-```bash
-# From packages/cli: local V2 TUI
-termctrl start opencode-v2-dev --host opentui --cols 112 --rows 34 -- bun dev
-
-# Released legacy V1 TUI behavior reference
-termctrl start opencode-legacy --host opentui --cols 112 --rows 34 -- bunx opencode-ai@latest
-
-termctrl save opencode-v2-dev --format png --out /tmp/opencode/v2.png
-termctrl save opencode-legacy --format png --out /tmp/opencode/legacy.png
-```
-
-- Use the same viewport and send equivalent inputs to both sessions before comparing screenshots. The released CLI is a behavioral reference, not a source of V2 API design; keep the local implementation on V2 endpoints.
-- Stop both sessions after comparison: `termctrl stop opencode-v2-dev` and `termctrl stop opencode-legacy`.
 
 ## Server/API debugging
 
-- Use `bun dev api --help` from `packages/cli` to inspect the API debugging command. It sends one request to the V2 server using the same daemon discovery/auth path as the CLI.
+- Use `bun dev api --help` from `packages/cli` to inspect the API debugging command. It sends one request to the server using the same daemon discovery/auth path as the CLI.
 - Use `bun dev api` to introspect the server-side data backing the TUI. This is useful when debugging UI bugs: compare what the screen renders with the raw session, message, event, agent, or health data returned by the API to determine whether the bug is in the server state, the client data layer, or the TUI rendering.
 - `bun dev api` accepts either an OpenAPI operation ID or a raw HTTP method plus path:
 
@@ -223,15 +205,15 @@ Use `opencode-local.log` for a local/dev process. Load the completed `.cpuprofil
 
 ## Debugger
 
-- To debug the V2 CLI or TUI with Bun's inspector, launch the CLI entrypoint through Terminal Control with an inspector URL, then attach a debugger to that URL:
+- To debug the CLI or TUI with Bun's inspector, launch the CLI entrypoint through Terminal Control with an inspector URL, then attach a debugger to that URL:
 
 ```bash
-termctrl start opencode-v2-debug --host opentui --cols 112 --rows 34 -- \
+termctrl start opencode-debug --host opentui --cols 112 --rows 34 -- \
   bun run --inspect=ws://localhost:6499/ src/index.ts
 ```
 
 - Use `--inspect-wait` or `--inspect-brk` when execution must pause until a debugger attaches.
-- Use `termctrl logs opencode-v2-debug` for inspector output or startup failures emitted before the TUI renderer starts. Use `termctrl show` for the visible full-screen TUI.
+- Use `termctrl logs opencode-debug` for inspector output or startup failures emitted before the TUI renderer starts. Use `termctrl show` for the visible full-screen TUI.
 
 ## Verification
 
