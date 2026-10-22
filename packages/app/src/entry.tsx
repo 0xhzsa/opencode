@@ -79,10 +79,11 @@ if (root instanceof HTMLElement && root.dataset.opencodeMounted === undefined) {
   root.dataset.opencodeMounted = ""
   void loadInitialLocale().then((locale) => {
     const urlToken = new URLSearchParams(location.search).get("auth_token")
-    const urlAuth = authFromToken(urlToken)
-    // Dev builds remember a valid token so reloads of a review link stay signed in; health.ts clears it on a 401.
-    if (import.meta.env.DEV && urlAuth && urlToken) localStorage.setItem(devAuthTokenKey, urlToken)
-    const auth = urlAuth ?? (import.meta.env.DEV ? authFromToken(localStorage.getItem(devAuthTokenKey)) : undefined)
+    // Dev builds remember a token per server so reloading a review link stays signed in; health.ts clears it on a 401.
+    // A token in the URL always wins, even when invalid.
+    const devKey = import.meta.env.DEV && web.currentServerUrl ? devAuthTokenKey(web.currentServerUrl) : undefined
+    const auth = authFromToken(urlToken ?? (devKey ? localStorage.getItem(devKey) : null))
+    if (devKey && urlToken !== null && auth) localStorage.setItem(devKey, urlToken)
     clearAuthToken()
     const standalone = isStandalone()
     root.dataset.standalone = String(standalone)

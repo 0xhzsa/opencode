@@ -134,7 +134,7 @@ export async function checkServerHealth(
     if (signal?.aborted) return { healthy: false }
 
     if (isUnauthorizedError(current.error)) {
-      if (import.meta.env.DEV) localStorage.removeItem(devAuthTokenKey)
+      if (import.meta.env.DEV) localStorage.removeItem(devAuthTokenKey(server.url))
       return { healthy: false, unauthorized: true }
     }
 
