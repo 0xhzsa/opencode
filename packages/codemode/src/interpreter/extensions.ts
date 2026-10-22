@@ -119,12 +119,12 @@ export const extensionGlobals = <R>(
       if (Array.isArray(value)) {
         const length = value.length
         checkArrayLength(length)
-        // Holes stay holes, as a copy made with `map` would leave them.
+        // Filled in order so the copy stays a dense array; holes stay holes, as a copy made with `map` would leave them.
         const items: Array<Value> = []
-        items.length = length
         for (let index = 0; index < length; index += 1) {
           if (index in value) items[index] = next(value[index], `${label}[${index}]`)
         }
+        items.length = length
         seen.delete(value)
         return new Arr(builtins.Array, items)
       }
