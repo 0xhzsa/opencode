@@ -563,7 +563,7 @@ export function createSessionTimelineRowRenderer(input: {
       const outcome: Outcome = state === "error" || state === "cancelled" ? state : "completed"
 
       return {
-        label: i18n.t(outcomeNoticeKey(outcome), { actor }),
+        label: i18n.t(outcomeNoticeKey(Predicate.isString(state) ? state : undefined), { actor }),
         data: message.description,
         outcome,
         icon: source === "shell" && outcome === "completed" ? undefined : outcomeNoticeIcon(outcome),
@@ -1016,7 +1016,11 @@ export function createSessionTimelineRowRenderer(input: {
           <div data-slot="session-turn-message-container" class={`w-full ${padding()}`}>
             <div data-slot="session-turn-compaction">
               <div class="py-2">
-                <TimelineSeparator label={i18n.t("ui.message.interrupted")} />
+                <TimelineSeparator
+                  label={i18n.t(
+                    current().reason === "restart" ? "ui.message.serverRestarted" : "ui.message.interrupted",
+                  )}
+                />
               </div>
             </div>
           </div>
