@@ -14,13 +14,13 @@ import { formatServerError } from "@/runtime/server/errors"
 import { useGlobal } from "@/runtime/server/runtime"
 import { isExtensionTab, isRootTab } from "@/settings/route"
 import { useSettingsSurface } from "@/settings/surface"
-import { useCommand } from "@/shell/commands/command"
+import { isEditableTarget, useCommand } from "@/shell/commands/command"
 import { showToast } from "@/shell/notifications/toast"
 import { sessionHref } from "@/shell/routes/session"
 import { TourCard, TourPill, verdictPrompt, type TourStatus } from "./card"
 import { loadManifest, TourVerdict, type TourStop } from "./manifest"
 import { arrive, knobScope, type KnobScope, type TourApp } from "./setup"
-import { SpotlightRing } from "./spotlight"
+import { selectorError, SpotlightRing } from "./spotlight"
 import { motion, sprung } from "./spring"
 
 const Corner = Schema.Literals(["top-left", "top-right", "bottom-left", "bottom-right"])
@@ -40,7 +40,7 @@ const TourState = Persistence.struct({
  * sends each verdict to the manifest's coordinator session as a queued prompt. Its keys are ⌥. and ⌥, for the next and
  * previous stop, and ⌥1–9 for a decision's options.
  */
-export default function ReviewTour(props: { url: string }) {
+export default function ReviewTour(props: { url: string; onEnd: () => void }) {
   const language = useLanguage()
   const navigate = useNavigate()
   const command = useCommand()
@@ -61,11 +61,14 @@ export default function ReviewTour(props: { url: string }) {
   const [view, setView] = createStore<{
     closed: boolean
     editing: boolean
+    /** A verdict is on its way; its controls wait. */
+    sending: boolean
+    /** What went wrong on this stop; cleared on leaving it. */
     problem?: TourStatus
     flash?: TourStatus
     selected: { [id: string]: number | undefined }
     rings: { key: number; selector: string; label: string; leaving: boolean }[]
-  }>({ closed: false, editing: false, selected: {}, rings: [] })
+  }>({ closed: false, editing: false, sending: false, selected: {}, rings: [] })
 
   const tour = () => (manifest.state === "ready" && ready() && state.manifest === props.url ? manifest() : undefined)
   const count = () => tour()?.stops.length ?? 0
@@ -116,16 +119,20 @@ export default function ReviewTour(props: { url: string }) {
 
   createEffect(
     on(stop, (current) => {
+      const invalid = current?.spotlight === undefined ? undefined : selectorError(current.spotlight)
+
       setView(
         produce((draft) => {
           draft.editing = false
           draft.problem = undefined
           draft.rings.forEach((ring) => (ring.leaving = true))
 
-          if (current?.spotlight)
+          if (current?.spotlight && !invalid)
             draft.rings.push({ key: ++ringKey, selector: current.spotlight, label: current.id, leaving: false })
         }),
       )
+
+      if (invalid) problem(invalid)
 
       if (!current) return
 
@@ -134,7 +141,15 @@ export default function ReviewTour(props: { url: string }) {
       arrival = { knobs, signal: controller.signal }
 
       arrive(current, app, knobs, controller.signal)
-        .then(() => showOption(current, knobs, controller.signal))
+        .then(() => {
+          // A page that focuses its composer on arrival would keep the tour's keys; the palette's field is the point.
+          const focused = document.activeElement
+
+          if (current.palette === undefined && focused instanceof HTMLElement && isEditableTarget(focused))
+            focused.blur()
+
+          return showOption(current, knobs, controller.signal)
+        })
         .catch((error) => controller.signal.aborted || problem(formatServerError(error, language.t)))
 
       onCleanup(() => {
@@ -198,7 +213,7 @@ export default function ReviewTour(props: { url: string }) {
     const current = stop()
     const coordinator = tour()?.coordinator
 
-    if (!current) return
+    if (!current || view.sending) return
 
     setView("editing", false)
 
@@ -213,16 +228,25 @@ export default function ReviewTour(props: { url: string }) {
 
     const conn = healthy()
 
-    if (!conn) return flash({ kind: "failed", text: language.t("tour.failed", { error: language.t("tour.noServer") }) })
+    // A failure stays on its stop until it's left or sent again.
+    const fail = (error: string) => setView("problem", { kind: "failed", text: language.t("tour.failed", { error }) })
 
-    setView("flash", { kind: "sending", text: language.t("tour.sending") })
+    if (!conn) return fail(language.t("tour.noServer"))
+
+    clearTimeout(flashTimer)
+    setView({ sending: true, problem: undefined, flash: { kind: "sending", text: language.t("tour.sending") } })
     global
       .ensureServerCtx(conn)
       .sdk.api.session.prompt({ sessionID: coordinator, text: verdictPrompt(current.id, verdict), delivery: "queue" })
       .then(
-        () => record(language.t("tour.sent")),
-        (error) =>
-          flash({ kind: "failed", text: language.t("tour.failed", { error: formatServerError(error, language.t) }) }),
+        () => {
+          setView("sending", false)
+          record(language.t("tour.sent"))
+        },
+        (error) => {
+          setView({ sending: false, flash: undefined })
+          fail(formatServerError(error, language.t))
+        },
       )
   }
 
@@ -230,7 +254,10 @@ export default function ReviewTour(props: { url: string }) {
     window,
     "keydown",
     (event) => {
+      // ⌥ types characters on macOS, so fields keep their keys; the floater's own buttons move from anywhere else.
       if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey || !stop()) return
+
+      if (isEditableTarget(event.target)) return
 
       const digit = Number(/^Digit([1-9])$/.exec(event.code)?.[1])
 
@@ -289,6 +316,7 @@ export default function ReviewTour(props: { url: string }) {
                 selected={view.selected[current().id]}
                 status={view.problem ?? view.flash}
                 editing={view.editing}
+                busy={view.sending}
                 onEdit={(editing) => {
                   // A modal palette would keep the note field from taking focus.
                   if (editing && dialog.active) dialog.close()
@@ -299,7 +327,10 @@ export default function ReviewTour(props: { url: string }) {
                 onSelect={select}
                 onVerdict={send}
                 onCollapse={() => setState("collapsed", true)}
-                onClose={() => setView("closed", true)}
+                onClose={() => {
+                  setView("closed", true)
+                  props.onEnd()
+                }}
                 onGrab={grab}
               />
             )}

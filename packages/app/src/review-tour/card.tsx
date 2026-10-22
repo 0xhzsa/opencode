@@ -2,7 +2,7 @@ import { Button } from "@opencode/ui/button"
 import { Icon } from "@opencode/ui/icon"
 import { IconButton } from "@opencode/ui/icon-button"
 import { Textarea } from "@opencode/ui/textarea"
-import { createSignal, For, Show } from "solid-js"
+import { createEffect, createSignal, For, on, Show } from "solid-js"
 import { useLanguage } from "@/runtime/i18n/language"
 import type { TourStop, TourVerdict } from "./manifest"
 
@@ -18,6 +18,8 @@ export function TourCard(props: {
   selected?: number
   status?: TourStatus
   editing?: boolean
+  /** A verdict is sending: its controls wait so it goes once. */
+  busy?: boolean
   onEdit: (editing: boolean) => void
   onPrevious: () => void
   onNext: () => void
@@ -35,12 +37,20 @@ export function TourCard(props: {
   const line = () =>
     props.status ?? (props.verdict && { kind: "recorded" as const, text: verdictLabel(props.verdict, language.t) })
 
+  // The note stays until the stop changes, so a send that fails can be retried as written.
+  createEffect(
+    on(
+      () => props.stop.id,
+      () => setNote(""),
+      { defer: true },
+    ),
+  )
+
   const send = () => {
     const text = note().trim()
 
-    if (!text) return
+    if (!text || props.busy) return
     props.onVerdict({ kind: "changes", note: text })
-    setNote("")
   }
 
   return (
@@ -116,13 +126,24 @@ export function TourCard(props: {
             when={props.editing}
             fallback={
               <div class="flex gap-1.5">
-                <Button size="small" variant="submit" icon="check" onClick={() => props.onVerdict({ kind: "ship" })}>
+                <Button
+                  size="small"
+                  variant="submit"
+                  icon="check"
+                  disabled={props.busy}
+                  onClick={() => props.onVerdict({ kind: "ship" })}
+                >
                   {language.t("tour.ship")}
                 </Button>
-                <Button size="small" variant="neutral" onClick={() => props.onEdit(true)}>
+                <Button size="small" variant="neutral" disabled={props.busy} onClick={() => props.onEdit(true)}>
                   {language.t("tour.changes")}
                 </Button>
-                <Button size="small" variant="ghost-muted" onClick={() => props.onVerdict({ kind: "skip" })}>
+                <Button
+                  size="small"
+                  variant="ghost-muted"
+                  disabled={props.busy}
+                  onClick={() => props.onVerdict({ kind: "skip" })}
+                >
                   {language.t("tour.skip")}
                 </Button>
               </div>
@@ -145,7 +166,7 @@ export function TourCard(props: {
                 }}
               />
               <div class="flex gap-1.5">
-                <Button size="small" variant="submit" disabled={!note().trim()} onClick={send}>
+                <Button size="small" variant="submit" disabled={!note().trim() || props.busy} onClick={send}>
                   {language.t("tour.send")}
                 </Button>
                 <Button size="small" variant="ghost-muted" onClick={() => props.onEdit(false)}>
@@ -185,7 +206,7 @@ export function TourCard(props: {
               <Button
                 size="small"
                 variant="submit"
-                disabled={props.selected === undefined}
+                disabled={props.selected === undefined || props.busy}
                 onClick={() => {
                   const option = props.selected === undefined ? undefined : options()[props.selected]
 
@@ -194,7 +215,12 @@ export function TourCard(props: {
               >
                 {language.t("tour.pick")}
               </Button>
-              <Button size="small" variant="ghost-muted" onClick={() => props.onVerdict({ kind: "skip" })}>
+              <Button
+                size="small"
+                variant="ghost-muted"
+                disabled={props.busy}
+                onClick={() => props.onVerdict({ kind: "skip" })}
+              >
                 {language.t("tour.skip")}
               </Button>
             </div>

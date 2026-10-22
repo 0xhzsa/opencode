@@ -89,6 +89,16 @@ export function SpotlightRing(props: { selector: string; label: string; leaving:
   )
 }
 
+/** Why `selector` isn't a valid CSS selector, if it isn't. */
+export function selectorError(selector: string) {
+  // The DOM reports an invalid selector only by throwing.
+  try {
+    document.createDocumentFragment().querySelector(selector)
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+}
+
 function radius(element: Element | undefined) {
   if (!element) return 0
 
