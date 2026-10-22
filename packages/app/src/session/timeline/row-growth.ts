@@ -170,6 +170,9 @@ export function createRowGrowth(input: {
     const streamEdge = streamingRow ? streamingEdgeFor() : undefined
     const tuned = growthSpring()
     spring.tune(streamEdge ? { ...tuned, duration: tuned.duration * streamEdge.spring } : tuned)
+    // A queued complete row starts its own entrance, rather than spending the preceding stream's velocity.
+    const arriving = [...growths.values()].find((growth) => growth.target > growth.value)
+    if (arriving?.freshRow && !arriving.streaming) spring.set(spring.target, { velocity: 0 })
     const before = grid(spring.value)
     const beforeRaw = spring.value
     const nextValue = spring.step(dt)

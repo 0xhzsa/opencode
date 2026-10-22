@@ -30,6 +30,31 @@ async function settle(growth: ReturnType<typeof createRowGrowth>, frames: { held
 }
 
 describe("row growth", () => {
+  test("starts the next complete row without inheriting a streaming row's speed", () => {
+    const sizes = new Map<string, number>()
+    const schedule = spyOn(frameLoop, "addMeasured").mockImplementation(() => () => {})
+    const growth = createRowGrowth({
+      measure: () => {},
+      resize: (key, size) => {
+        sizes.set(key, size)
+      },
+      below: () => true,
+      settle: () => {},
+    })
+
+    try {
+      growth.grow("reply", 0, 400, false, undefined, true)
+      growth.grow("tools", 0, 44, true)
+      const advance = schedule.mock.calls[0]![1]
+      for (let frame = 0; frame < 600 && !sizes.has("tools"); frame++) advance(1 / 60)
+      expect(sizes.get("tools")).toBeGreaterThan(0)
+      expect(sizes.get("tools")).toBeLessThan(3)
+    } finally {
+      growth.finish()
+      schedule.mockRestore()
+    }
+  })
+
   test("keeps a streaming row's catch-up pace when its final height arrives", () => {
     const sizes: number[] = []
     const schedule = spyOn(frameLoop, "addMeasured").mockImplementation(() => () => {})
