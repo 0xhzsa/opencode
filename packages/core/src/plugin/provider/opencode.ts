@@ -401,6 +401,10 @@ export const OpencodePlugin = define<
             withoutCredentials(provider.settings),
             withoutCredentials(item.settings),
           )
+          // A body encoding inherited from the source targets the source's upstream; Console inference only
+          // decodes an encoding the Console asks for.
+          if (item.settings?.baseURL !== undefined && item.settings.encoding === undefined)
+            delete provider.settings?.encoding
           provider.headers = Provider.mergeHeaders(provider.headers, item.headers)
           provider.body = Provider.mergeOverlay(provider.body, item.body)
         })
