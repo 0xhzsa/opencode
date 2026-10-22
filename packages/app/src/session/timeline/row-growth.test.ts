@@ -29,6 +29,32 @@ async function settle(growth: ReturnType<typeof createRowGrowth>, frames: { held
 }
 
 describe("row growth", () => {
+  test.each([false, true])("closes a neighbour while a new row grows (close first: %s)", async (closeFirst) => {
+    const sizes = new Map<string, number>()
+    const frame = Promise.withResolvers<void>()
+    const growth = createRowGrowth({
+      measure: () => {},
+      resize: (key, size) => {
+        sizes.set(key, size)
+      },
+      below: () => true,
+      settle: () => frame.resolve(),
+    })
+    if (closeFirst) growth.grow("closing", 100, 24)
+    growth.grow("arriving", 0, 450)
+    if (!closeFirst) growth.grow("closing", 100, 24)
+
+    try {
+      await frame.promise
+      expect(sizes.get("arriving")).toBeGreaterThan(0)
+      expect(sizes.get("arriving")).toBeLessThan(450)
+      expect(sizes.get("closing")).toBeLessThan(100)
+      expect(sizes.get("closing")).toBeGreaterThan(24)
+    } finally {
+      growth.finish()
+    }
+  })
+
   test("eases a row on the layout grid, behind a soft edge that clears when it lands", async () => {
     const { growth, sizes, wrapper, frames } = setup()
     growth.grow("row", 0, 120.5)

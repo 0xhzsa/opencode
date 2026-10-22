@@ -194,7 +194,7 @@ export function createRowGrowth(input: {
         if (!growth.entering || !wrapper) growths.delete(key)
         return
       }
-      if (stepped) {
+      if (stepped && diff >= 0) {
         if (growth.coupled && growth.coupled.gaps.length > 0) {
           const shown = grid(growth.value)
           const ratio = Math.max(0, Math.min(1, 1 - shown / Math.max(1, growth.target)))
@@ -247,10 +247,12 @@ export function createRowGrowth(input: {
         maxTake = grid(room)
         growth.freshRow = true
       }
-      const rowMaxTake = maxTake / travelFactor
+      // A complete arriving row follows the duration spring. Per-frame stream caps made a long sent prompt take
+      // seconds to open at lower refresh rates, long after its flight had arrived.
+      const rowMaxTake = !growth.streaming && !coupled && diff > 0 ? Infinity : maxTake / travelFactor
       const take = rem <= 0 ? 0 : Math.min(rem, rawBudget, done && rem <= rowMaxTake ? rem : rowMaxTake)
-      stepped = true
-      consumed = take
+      stepped ||= diff > 0
+      consumed += take
       lastTake = take * travelFactor
       const nextRowValue = rem <= 0 ? growth.value : growth.value + Math.sign(diff) * take
       const rowDone =
@@ -356,10 +358,14 @@ export function createRowGrowth(input: {
     const stepDt = fresh ? 1 / 60 : Math.min(dt, 1 / 30)
     fresh = false
     batch(() => advance(stepDt))
-    // Wait briefly before closing what growth left of the gap so pauses between streamed chunks do not start and stop it.
+    // A send's freed composer space closes alongside its arriving row. Only a streaming tail waits briefly, so pauses
+    // between chunks do not repeatedly start and stop the gap.
     quiet = growths.size ? 0 : quiet + stepDt
 
-    if (held && (closing || quiet >= 0.12)) {
+    if (
+      held &&
+      (closing || quiet >= 0.12 || [...growths.values()].some((growth) => growth.entering && !growth.streaming))
+    ) {
       closing = true
       held.tune(growthSpring())
       held.step(stepDt)

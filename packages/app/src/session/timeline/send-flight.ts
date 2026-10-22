@@ -22,7 +22,7 @@ const waiting = new Map<string, Flight>()
 
 // A bubble that mounted before its flight was prepared, as when a queued prompt's row leaves the queue a moment after
 // its message reaches the timeline. A flight prepared soon after still lands on it.
-const unclaimed = new Map<string, { bubble: HTMLElement; at: number }>()
+const unclaimed = new Map<string, { bubble: HTMLElement; at: number; offset?: () => number }>()
 
 /**
  * Holds a copy of the composer's text, or a queued prompt's row, where it is for the bubble that `id` becomes. A
@@ -99,17 +99,17 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined, s
 
   const early = unclaimed.get(id)
   unclaimed.delete(id)
-  if (early && performance.now() - early.at < 400 && early.bubble.isConnected) landSendFlight(id, early.bubble)
+  if (early && performance.now() - early.at < 400 && early.bubble.isConnected) landSendFlight(id, early.bubble, early.offset)
 }
 
 /** Flies the waiting copy for `id` onto `bubble`. Returns false when nothing was waiting for it. */
-export function landSendFlight(id: string, bubble: HTMLElement) {
+export function landSendFlight(id: string, bubble: HTMLElement, offset?: () => number) {
   const flight = waiting.get(id)
 
   if (!flight) {
     const now = performance.now()
     unclaimed.forEach((entry, key) => now - entry.at >= 400 && unclaimed.delete(key))
-    unclaimed.set(id, { bubble, at: now })
+    unclaimed.set(id, { bubble, at: now, offset })
 
     return false
   }
@@ -160,8 +160,10 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
   flight.source?.style.setProperty("visibility", "hidden")
 
   const spring = Spring.fromDuration(0, growthSpring()).set(1)
+  let fresh = true
   const radius = style.borderRadius
   let rect = bubble.getBoundingClientRect()
+  let remaining = offset?.() ?? 0
   // A prompt that wraps differently in its bubble crosses over quickly, so the two wraps barely overlap.
   const rewraps = Math.abs(rect.height - top - bottom - flight.textHeight) > 2
   let clip = viewport.getBoundingClientRect()
@@ -175,6 +177,7 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
   frameLoop.addMeasured(
     () => {
       rect = bubble.getBoundingClientRect()
+      remaining = offset?.() ?? 0
       clip = viewport.getBoundingClientRect()
       pending = bubble.closest('[data-component="user-message"]')?.hasAttribute("data-pending") ?? false
     },
@@ -186,14 +189,15 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
       }
 
       // A delayed frame must not skip most of a new flight before its first paint.
-      const elapsed = Math.min(dt, 1 / 60)
+      const elapsed = fresh ? 1 / 60 : Math.min(dt, 1 / 30)
+      fresh = false
       spring.tune(growthSpring())
       const p = Math.min(1, Math.max(0, spring.step(elapsed)))
       flight.layer.style.visibility = "visible"
       host.toggleAttribute("data-pending", pending)
       const at = {
         x: start.x + (rect.left - start.x) * p,
-        y: start.y + (rect.top - start.y) * p,
+        y: start.y + (rect.top + remaining - start.y) * p,
         w: start.w + (rect.width - start.w) * p,
         h: start.h + (rect.height - start.h) * p,
       }
@@ -212,7 +216,9 @@ export function landSendFlight(id: string, bubble: HTMLElement) {
       flight.text.style.transform = `translate3d(${at.x + left - clip.left}px, ${at.y + top - flight.above - clip.top}px, 0)`
       flight.text.style.opacity = `${Math.max(0, 1 - p / (rewraps ? 0.25 : 0.4))}`
 
-      if (!spring.resting) return true
+      // The flight aims at the resting slot while neighbouring rows close. Reveal the real bubble only when that
+      // slot has reached it, so landing cannot be followed by a second move.
+      if (!spring.resting || Math.abs(remaining) > 1 / 64) return true
       land()
 
       return false

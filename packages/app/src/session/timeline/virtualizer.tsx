@@ -767,6 +767,26 @@ export function createTimelineVirtualizer(input: Input) {
     return input.pinned() && !coldPending && touchStart === undefined && !prefersReducedMotion()
   }
 
+  // Project the resting slot from the size model, including room that closing rows are still giving back. The flight
+  // measures the real bubble once and adds this correction; it does not chase every intermediate layout position.
+  function landingOffset(key: string) {
+    if (!following()) return 0
+    const index = rowKeys().lastIndexOf(key)
+    let before = 0
+    let total = 0
+    virtualizer.measurementsCache.forEach((item) => {
+      if (streaming(rows()[item.index])) return
+      const itemKey = String(item.key)
+      const target = pendingSizes.get(itemKey) ?? growth.target(itemKey) ?? modelHeight(itemKey) ?? item.size
+      const delta = target - item.size
+      total += delta
+      if (item.index < index) before += delta
+    })
+    const end = Math.max(0, topOffset() + virtualizer.getTotalSize() + total + bottomInset() - layoutState.viewport)
+    const remainder = parseFloat(virtualContent?.style.translate.split(" ")[1] ?? "0") || 0
+    return grid(before - (end - (deferredTop ?? layoutState.offset - remainder)))
+  }
+
   // A row near the end leaves while the timeline follows it: the neighbour row absorbs its height and closes the gap on
   // the shared growth spring, while the original row stays mounted until its fade or Working handoff finishes.
   function closeRemoved(previous: string[], keys: string[]) {
@@ -1819,7 +1839,7 @@ export function createTimelineVirtualizer(input: Input) {
                 queueMicrotask(() => {
                   const bubble = value.querySelector<HTMLElement>('[data-slot="user-message-text"]')
 
-                  if (bubble) landSendFlight(mounted.userMessageID, bubble)
+                  if (bubble) landSendFlight(mounted.userMessageID, bubble, () => landingOffset(rowProps.rowKey))
                 })
 
               if (
