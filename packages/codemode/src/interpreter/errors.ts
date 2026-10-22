@@ -30,7 +30,16 @@ import { formatValue } from "../stdlib/console.js"
 export const errorMessage = (error: Error): string => {
   const message: unknown = error.message
   if (typeof message === "string") return message
-  return message === null || (typeof message !== "object" && typeof message !== "function") ? String(message) : ""
+  if (message === undefined || typeof message === "function" || (typeof message === "object" && message !== null)) {
+    return ""
+  }
+  return String(message)
+}
+
+/** A host error's name as a program error type, read once so a getter cannot pass the check and then change. */
+export const errorType = (error: Error): ErrorType => {
+  const name: unknown = error.name
+  return typeof name === "string" && isErrorType(name) ? name : "Error"
 }
 
 export const normalizeError = (error: unknown): Diagnostic => {
@@ -72,7 +81,7 @@ export const normalizeError = (error: unknown): Diagnostic => {
     return { kind: "ExecutionFailure", message: `Uncaught: ${message}` }
   }
 
-  if (error instanceof RangeError && /call stack|recursion/i.test(error.message)) {
+  if (error instanceof RangeError && /call stack|recursion/i.test(errorMessage(error))) {
     return {
       kind: "ExecutionFailure",
       message: "Execution exceeded the maximum nesting depth.",
@@ -102,7 +111,7 @@ export const locate = (error: unknown, node?: AstNode): unknown => {
     return error
   }
   if (error instanceof Error && !(error instanceof ToolError) && !(error instanceof ToolRuntimeError)) {
-    return new PendingThrow(isErrorType(error.name) ? error.name : "Error", errorMessage(error), node)
+    return new PendingThrow(errorType(error), errorMessage(error), node)
   }
   return error
 }
@@ -118,8 +127,10 @@ export const materialize = <R>(ctx: Interpreter<R>, thrown: unknown): Value => {
     }
     return thrown.value
   }
-  const type = thrown instanceof Error && isErrorType(thrown.name) ? thrown.name : "Error"
-  return createErrorValue(builtins[type], normalizeError(thrown).message)
+  return createErrorValue(
+    builtins[thrown instanceof Error ? errorType(thrown) : "Error"],
+    normalizeError(thrown).message,
+  )
 }
 
 /** Error.prototype.toString: `name: message`, omitting whichever side is empty. */
