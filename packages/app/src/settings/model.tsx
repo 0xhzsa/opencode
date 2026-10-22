@@ -188,11 +188,12 @@ function storedTimelineCategory(category: TimelineCategory) {
     ]).pipe(
       Schema.decode({
         decode: SchemaGetter.transform((value) => {
-          // Notices predate their details; a separate notice kept its compaction summary open.
-          if (!Predicate.isString(value))
-            return category === "notices" && value.details === undefined && value.placement !== undefined
-              ? { ...value, details: value.placement === "separate" ? "expanded" : "collapsed" }
-              : value
+          if (!Predicate.isString(value)) {
+            if (category !== "notices" || value.details !== undefined || value.placement === undefined) return value
+
+            // Saved before notices had details: separate notices showed compaction summaries in full.
+            return { ...value, details: value.placement === "separate" ? "expanded" : "collapsed" }
+          }
 
           return {
             placement:
