@@ -23,6 +23,16 @@ import type { Interpreter } from "./interpreter.js"
 import { toPrimitiveString } from "./callback.js"
 import { formatValue } from "../stdlib/console.js"
 
+/**
+ * A host error's message as text. A host can store anything there; an object must not cross as itself, and turning it
+ * into text would run its own methods.
+ */
+export const errorMessage = (error: Error): string => {
+  const message: unknown = error.message
+  if (typeof message === "string") return message
+  return message === null || (typeof message !== "object" && typeof message !== "function") ? String(message) : ""
+}
+
 export const normalizeError = (error: unknown): Diagnostic => {
   if (error instanceof PendingThrow) {
     return {
@@ -72,7 +82,7 @@ export const normalizeError = (error: unknown): Diagnostic => {
   if (error instanceof Error) {
     return {
       kind: error.name === "SyntaxError" ? "ParseError" : "ExecutionFailure",
-      message: error.message,
+      message: errorMessage(error),
     }
   }
 
@@ -92,7 +102,7 @@ export const locate = (error: unknown, node?: AstNode): unknown => {
     return error
   }
   if (error instanceof Error && !(error instanceof ToolError) && !(error instanceof ToolRuntimeError)) {
-    return new PendingThrow(isErrorType(error.name) ? error.name : "Error", error.message, node)
+    return new PendingThrow(isErrorType(error.name) ? error.name : "Error", errorMessage(error), node)
   }
   return error
 }

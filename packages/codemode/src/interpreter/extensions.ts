@@ -2,8 +2,9 @@ import { Effect } from "effect"
 import type { Extension } from "../extension.js"
 import { type ExtensionInvocation, hooked } from "../tool-runtime.js"
 import type { Interpreter } from "./interpreter.js"
+import { errorMessage } from "./errors.js"
 import { createErrorValue, isErrorType } from "./intrinsics.js"
-import { MAX_VALUE_DEPTH } from "./limits.js"
+import { checkArrayLength, MAX_VALUE_DEPTH } from "./limits.js"
 import { PendingThrow, Throw, typeError } from "./model.js"
 import { fn } from "./native.js"
 import {
@@ -79,14 +80,15 @@ export const extensionGlobals = <R>(
     if (typeof value === "function") return wrap(value, label)
     if (value !== null && typeof value === "object") {
       const next = (item: unknown, path: string) => fromHost(item, path, depth + 1, seen)
-      if (value instanceof Date) return new DateObj(builtins.Date, value.getTime())
+      // Copies read the host value's internal data, never a method the value itself could override.
+      if (value instanceof Date) return new DateObj(builtins.Date, Date.prototype.getTime.call(value))
       if (value instanceof RegExp) return new RegExpObj(builtins.RegExp, value.source, value.flags)
       if (value instanceof Uint8Array) return new Bytes(builtins.Uint8Array, new Uint8Array(value))
-      if (value instanceof ArrayBuffer) return new Bytes(builtins.Uint8Array, new Uint8Array(value.slice(0)))
+      if (value instanceof ArrayBuffer) return new Bytes(builtins.Uint8Array, new Uint8Array(new Uint8Array(value)))
       if (value instanceof Error) {
         if (seen.has(value)) throw typeError(`${label} produced a circular value.`)
         seen.add(value)
-        const copied = createErrorValue(builtins[isErrorType(value.name) ? value.name : "Error"], value.message)
+        const copied = createErrorValue(builtins[isErrorType(value.name) ? value.name : "Error"], errorMessage(value))
         const fields = value as unknown as Record<string, unknown>
         for (const key of new Set(["cause", ...Object.keys(value)])) {
           if (uncrossed.has(key) || !(key in value) || typeof fields[key] === "function") continue
@@ -115,12 +117,16 @@ export const extensionGlobals = <R>(
       if (seen.has(value)) throw typeError(`${label} produced a circular value.`)
       seen.add(value)
       if (Array.isArray(value)) {
-        const copied = new Arr(
-          builtins.Array,
-          value.map((item, index) => next(item, `${label}[${index}]`)),
-        )
+        const length = value.length
+        checkArrayLength(length)
+        // Holes stay holes, as a copy made with `map` would leave them.
+        const items: Array<Value> = []
+        items.length = length
+        for (let index = 0; index < length; index += 1) {
+          if (index in value) items[index] = next(value[index], `${label}[${index}]`)
+        }
         seen.delete(value)
-        return copied
+        return new Arr(builtins.Array, items)
       }
       const prototype = Object.getPrototypeOf(value)
       if (prototype === Object.prototype || prototype === null) {
@@ -137,26 +143,32 @@ export const extensionGlobals = <R>(
   // hooks, which see the host's own error on failure; then whatever came back, or was thrown, crosses out so the
   // program catches a copy. Functions inside results are part of a value's API and skip the hooks.
   const wrap = (value: Function, label: string, describe?: (args: ReadonlyArray<unknown>) => ExtensionInvocation) =>
-    fn<R>(builtins, value.name, value.length, (_, values) => {
-      const args = values.map((item, index) => toHost(item, `Argument ${index + 1} to ${label}`))
-      const hooks = ctx.tools.hooks
-      const settle = (run: Effect.Effect<unknown, unknown, R>) =>
-        (describe === undefined
-          ? run
-          : hooked(describe(args), hooks["extension.before"], hooks["extension.after"], run)
-        ).pipe(
-          Effect.mapError((reason) => new Throw(fromHost(reason, label))),
-          Effect.map((settled) => fromHost(settled, label)),
-        )
-      let result: unknown
-      try {
-        result = value.apply(undefined, args)
-      } catch (reason) {
-        return settle(Effect.fail(reason))
-      }
-      if (!(result instanceof Promise)) return settle(Effect.succeed(result))
-      return ctx.pending.createHost(settle(Effect.tryPromise({ try: () => result, catch: (reason) => reason })))
-    })
+    // The host function's own `name` and `length` can be anything; only text and a count cross.
+    fn<R>(
+      builtins,
+      typeof value.name === "string" ? value.name : "",
+      Number.isSafeInteger(value.length) && value.length >= 0 ? value.length : 0,
+      (_, values) => {
+        const args = values.map((item, index) => toHost(item, `Argument ${index + 1} to ${label}`))
+        const hooks = ctx.tools.hooks
+        const settle = (run: Effect.Effect<unknown, unknown, R>) =>
+          (describe === undefined
+            ? run
+            : hooked(describe(args), hooks["extension.before"], hooks["extension.after"], run)
+          ).pipe(
+            Effect.mapError((reason) => new Throw(fromHost(reason, label))),
+            Effect.map((settled) => fromHost(settled, label)),
+          )
+        let result: unknown
+        try {
+          result = value.apply(undefined, args)
+        } catch (reason) {
+          return settle(Effect.fail(reason))
+        }
+        if (!(result instanceof Promise)) return settle(Effect.succeed(result))
+        return ctx.pending.createHost(settle(Effect.tryPromise({ try: () => result, catch: (reason) => reason })))
+      },
+    )
 
   return extensions.flatMap((extension) =>
     Object.entries(extension.globals).map(

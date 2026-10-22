@@ -254,6 +254,70 @@ describe("values are converted at the boundary, never shared", () => {
   })
 })
 
+describe("host values with overridden methods still cross as copies", () => {
+  const returning = (sample: unknown) =>
+    CodeMode.make({ extensions: [Extension.make({ name: "odd", globals: { sample: () => sample } })] })
+
+  // A host object whose own `toString` runs when converted to text, counting the conversions.
+  const textual = () => {
+    const counter = { conversions: 0 }
+    const object = {
+      toString() {
+        counter.conversions += 1
+        return "host text"
+      },
+    }
+    return { counter, object }
+  }
+
+  test("an array whose map returns itself is still copied by index, holes and all", async () => {
+    const host = [1, , 3]
+    Object.defineProperty(host, "map", { value: () => host })
+    expect(await value(`const x = sample(); x[0] = 99; return [x.length, 1 in x, x[2]]`, returning(host))).toEqual([
+      3,
+      false,
+      3,
+    ])
+    expect(host[0]).toBe(1)
+  })
+
+  test("an ArrayBuffer whose slice returns itself is still copied", async () => {
+    const host = new ArrayBuffer(2)
+    new Uint8Array(host).set([1, 2])
+    Object.defineProperty(host, "slice", { value: () => host })
+    expect(await value(`const x = sample(); x[0] = 99; return x[0]`, returning(host))).toBe(99)
+    expect([...new Uint8Array(host)]).toEqual([1, 2])
+  })
+
+  test("a Date whose getTime is overridden crosses with its real time", async () => {
+    const { counter, object } = textual()
+    const host = new Date(0)
+    Object.defineProperty(host, "getTime", { value: () => object })
+    expect(await value(`return sample().getTime()`, returning(host))).toBe(0)
+    expect(counter.conversions).toBe(0)
+  })
+
+  test("an Error whose message is an object crosses without it", async () => {
+    const { counter, object } = textual()
+    const host = new Error("x")
+    Object.defineProperty(host, "message", { value: object })
+    expect(await value(`const e = sample(); return [typeof e.message, e.message]`, returning(host))).toEqual([
+      "string",
+      "",
+    ])
+    expect(counter.conversions).toBe(0)
+  })
+
+  test("a function whose name and length are objects crosses with neither", async () => {
+    const { counter, object } = textual()
+    const host = () => null
+    Object.defineProperty(host, "name", { value: object })
+    Object.defineProperty(host, "length", { value: object })
+    expect(await value(`const f = sample(); return [f.name, f.length]`, returning(host))).toEqual(["", 0])
+    expect(counter.conversions).toBe(0)
+  })
+})
+
 describe("host errors", () => {
   test("a synchronous throw becomes the matching program error", async () => {
     const target = CodeMode.make({
