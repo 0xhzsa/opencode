@@ -171,6 +171,17 @@ export function createRowGrowth(input: {
     const streamEdge = streamingRow ? streamingEdgeFor() : undefined
     const tuned = growthSpring()
     spring.tune(streamEdge ? { ...tuned, duration: tuned.duration * streamEdge.spring } : tuned)
+    // Arrivals own their travel. Recompute the shared remainder from its rows instead of keeping a second ledger
+    // that can retain an arrival's distance after that arrival has landed.
+    const remaining = [...growths.values()].reduce(
+      (sum, growth) =>
+        sum +
+        (growth.target > growth.value && !growth.streaming && !growth.coupled
+          ? 0
+          : Math.abs(growth.target - growth.value)),
+      0,
+    )
+    spring.set(spring.value + remaining)
     const before = grid(spring.value)
     const beforeRaw = spring.value
     const nextValue = spring.step(dt)
@@ -307,9 +318,7 @@ export function createRowGrowth(input: {
       }
 
       if (wrapper === false) {
-        const unconsumed = Math.abs(growth.target - growth.value)
         growths.delete(key)
-        if (unconsumed > 0) spring?.set(Math.max(spring.value, spring.target - unconsumed))
       } else {
         if (wrapper) {
           if (!edge.clip && growth.streaming && !coupled) {
@@ -402,6 +411,14 @@ export function createRowGrowth(input: {
       const running = growths.get(key)
       return running ? grid(running.value) : undefined
     },
+    targets: () => {
+      const targets = new Map<string, number>()
+      growths.forEach((growth, key) => {
+        growth.coupled?.gaps.forEach((gap) => targets.set(gap.key, gap.base))
+        targets.set(key, growth.target)
+      })
+      return targets
+    },
     target: (key: string) => {
       const direct = growths.get(key)?.target
       if (direct !== undefined) return direct
@@ -434,10 +451,8 @@ export function createRowGrowth(input: {
         running.streaming ||= streaming
         if (running.streaming) running.entrance = undefined
         running.target = to
-        const newRem = Math.abs(to - running.value)
         if (onEnter && !running.enter) running.enter = onEnter
         if (entering) running.entering = true
-        spring?.set(spring.target + newRem - oldRem)
         return
       }
       const rem = Math.abs(to - from)
@@ -469,8 +484,6 @@ export function createRowGrowth(input: {
         coupled: normalized,
       })
       if (!spring) spring = Spring.fromDuration(0, growthSpring())
-      else spring.tune(growthSpring())
-      spring.set(spring.target + rem)
       if (!wasGrowing) fresh = true
       stop ??= frameLoop.addMeasured(input.measure, step)
     },
@@ -488,7 +501,6 @@ export function createRowGrowth(input: {
         this.grow(key, from, to, enter)
         return
       }
-      const oldRem = Math.abs(running.target - running.value)
       running.value += removed
       running.target = to
       const newRem = Math.abs(running.target - running.value)
@@ -497,12 +509,10 @@ export function createRowGrowth(input: {
         queueMicrotask(() => this.land(key, to))
         return
       }
-      spring?.set(Math.max(spring.value, spring.target + newRem - oldRem))
     },
     drop(key: string) {
       const running = growths.get(key)
       if (!running) return
-      const rem = Math.abs(running.target - running.value)
       if (running.unclipped) {
         const wrapper = input.resize(key, running.target)
         if (wrapper) wrapper.style.overflow = "clip"
@@ -514,7 +524,6 @@ export function createRowGrowth(input: {
         })
       }
       growths.delete(key)
-      if (spring) spring.set(Math.max(spring.value, spring.target - rem))
       if (!growths.size) {
         spring = undefined
         lastTake = 0
@@ -537,7 +546,6 @@ export function createRowGrowth(input: {
       const ratio = Math.max(0, Math.min(1, 1 - grid(running.value) / Math.max(1, running.target)))
       const gaps = running.coupled.gaps
       growths.delete(key)
-      if (spring) spring.set(Math.max(spring.value, spring.target - Math.abs(running.target - running.value)))
       gaps.forEach((gap) => {
         const current = grid(gap.base + gap.extra * ratio)
         if (current - gap.base > 1 / 64) return this.grow(gap.key, current, gap.base)
@@ -559,7 +567,6 @@ export function createRowGrowth(input: {
     land(key: string, size: number) {
       const running = growths.get(key)
       if (running) {
-        const rem = Math.abs(running.target - running.value)
         if (running.coupled) {
           running.coupled.gaps.forEach((gap) => {
             const cWrapper = input.resize(gap.key, gap.base)
@@ -567,7 +574,6 @@ export function createRowGrowth(input: {
           })
         }
         growths.delete(key)
-        if (spring) spring.set(Math.max(spring.value, spring.target - rem))
         if (!growths.size) {
           spring = undefined
           lastTake = 0

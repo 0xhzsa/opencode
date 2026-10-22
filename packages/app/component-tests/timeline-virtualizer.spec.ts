@@ -48,6 +48,34 @@ story("reveals mixed modeled and measured rows without starving input", async ({
   await expect(root.locator("[data-scrollable]")).toBeHidden()
 })
 
+story("animates only the final screen when resuming from deep history", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" })
+  await page.evaluate(async (url) => {
+    const { mountTimelineVirtualizer } = await import(url)
+    mountTimelineVirtualizer({ count: 1000, rowHeight: 64, modeled: 1000, viewportHeight: 300, immediate: true })
+  }, fixture)
+  const root = page.getByTestId("timeline-virtualizer-fixture")
+  await root.getByRole("button", { name: "Complete Markdown", exact: true }).click()
+  await expect(root.locator("[data-timeline-virtual-content]")).toHaveCSS("visibility", "visible")
+  const returnGap = await root.evaluate((host) => {
+    const viewport = host.querySelector<HTMLElement>("[data-scrollable]")!
+    viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -60000, bubbles: true }))
+    viewport.scrollTop = 0
+    viewport.dispatchEvent(new Event("scroll"))
+    host.querySelector<HTMLButtonElement>('[data-testid="resume"]')!.click()
+    return { gap: viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop, viewport: viewport.clientHeight }
+  })
+  expect(returnGap.gap).toBeGreaterThan(0)
+  expect(returnGap.gap).toBeLessThanOrEqual(returnGap.viewport + 1)
+  await expect
+    .poll(() =>
+      root
+        .locator("[data-scrollable]")
+        .evaluate((viewport) => viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
+    )
+    .toBeLessThanOrEqual(1)
+})
+
 for (const action of ["wheel", "resume", "resume-removal", "follow", "backlog", "unpinned"] as const) {
   story(`keeps in-flight row growth continuous during ${action}`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "no-preference" })

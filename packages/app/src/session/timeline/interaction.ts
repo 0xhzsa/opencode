@@ -223,7 +223,7 @@ export function createSessionTimelineInteraction(session: SessionModel) {
     if (target < 0 || target > messages.length) return
 
     if (target === messages.length) {
-      resume()
+      resume("auto")
 
       return
     }

@@ -102,29 +102,43 @@ describe("row growth", () => {
     }
   })
 
-  test.each([false, true])("closes a neighbour while a new row grows (close first: %s)", async (closeFirst) => {
-    const sizes = new Map<string, number>()
-    const frame = Promise.withResolvers<void>()
-    const growth = createRowGrowth({
-      measure: () => {},
-      resize: (key, size) => {
-        sizes.set(key, size)
-      },
-      below: () => true,
-      settle: () => frame.resolve(),
-    })
-    if (closeFirst) growth.grow("closing", 100, 24)
-    growth.grow("arriving", 0, 450)
-    if (!closeFirst) growth.grow("closing", 100, 24)
-
+  test.each([false, true])("closes a neighbour independently of arrivals (close first: %s)", (closeFirst) => {
+    const schedule = spyOn(frameLoop, "addMeasured").mockImplementation(() => () => {})
+    const trace = (arrival: number) => {
+      const closing: number[] = []
+      const arriving: number[] = []
+      const growth = createRowGrowth({
+        measure: () => {},
+        resize: (key, size) => {
+          if (key === "closing") closing.push(size)
+          if (key === "arriving") arriving.push(size)
+        },
+        below: () => true,
+        settle: () => {},
+      })
+      try {
+        if (closeFirst) growth.grow("closing", 100, 24)
+        if (arrival) growth.grow("arriving", 0, arrival)
+        if (!closeFirst) growth.grow("closing", 100, 24)
+        const advance = schedule.mock.calls.at(-1)![1]
+        Array.from({ length: 180 }, () => advance(1 / 60))
+        expect(growth.growing()).toBe(false)
+        return { closing, arriving }
+      } finally {
+        growth.finish()
+      }
+    }
     try {
-      await frame.promise
-      expect(sizes.get("arriving")).toBeGreaterThan(0)
-      expect(sizes.get("arriving")).toBeLessThan(450)
-      expect(sizes.get("closing")).toBeLessThan(100)
-      expect(sizes.get("closing")).toBeGreaterThan(24)
+      const alone = trace(0)
+      const together = trace(450)
+      expect(together.arriving[0]).toBeGreaterThan(0)
+      expect(together.arriving[0]).toBeLessThan(450)
+      expect(together.closing[0]).toBeLessThan(100)
+      expect(together.closing[0]).toBeGreaterThan(24)
+      expect(together.closing.at(-1)).toBe(24)
+      expect(together.closing).toEqual(alone.closing)
     } finally {
-      growth.finish()
+      schedule.mockRestore()
     }
   })
 

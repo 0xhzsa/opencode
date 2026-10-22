@@ -174,6 +174,7 @@ export function createTimelineVirtualizer(input: Input) {
   const rowKeys = createMemo(() => rows().map(TimelineRow.key), undefined, {
     equals: (previous, next) => previous.length === next.length && previous.every((key, index) => key === next[index]),
   })
+  const rowIndexes = createMemo(() => new Map(rowKeys().map((key, index) => [key, index])))
 
   const knownKeys = new Set(rowKeys())
   const addedKeys = new Set<string>()
@@ -489,9 +490,9 @@ export function createTimelineVirtualizer(input: Input) {
       growthViewport = layoutState.viewport
     },
     resize: (key, size) => {
-      const index = rowKeys().lastIndexOf(key)
+      const index = rowIndexes().get(key)
 
-      if (index < 0) return false
+      if (index === undefined) return false
       resizingGrowth = true
       virtualizer.options.anchorTo = "start"
       try {
@@ -538,7 +539,7 @@ export function createTimelineVirtualizer(input: Input) {
     lift = 0
     holdSpace(grid(held))
 
-    if (root && input.pinned() && !touchScrolling) pinEnd(growthViewport, true)
+    if (root && input.pinned() && !touchScrolling && !resumeSpring) pinEnd(growthViewport, true)
   }
 
   function contentHeight() {
@@ -794,14 +795,18 @@ export function createTimelineVirtualizer(input: Input) {
   function landingOffset(key: string) {
     if (!active() || !layoutState.visible || (!resumeSpring && !growth.growing() && !pendingSizes.size && !heldSpace))
       return 0
-    const index = rowKeys().lastIndexOf(key)
+    const index = rowIndexes().get(key)
+    if (index === undefined) return 0
     let before = 0
     let total = 0
     let adjustment = 0
-    virtualizer.measurementsCache.forEach((item) => {
+    const targets = growth.targets()
+    pendingSizes.forEach((size, key) => targets.set(key, size))
+    targets.forEach((target, key) => {
+      const at = rowIndexes().get(key)
+      const item = at === undefined ? undefined : virtualizer.measurementsCache[at]
+      if (!item) return
       if (streaming(rows()[item.index])) return
-      const itemKey = String(item.key)
-      const target = pendingSizes.get(itemKey) ?? growth.target(itemKey) ?? item.size
       const delta = target - item.size
       total += delta
       if (item.index < index) before += delta
@@ -1431,6 +1436,9 @@ export function createTimelineVirtualizer(input: Input) {
         input.onPin()
 
         if (animate) {
+          // A deep-history return only animates the final screen, avoiding a new screen of mounts on every frame.
+          if (endOffset() - drawnOffset() > layoutState.viewport)
+            writeScroll(root, endOffset() - layoutState.viewport, false)
           // Close the distance to the end, rather than chasing its changing offset. Growth then follows 1:1
           // without making the newest rows drift downward while the return spring catches up.
           const spring = Spring.fromDuration(Math.max(0, endOffset() - drawnOffset()), growthSpring()).set(0)
