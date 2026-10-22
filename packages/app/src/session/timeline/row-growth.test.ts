@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
+import { frameLoop } from "@opencode/ui/motion"
 import { createRowGrowth, streamingEdgeFor, workingHandoffPose } from "./row-growth"
 
 function setup() {
@@ -29,6 +30,33 @@ async function settle(growth: ReturnType<typeof createRowGrowth>, frames: { held
 }
 
 describe("row growth", () => {
+  test("keeps a streaming row's catch-up pace when its final height arrives", () => {
+    const sizes: number[] = []
+    const schedule = spyOn(frameLoop, "addMeasured").mockImplementation(() => () => {})
+    const growth = createRowGrowth({
+      measure: () => {},
+      resize: (_, size) => {
+        sizes.push(size)
+      },
+      below: () => true,
+      settle: () => {},
+    })
+
+    try {
+      growth.grow("reply", 0, 450, false, undefined, true)
+      const advance = schedule.mock.calls[0]![1]
+      Array.from({ length: 10 }, () => advance(1 / 60))
+      growth.grow("reply", sizes.at(-1)!, 480, false, undefined, false)
+      Array.from({ length: 5 }, () => advance(1 / 60))
+      const steps = sizes.slice(10).map((size, index) => size - sizes[index + 9]!)
+      expect(steps.every((step) => step > 0)).toBe(true)
+      expect(Math.max(...steps)).toBeLessThanOrEqual(16)
+    } finally {
+      growth.finish()
+      schedule.mockRestore()
+    }
+  })
+
   test.each([false, true])("closes a neighbour while a new row grows (close first: %s)", async (closeFirst) => {
     const sizes = new Map<string, number>()
     const frame = Promise.withResolvers<void>()

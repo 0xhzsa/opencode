@@ -419,7 +419,8 @@ export function createRowGrowth(input: {
         } else if (oldRem <= 1e-4 && !streaming && !running.streaming) {
           running.freshRow = true
         }
-        running.streaming = streaming
+        // Completing the stream must not remove its catch-up cap while the displayed row is still behind.
+        running.streaming ||= streaming
         running.target = to
         const newRem = Math.abs(to - running.value)
         if (onEnter && !running.enter) running.enter = onEnter
