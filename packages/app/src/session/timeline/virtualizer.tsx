@@ -1423,7 +1423,7 @@ export function createTimelineVirtualizer(input: Input) {
           following() &&
           !rendering.anchor &&
           !rendering.scrollAdjustment &&
-          endOffset() - layoutState.offset <= 1
+          (growth.growing() || endOffset() - layoutState.offset <= 1)
         )
           return
         const animate = behavior === "smooth" && !prefersReducedMotion()

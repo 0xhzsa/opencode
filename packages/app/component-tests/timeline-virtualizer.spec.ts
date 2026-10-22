@@ -48,7 +48,7 @@ story("reveals mixed modeled and measured rows without starving input", async ({
   await expect(root.locator("[data-scrollable]")).toBeHidden()
 })
 
-for (const action of ["wheel", "resume", "resume-removal", "backlog", "unpinned"] as const) {
+for (const action of ["wheel", "resume", "resume-removal", "follow", "backlog", "unpinned"] as const) {
   story(`keeps in-flight row growth continuous during ${action}`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "no-preference" })
     await page.evaluate(
@@ -94,7 +94,7 @@ for (const action of ["wheel", "resume", "resume-removal", "backlog", "unpinned"
             resolve(change)
             return
           }
-          if (action === "resume-removal") {
+          if (action === "resume-removal" || action === "follow") {
             viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -90, bubbles: true }))
             viewport.scrollTop -= 90
             viewport.dispatchEvent(new Event("scroll"))
@@ -104,9 +104,10 @@ for (const action of ["wheel", "resume", "resume-removal", "backlog", "unpinned"
             top: next.getBoundingClientRect().top,
             extent: content.getBoundingClientRect().height,
           }
-          if (action !== "backlog" && action !== "resume-removal")
+          if (action !== "backlog" && action !== "resume-removal" && action !== "follow")
             viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -90, bubbles: true }))
           if (action.startsWith("resume")) host.querySelector<HTMLButtonElement>('[data-testid="resume"]')!.click()
+          if (action === "follow") host.querySelector<HTMLButtonElement>('[data-testid="follow"]')!.click()
           if (action === "resume-removal") host.querySelector<HTMLButtonElement>('[data-testid="remove-row"]')!.click()
           change = {
             before,

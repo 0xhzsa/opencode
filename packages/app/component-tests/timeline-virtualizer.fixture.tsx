@@ -130,6 +130,16 @@ export function mountTimelineVirtualizer(input: {
         </button>
         <button
           type="button"
+          data-testid="follow"
+          onClick={() => {
+            setState("pinned", true)
+            scrollToEnd()
+          }}
+        >
+          Follow latest
+        </button>
+        <button
+          type="button"
           data-testid="resume"
           onClick={() => {
             setState("pinned", true)
