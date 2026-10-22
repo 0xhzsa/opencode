@@ -5,7 +5,7 @@ import { Portal } from "solid-js/web"
 const key = "opencode.motion.panel"
 
 // The Motion workspace, docked above the debug bar's right end until its header is dragged. knobs loads once it opens.
-export default function Motion(props: { title: string; onClose: () => void }) {
+export default function Motion(props: { title: string; section?: string; onClose: () => void }) {
   let container!: HTMLDivElement
   let unmount: (() => void) | undefined
   let disposed = false
@@ -76,7 +76,7 @@ export default function Motion(props: { title: string; onClose: () => void }) {
   })
 
   void import("@opencode/ui/motion-tuning-panel").then(({ mountMotionPanel }) => {
-    if (!disposed) unmount = mountMotionPanel(container, { title: props.title, onClose: props.onClose })
+    if (!disposed) unmount = mountMotionPanel(container, { title: props.title, section: props.section, onClose: props.onClose })
   })
 
   return (

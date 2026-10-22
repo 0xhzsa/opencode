@@ -14,8 +14,10 @@ const setup: Setup<typeof Debug> = (ctx) => {
   const motion = () => bar.value.motion
   const Demo = motionTools ? lazy(() => import("./demo")) : undefined
   const [demo, setDemo] = createSignal(false)
+  const [section, setSection] = createSignal<string>()
 
-  // Routing a session on Drive's simulated model opens the bar with its Demo panel, so the controls are in view.
+  // Routing a session on Drive's simulated model opens the bar with its Demo panel and the Knobs on Experiments, where
+  // the Timeline card lives, so the controls are in view.
   if (motionTools)
     createKeyed(
       () => {
@@ -26,7 +28,9 @@ const setup: Setup<typeof Debug> = (ctx) => {
       () => {
         void bar.update((draft) => {
           draft.visible = true
+          draft.motion = true
         })
+        setSection("Experiments")
         setDemo(true)
       },
     )
@@ -77,7 +81,7 @@ const setup: Setup<typeof Debug> = (ctx) => {
           // The Knobs workspace opens only from the debug bar's KNOBS cell, and shows while the bar does.
           <Show when={visible() && motion()}>
             <Suspense>
-              <Motion title={ctx.t("motion.title")} onClose={toggleMotion} />
+              <Motion title={ctx.t("motion.title")} section={section()} onClose={toggleMotion} />
             </Suspense>
           </Show>
         )}
