@@ -18,7 +18,7 @@ for (const { width, ...profile } of [
 
     await setupTimeline(page, {
       settings: {
-        timelineDetail: { ...timelinePresets[2].value, notices: { placement: "separate" } },
+        timelineDetail: { ...timelinePresets[2].value, notices: { placement: "separate", details: "expanded" } },
       },
       locale: profile.locale,
       viewport: { width, height: 900 },

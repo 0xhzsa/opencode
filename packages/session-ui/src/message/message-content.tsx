@@ -583,8 +583,18 @@ function CompactionDivider(props: { label: string }) {
   )
 }
 
-export function SessionCompactionMessage(props: { message: SessionMessageCompaction; error: string }) {
+export function SessionCompactionMessage(props: {
+  message: SessionMessageCompaction
+  error: string
+  /** Whether the summary starts open; it does unless the timeline's notice detail folds it. */
+  defaultOpen?: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}) {
   const i18n = useI18n()
+  const [state, setState] = createStore<{ open?: boolean }>({})
+  const open = () => props.open ?? state.open ?? props.defaultOpen ?? true
+  const running = () => props.message.status === "running"
   const summary = () => (props.message.status === "failed" ? "" : props.message.summary)
 
   const error = () => {
@@ -632,26 +642,26 @@ export function SessionCompactionMessage(props: { message: SessionMessageCompact
   return (
     <div data-component="session-compaction-message">
       <CompactionDivider label={i18n.t("ui.messagePart.compaction.started")} />
-      <Show when={summary().trim()}>
-        <div data-component="text-part" data-timeline-part-id={props.message.id}>
-          <div data-slot="text-part-body">
-            <PacedMarkdown
-              text={summary()}
-              cacheKey={props.message.id}
-              streaming={props.message.status === "running"}
-            />
-          </div>
-        </div>
-      </Show>
-      <Show when={props.message.status === "running"}>
-        <div role="status" class="py-2">
+      <Show when={running() || summary().trim()}>
+        <div role={running() ? "status" : undefined} class="py-2" data-timeline-part-id={props.message.id}>
           <BasicTool
             icon="archive"
-            trigger={{ title: i18n.t("ui.messagePart.compaction.running") }}
-            status="running"
-            locked
-            hideDetails
-          />
+            status={running() ? "running" : "completed"}
+            compact
+            hasContent
+            allowOpenWhilePending
+            hideDetails={!summary().trim()}
+            open={open()}
+            onOpenChange={(value) => {
+              setState("open", value)
+              props.onOpenChange?.(value)
+            }}
+            trigger={{
+              title: i18n.t(running() ? "ui.messagePart.compaction.running" : "ui.messagePart.compaction.summary"),
+            }}
+          >
+            <PacedMarkdown text={summary()} cacheKey={props.message.id} streaming={running()} />
+          </BasicTool>
         </div>
       </Show>
       <Show when={props.message.status !== "running"}>
