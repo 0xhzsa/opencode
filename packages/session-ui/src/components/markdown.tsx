@@ -939,7 +939,16 @@ export function Markdown(
       const check =
         renderedBlocks[index] === block && current instanceof HTMLDivElement
           ? inlineCodeChecks.get(current)?.pending
-          : updateBlock(container, index, block, labels, sessionLinks, lifetime.signal, localFileExists)
+          : updateBlock(
+              container,
+              index,
+              block,
+              renderedBlocks.length > 0 && container.isConnected,
+              labels,
+              sessionLinks,
+              lifetime.signal,
+              localFileExists,
+            )
 
       return check ? [check] : []
     })
@@ -1080,6 +1089,7 @@ function updateBlock(
   container: HTMLDivElement,
   index: number,
   block: RenderedBlock,
+  animate: boolean,
   labels: CopyLabels,
   sessionLinks: ((id: string) => string | undefined) | undefined,
   signal: AbortSignal,
@@ -1133,7 +1143,7 @@ function updateBlock(
     rendered.renderer.update(
       source.innerHTML,
       block.mode === "live" || block.raw.startsWith(rendered.raw.trimEnd()),
-      rendered.raw !== block.raw,
+      animate && rendered.raw !== block.raw,
     )
     rendered.raw = block.raw
 
@@ -1143,7 +1153,7 @@ function updateBlock(
   if (block.mode === "live") {
     next.replaceChildren()
     renderedMarkdown.set(next, {
-      renderer: createMarkdownRenderer(next, source.innerHTML, true, true),
+      renderer: createMarkdownRenderer(next, source.innerHTML, true, animate),
       raw: block.raw,
     })
   }

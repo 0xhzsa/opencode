@@ -15,9 +15,21 @@ type MarkdownNode =
   | { key: string; type: "word"; text: string; animate?: true }
 
 export function createMarkdownRenderer(root: HTMLDivElement, html: string, words: boolean, animate = false) {
-  const [nodes, setNodes] = createStore(parseMarkdownNodes(html, words, animate))
-  let ready = animate
+  const visible = () => root.isConnected && document.visibilityState !== "hidden"
+  const [nodes, setNodes] = createStore(
+    parseMarkdownNodes(html, words, animate && document.visibilityState !== "hidden"),
+  )
+  let ready = animate && document.visibilityState !== "hidden"
   let frontier = 0
+
+  const settle = () => {
+    frontier = 0
+    root.querySelectorAll<HTMLElement>("[data-markdown-enter]").forEach((element) => {
+      element.removeAttribute("data-markdown-enter")
+      element.style.removeProperty("--markdown-word-delay")
+    })
+  }
+  document.addEventListener("visibilitychange", settle)
 
   const delay = () => {
     const now = typeof performance === "object" ? performance.now() : 0
@@ -41,9 +53,13 @@ export function createMarkdownRenderer(root: HTMLDivElement, html: string, words
 
   return {
     update(next: string, nextWords: boolean, animate = true) {
-      setNodes(reconcile(parseMarkdownNodes(next, nextWords, animate), { key: "key" }))
+      if (!visible()) settle()
+      setNodes(reconcile(parseMarkdownNodes(next, nextWords, animate && visible()), { key: "key" }))
     },
-    dispose,
+    dispose() {
+      document.removeEventListener("visibilitychange", settle)
+      dispose()
+    },
   }
 }
 

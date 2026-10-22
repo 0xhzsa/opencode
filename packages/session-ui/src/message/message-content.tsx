@@ -207,7 +207,7 @@ function createPacedValue(getValue: () => string, live?: () => boolean) {
     timeout = undefined
     const text = getValue()
 
-    if (!live?.()) {
+    if (!live?.() || document.visibilityState === "hidden") {
       sync(text)
 
       return
@@ -234,7 +234,7 @@ function createPacedValue(getValue: () => string, live?: () => boolean) {
   createEffect(() => {
     const text = getValue()
 
-    if (!live?.()) {
+    if (!live?.() || document.visibilityState === "hidden") {
       clear()
       sync(text)
 
@@ -259,7 +259,13 @@ function createPacedValue(getValue: () => string, live?: () => boolean) {
     timeout = setTimeout(run, TEXT_RENDER_PACE_MS)
   })
 
+  const settle = () => {
+    clear()
+    sync(getValue())
+  }
+  document.addEventListener("visibilitychange", settle)
   onCleanup(() => {
+    document.removeEventListener("visibilitychange", settle)
     clear()
   })
 

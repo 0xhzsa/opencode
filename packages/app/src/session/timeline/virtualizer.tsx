@@ -137,7 +137,8 @@ export function createTimelineVirtualizer(input: Input) {
     viewport: number
     offset: number
     held: number
-  }>({ fontsReady: false, viewport: 0, offset: 0, held: 0 })
+    visible: boolean
+  }>({ fontsReady: false, viewport: 0, offset: 0, held: 0, visible: document.visibilityState !== "hidden" })
   const layouts = createMemo(() => {
     const environment = layoutState.environment
     if (!environment) return new Map<string, TimelineRowLayout>()
@@ -518,6 +519,12 @@ export function createTimelineVirtualizer(input: Input) {
       return grid(actItem.start - originItem.start + shown)
     },
     settle: (state) => {
+      // A backlog longer than a screen opens at its end instead of replaying the missed growth.
+      if (following() && state.pending > growthViewport) {
+        landGrowth()
+        pinEnd(growthViewport, false)
+        return
+      }
       if (!state.held) endGap = false
 
       if (state.held !== shift().size) setShift((value) => ({ rows: state.held ? value.rows : 0, size: state.held }))
@@ -764,7 +771,14 @@ export function createTimelineVirtualizer(input: Input) {
   }
 
   function following() {
-    return input.pinned() && !coldPending && touchStart === undefined && !prefersReducedMotion()
+    return (
+      active() &&
+      layoutState.visible &&
+      input.pinned() &&
+      !coldPending &&
+      touchStart === undefined &&
+      !prefersReducedMotion()
+    )
   }
 
   // Project the resting slot from the size model, including room that closing rows are still giving back. The flight
@@ -1112,6 +1126,7 @@ export function createTimelineVirtualizer(input: Input) {
       // The hidden pinned mount needs one bottom write after the whole batch,
       // not a layout-forcing scroll adjustment for every measured row.
       batchingColdSizes = coldPending && input.pinned()
+      const before = virtualizer.getTotalSize()
       batch(() => {
         sizes.forEach(([key, size]) => {
           const index = rowKeys().lastIndexOf(key)
@@ -1139,9 +1154,9 @@ export function createTimelineVirtualizer(input: Input) {
 
       if (!input.pinned()) return
       if (following()) {
-        // The shared growth frame commits the extent and scroll together. A second write here
-        // forces layout once per streamed delta before that frame has even advanced.
-        if (!growth.growing()) pinEnd()
+        // Animated sizes commit on the shared frame. Offscreen rows land immediately, so their new extent and the
+        // followed offset must commit together instead of moving the visible column for one paint.
+        if (!growth.growing() || virtualizer.getTotalSize() !== before) pinEnd()
         return
       }
       const root = listRoot()
@@ -1155,7 +1170,7 @@ export function createTimelineVirtualizer(input: Input) {
   // Following stops, or the timeline is put away: growing rows land where the reader left them.
   createEffect(
     on(
-      () => input.pinned() && active(),
+      () => input.pinned() && active() && layoutState.visible,
       (following) => {
         if (!following) landGrowth()
       },
@@ -1297,16 +1312,21 @@ export function createTimelineVirtualizer(input: Input) {
   ])
 
   createEffect(() => {
-    if (!active()) return
+    if (!active() || !layoutState.visible) return
     const root = listRoot()
     const visible = visibleArea()
     untrack(() => {
+      // Returning always opens the latest content at rest, including a view left scrolled into history.
+      coldPending = true
+      arrivals.clear()
+      landGrowth()
+      leavingCleanups.forEach((cleanup) => cleanup())
       if (root) input.setScrollRef(root)
 
       if (virtualContent) input.setContentRef(virtualContent)
       input.setVisibleRef?.(visible)
       queueMicrotask(() => {
-        if (!active() || !root?.isConnected) return
+        if (!active() || !layoutState.visible || !root?.isConnected) return
         // A detached view can miss its nonzero ResizeObserver delivery. Publish
         // its real viewport before restoring the offset and admitting rows.
         reportRect?.(rootRect ?? { width: root.offsetWidth, height: root.offsetHeight })
@@ -1315,7 +1335,13 @@ export function createTimelineVirtualizer(input: Input) {
         const target = input.reveal?.target()
 
         if (target && revealPart(target)) input.reveal?.done()
-        else if (input.pinned()) pinEnd(undefined, false)
+        else {
+          input.onPin()
+          virtualizer.elementsCache.forEach((element) => {
+            if (element.isConnected) virtualizer.resizeItem(virtualizer.indexFromElement(element), rowHeight(element))
+          })
+          pinEnd(undefined, false)
+        }
 
         reportOffset?.(root.scrollTop, false)
         settleColdBottom()
@@ -1367,6 +1393,10 @@ export function createTimelineVirtualizer(input: Input) {
       })
     })
   })
+
+  const visibilityChanged = () => setLayoutState("visible", document.visibilityState !== "hidden")
+  document.addEventListener("visibilitychange", visibilityChanged)
+  onCleanup(() => document.removeEventListener("visibilitychange", visibilityChanged))
 
   createEffect(
     on(

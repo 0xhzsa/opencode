@@ -663,10 +663,22 @@ story("renders the trailing chunk while the stream is paused", async ({ page }) 
 })
 
 story("keeps live elements and selection when a stream completes and later changes", async ({ page }) => {
-  await page.evaluate(async (fixture) => {
+  const initial = await page.evaluate(async (fixture) => {
     const { mountMarkdown } = await import(fixture)
-    await mountMarkdown({ text: "Hello **world**", streaming: true, synchronousFiles: true, cached: true, prepared: true })
+    await mountMarkdown({
+      text: "Hello **world**",
+      streaming: true,
+      cached: true,
+      prepared: true,
+      synchronousFiles: true,
+    })
+    const markdown = document.querySelector('[data-testid="markdown-fixture"] [data-component="markdown"]')!
+    return {
+      words: markdown.querySelectorAll("[data-markdown-word]").length,
+      entering: markdown.querySelectorAll("[data-markdown-enter]").length,
+    }
   }, fixture)
+  expect(initial).toEqual({ words: 2, entering: 0 })
   const harness = page.getByTestId("markdown-fixture")
   const markdown = harness.locator('[data-component="markdown"]')
   const paragraph = markdown.locator("p")
