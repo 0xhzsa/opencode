@@ -137,9 +137,10 @@ export interface SessionRetry {
 }
 
 /**
- * Runs when a Session finishes its work and has no pending input, just before it goes idle.
- * It does not run after interruption or failure. Input admitted by the hook, such as a
- * synthetic message, runs in the same execution instead of the Session going idle.
+ * Runs when a Session finishes model work and has no pending input, just before it goes idle.
+ * It does not run after interruption, failure, or control-only work such as a manual compaction.
+ * Input admitted by the hook, such as a synthetic message, runs in the same execution instead
+ * of the Session going idle.
  */
 export interface SessionIdle {
   readonly sessionID: Session.ID
