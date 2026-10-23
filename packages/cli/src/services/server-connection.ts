@@ -83,11 +83,11 @@ export const shutdownPersistentPty = Effect.fn("cli.server-connection.shutdown-p
 
 const resolveManaged = Effect.fnUntraced(function* (options: EnsureOptions, mismatch: NonNullable<Args["mismatch"]>) {
   if (mismatch === "ignore") {
-    const registered = yield* Service.discover({ ...options, version: undefined })
+    const registered = yield* Service.reuse({ ...options, version: undefined })
     if (registered !== undefined) {
       const version = yield* ServiceConfig.registeredVersion(options.file)
       if (version !== undefined && version !== OPENCODE_VERSION) warnVersionMismatch(registered.url, version)
-      return yield* Service.ensure({ ...options, version: undefined })
+      return registered
     }
     const configured = yield* ServiceConfig.probeConfigured({ file: options.file })
     if (configured?.state === "ready") {
@@ -102,13 +102,13 @@ const resolveManaged = Effect.fnUntraced(function* (options: EnsureOptions, mism
     return yield* Service.ensure({ ...options, version: undefined })
   }
 
-  const compatible = yield* Service.discover(options)
+  const compatible = yield* Service.reuse(options)
   if (compatible !== undefined) {
     if (options.version === undefined) {
       const version = yield* ServiceConfig.registeredVersion(options.file)
       if (version !== undefined && version !== OPENCODE_VERSION) warnVersionMismatch(compatible.url, version)
     }
-    return yield* Service.ensure(options)
+    return compatible
   }
   const existing = yield* Service.discover({ ...options, version: undefined })
   if (existing !== undefined) {
