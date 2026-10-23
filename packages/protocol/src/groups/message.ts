@@ -83,7 +83,7 @@ export const SessionTimelineEndpoint = HttpApiEndpoint.get(
     success: Schema.Struct(SessionMessagesPage).annotate({
       identifier: "SessionTimelineResponse",
       description:
-        "Messages for display. User attachment bytes are replaced by experimental opencode-attachment:<sessionID>/<messageID>/<index> URIs with empty data; resolve them with session.message.get before display or reuse.",
+        "Messages for display. User attachment bytes are replaced by experimental opencode-attachment:<sessionID>/<messageID>/<index> URIs with empty data; resolve them with session.message.get before display or reuse. Inline read-tool files are omitted (open them by path); execute media stays inline.",
     }),
     error: [InvalidCursorError, SessionNotFoundError, UnknownError],
   },
@@ -92,7 +92,7 @@ export const SessionTimelineEndpoint = HttpApiEndpoint.get(
     identifier: "experimental.session.timeline",
     summary: "Get session timeline",
     description:
-      "Retrieve the same pages as session.message.list, with user attachment bytes replaced by references. Experimental: may change without compatibility guarantees.",
+      "Retrieve the same pages as session.message.list, with user attachment bytes replaced by references and inline read-tool files omitted. Experimental: may change without compatibility guarantees.",
     // The experimental group is titled for persistent PTYs; list this beside the other session routes.
     transform: (operation) => ({ ...operation, tags: ["session"] }),
   }),
