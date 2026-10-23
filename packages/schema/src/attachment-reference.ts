@@ -15,7 +15,7 @@ export function make(sessionID: string, messageID: string, index: number) {
 
 export function parse(file: FileAttachment) {
   if (file.source.type !== "uri" || !file.source.uri.startsWith(prefix)) return
-  const match = /^opencode-attachment:(ses_[^/]+)\/(msg_[^/]+)\/(\d+)$/.exec(file.source.uri)
+  const match = /^opencode-attachment:(ses[^/]+)\/(msg_[^/]+)\/(\d+)$/.exec(file.source.uri)
 
   if (!match) throw new Error("Invalid attachment reference")
 

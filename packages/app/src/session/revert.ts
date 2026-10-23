@@ -47,23 +47,31 @@ export function createSessionRevert(input: {
     target.context.replace([...context.comments, ...context.files])
   }
 
+  // Recheck the draft after every await: typing during hydration or server work must never be
+  // overwritten by a restore.
+  const capture = () => {
+    const owner = input.session.ownership.capture()
+    const target = prompt.capture()
+    const unchanged = unchangedDraft(target)
+
+    return { owner, target, current: () => owner.current() && prompt.capture() === target && unchanged() }
+  }
+
+  const hydrate = (sessionID: string, message: SessionMessageUser) =>
+    server.attachments.hydrate(sessionID, message).catch(() => {
+      showToast({ title: language.t("common.requestFailed") })
+    })
+
   const stage = async (message: SessionMessageUser, previous: SessionMessageUser | undefined) => {
     const sessionID = input.session.identity.params.id
 
     if (!sessionID || staging) return
-    const owner = input.session.ownership.capture()
-    const target = prompt.capture()
-    const unchanged = unchangedDraft(target)
-    const current = () => owner.current() && prompt.capture() === target && unchanged()
-    // Recheck the draft after every await: typing during hydration or server work must never be
-    // overwritten by this restore.
+    const { owner, target, current } = capture()
     const step = async <A>(action: () => Promise<A>) => (await request(action)) && current()
     staging = true
 
     try {
-      const original = await server.attachments.hydrate(sessionID, message).catch(() => {
-        showToast({ title: language.t("common.requestFailed") })
-      })
+      const original = await hydrate(sessionID, message)
 
       if (!original || !current()) return
 
@@ -131,7 +139,15 @@ export function createSessionRevert(input: {
   }
 
   /** Puts a sent prompt back in the composer without rewinding the Session. */
-  const recall = (message: SessionMessageUser) => restore(prompt.capture(), message)
+  const recall = async (message: SessionMessageUser) => {
+    const sessionID = input.session.identity.params.id
+
+    if (!sessionID) return
+    const { target, current } = capture()
+    const original = await hydrate(sessionID, message)
+
+    if (original && current()) restore(target, original)
+  }
 
   return { to, undo, redo, recall }
 }
