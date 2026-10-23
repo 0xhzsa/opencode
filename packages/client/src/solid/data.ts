@@ -48,7 +48,7 @@ import {
   isPermissionNotFoundError,
   type SessionPromptInput,
 } from "../promise"
-import { createStore, produce, reconcile } from "solid-js/store"
+import { createStore, produce, reconcile, unwrap } from "solid-js/store"
 import type { SessionInbox } from "@opencode/schema/session-inbox"
 import { batch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 
@@ -228,6 +228,15 @@ function createSync() {
 
 const CHILD_PAGE = 200
 
+// Cheap transcript size estimate: the length of every string in the message tree.
+function textSize(value: unknown): number {
+  if (typeof value === "string") return value.length
+  if (typeof value !== "object" || value === null) return 0
+  let total = 0
+  for (const item of Object.values(value)) total += textSize(item)
+  return total
+}
+
 export function createData(config: CreateDataInput) {
   const api = config.api
   let disposed = false
@@ -280,6 +289,9 @@ export function createData(config: CreateDataInput) {
     Object.values(store.session.info).toSorted((a, b) => b.time.updated - a.time.updated),
   )
   const messageIndex = new Map<string, Map<string, number>>()
+  // The server's older-page cursor keyed by the oldest message of each loaded page, so a trimmed transcript can page
+  // back from where it was cut.
+  const messagePages = new Map<string, Map<string, string>>()
   const sync = createSync()
   let activeUpdates: Map<string, DataSessionStatus | undefined> | undefined
   const pendingUpdates = new Map<string, Map<string, SessionInboxInfo | SessionInbox.Delivery | undefined>>()
@@ -587,6 +599,7 @@ export function createData(config: CreateDataInput) {
     const pending = store.session.pending[sessionID]?.filter((item) => outbox.has(item.id)) ?? []
     const messages = store.session.message[sessionID]?.filter((item) => outbox.has(item.id)) ?? []
     messageIndex.delete(sessionID)
+    messagePages.delete(sessionID)
     if (messages.length) messageIndex.set(sessionID, new Map(messages.map((item, index) => [item.id, index])))
     setStore(
       "session",
@@ -605,6 +618,7 @@ export function createData(config: CreateDataInput) {
     activeUpdates?.set(sessionID, undefined)
     store.session.pending[sessionID]?.forEach((item) => outbox.delete(item.id))
     messageIndex.delete(sessionID)
+    messagePages.delete(sessionID)
     sync.invalidate(`session:${sessionID}`)
     sync.invalidate(`session.family:${sessionID}`)
     sync.invalidate(`session.pending:${sessionID}`)
@@ -1718,7 +1732,12 @@ export function createData(config: CreateDataInput) {
               (item) => !ids.has(item.id) && (outbox.has(item.id) || admitted.has(item.id)),
             )
             const messages = local.length === 0 ? fetched : [...fetched, ...local]
+            const oldest = fetched[0]
             batch(() => {
+              messagePages.set(
+                sessionID,
+                new Map(oldest && response.cursor.next ? [[oldest.id, response.cursor.next]] : []),
+              )
               messageIndex.set(sessionID, new Map(messages.map((message, index) => [message.id, index])))
               setStore("session", "message", sessionID, reconcile(messages))
               setStore("session", "messageCursor", sessionID, response.cursor.next ?? undefined)
@@ -1762,6 +1781,7 @@ export function createData(config: CreateDataInput) {
           setStore("session", "messageLoading", sessionID, true)
           const request = (async () => {
             const fetched: SessionMessageInfo[] = []
+            const pages: [string, string][] = []
             let next: string | undefined = cursor
             do {
               const response = await api().message.list(
@@ -1775,6 +1795,8 @@ export function createData(config: CreateDataInput) {
               if (signal?.aborted) return
               fetched.push(...response.data)
               next = response.cursor.next ?? undefined
+              const oldest = response.data.at(-1)
+              if (oldest && next) pages.push([oldest.id, next])
               if (!options?.all) break
             } while (next)
             // A jump through history publishes once, not once per page of offscreen messages.
@@ -1783,6 +1805,7 @@ export function createData(config: CreateDataInput) {
             const messages = [...fetched.reverse().filter((item) => !ids.has(item.id)), ...existing]
             batch(() => {
               options?.beforePublish?.()
+              messagePages.set(sessionID, new Map([...(messagePages.get(sessionID) ?? []), ...pages]))
               messageIndex.set(sessionID, new Map(messages.map((item, position) => [item.id, position])))
               setStore("session", "message", sessionID, reconcile(messages))
               setStore("session", "messageCursor", sessionID, next)
@@ -1798,6 +1821,48 @@ export function createData(config: CreateDataInput) {
         },
         invalidate(sessionID: string) {
           sync.invalidate(`session.message:${sessionID}`)
+        },
+        /**
+         * Drop older messages, keeping at least `tail`. Cuts at a loaded page boundary and restores that page's cursor,
+         * so `loadMore` refetches exactly what was dropped. Without a boundary within twice `tail` (history that grew
+         * from live events), keeps the last `tail` and invalidates the read so the next sync starts a fresh page.
+         */
+        trim(sessionID: string, tail: number) {
+          const messages = store.session.message[sessionID]
+          if (!messages || messages.length <= tail) return
+          if (messageLoads.has(sessionID) || sync.pending(`session.message:${sessionID}`)) return
+          const positions = messageIndex.get(sessionID)
+          let cut: { position: number; cursor: string | undefined } | undefined
+          for (const [id, cursor] of messagePages.get(sessionID) ?? []) {
+            const position = positions?.get(id)
+            if (position === undefined || position <= 0 || position > messages.length - tail) continue
+            if (!cut || position > cut.position) cut = { position, cursor }
+          }
+          if (!cut || messages.length - cut.position > tail * 2) {
+            if (messages.length <= tail * 2) return
+            cut = { position: messages.length - tail, cursor: undefined }
+            sync.invalidate(`session.message:${sessionID}`)
+          }
+          const { position, cursor } = cut
+          // Unacknowledged and still-pending inputs stay visible, as in a re-sync.
+          const pending = new Set((store.session.pending[sessionID] ?? []).map((item) => item.id))
+          const kept = messages.filter(
+            (item, index) => index >= position || outbox.has(item.id) || pending.has(item.id),
+          )
+          const index = new Map(kept.map((item, at) => [item.id, at]))
+          batch(() => {
+            messageIndex.set(sessionID, index)
+            messagePages.set(
+              sessionID,
+              new Map([...(messagePages.get(sessionID) ?? [])].filter(([id]) => index.has(id))),
+            )
+            setStore("session", "message", sessionID, reconcile(kept))
+            setStore("session", "messageCursor", sessionID, cursor)
+          })
+        },
+        /** Estimated retained size in bytes, from the length of every string in the transcript. */
+        size(sessionID: string) {
+          return textSize(unwrap(store.session.message[sessionID]) ?? [])
         },
       },
       permission: {
