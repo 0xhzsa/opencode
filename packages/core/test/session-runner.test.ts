@@ -1145,6 +1145,47 @@ describe("SessionRunnerLLM", () => {
     expect(s.executions).toEqual(["renamed"])
   })
 
+  scenario("continues instead of going idle when a session idle hook records input", function* (s) {
+    const hooks = yield* PluginHooks.Service
+    const idles: Session.ID[] = []
+    yield* hooks.register("session", "idle", (event) =>
+      Effect.sync(() => {
+        idles.push(event.sessionID)
+        if (idles.length === 1)
+          event.continue = { text: "Keep going", description: "Continuing", metadata: { source: "test" } }
+      }),
+    )
+    yield* s.llm.push(TestLLM.text("First answer", "text-first"), TestLLM.text("Second answer", "text-second"))
+
+    yield* s.runPrompt("Start")
+
+    expect(idles).toEqual([sessionID, sessionID])
+    expect(s.requests).toHaveLength(2)
+    expect(s.requests[1]?.messages.at(-1)).toMatchObject({
+      role: "user",
+      content: [{ type: "text", text: "Keep going" }],
+    })
+    expect(yield* s.context).toMatchObject([
+      Expected.user("Start"),
+      Expected.assistant({}, [Expected.text("First answer")]),
+      { type: "synthetic", text: "Keep going", description: "Continuing", metadata: { source: "test" } },
+      Expected.assistant({}, [Expected.text("Second answer")]),
+    ])
+  })
+
+  scenario("runs the session idle hook only once the session would go idle", function* (s) {
+    const hooks = yield* PluginHooks.Service
+    const idles: number[] = []
+    yield* hooks.register("session", "idle", () => Effect.sync(() => idles.push(s.requests.length)))
+    yield* s.admit("First")
+    yield* s.llm.push(TestLLM.tool("call-echo", "echo", { text: "hello" }), TestLLM.text("Done", "text-done"))
+
+    yield* s.resume
+
+    expect(s.requests).toHaveLength(2)
+    expect(idles).toEqual([2])
+  })
+
   scenario("executes the tool advertised before a registry reload", function* (s) {
     const registry = yield* Tool.Service
     const scope = yield* Scope.make()

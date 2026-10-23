@@ -29,6 +29,7 @@ import { SessionRunnerRetry } from "./retry.js"
 import { SessionStep } from "./step.js"
 import { ToolOutput } from "../../tool-output.js"
 import { Plugin } from "../../plugin.js"
+import { PluginHooks } from "../../plugin/hooks.js"
 import { MAX_STEPS_PROMPT } from "./max-steps.js"
 
 const CONTINUE_AFTER_INCOMPLETE_STREAM =
@@ -48,6 +49,7 @@ const layer = Layer.effect(
     const db = (yield* Database.Service).db
     const compaction = yield* SessionCompaction.Service
     const plugins = yield* Plugin.Service
+    const hooks = yield* PluginHooks.Service
     const title = yield* SessionTitle.Service
     const steps = yield* SessionStep.make
     // Title generation starts once input is visible and must not delay model execution.
@@ -156,8 +158,19 @@ const layer = Layer.effect(
                 force = false
                 continue
               }
-              if (!force && !continuing && (!pending || (pending.delivery === "queue" && promotable === "steer")))
+              if (!force && !continuing && pending?.delivery === "queue" && promotable === "steer")
                 return DrainResult.Complete()
+              if (!force && !continuing && !pending) {
+                // The Session would go idle; a plugin may record input to keep this execution working.
+                const idle = yield* restore(hooks.trigger("session", "idle", { sessionID }))
+                if (!idle.continue) return DrainResult.Complete()
+                yield* bus.publish(SessionEvent.Synthetic, {
+                  sessionID,
+                  text: idle.continue.text,
+                  description: idle.continue.description,
+                  metadata: idle.continue.metadata,
+                })
+              }
               const ready = yield* restore(
                 Effect.gen(function* () {
                   const selected = yield* prepareContext(sessionID)
@@ -423,6 +436,7 @@ export const node = makeLocationNode({
     SessionStore.node,
     SessionCompaction.node,
     Plugin.node,
+    PluginHooks.node,
     SessionTitle.node,
     Snapshot.node,
     ToolOutput.node,
