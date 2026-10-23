@@ -82,6 +82,8 @@ export type CreateDataInput = {
 
 const messageIDFromEvent = (eventID: string) => eventID.replace(/^evt_/, "msg_")
 const messagePageLimit = 20
+// The server's largest message page.
+const messagePageMax = 200
 // Trailing window for event bursts that each ask for the same refetch.
 export const settleMs = 150
 
@@ -292,6 +294,8 @@ export function createData(config: CreateDataInput) {
   // The server's older-page cursor keyed by the oldest message of each loaded page, so a trimmed transcript can page
   // back from where it was cut.
   const messagePages = new Map<string, Map<string, string>>()
+  // Messages a trimmed transcript still shows, so its revalidating sync fetches at least those instead of one page.
+  const messageResync = new Map<string, number>()
   const sync = createSync()
   let activeUpdates: Map<string, DataSessionStatus | undefined> | undefined
   const pendingUpdates = new Map<string, Map<string, SessionInboxInfo | SessionInbox.Delivery | undefined>>()
@@ -600,6 +604,7 @@ export function createData(config: CreateDataInput) {
     const messages = store.session.message[sessionID]?.filter((item) => outbox.has(item.id)) ?? []
     messageIndex.delete(sessionID)
     messagePages.delete(sessionID)
+    messageResync.delete(sessionID)
     if (messages.length) messageIndex.set(sessionID, new Map(messages.map((item, index) => [item.id, index])))
     setStore(
       "session",
@@ -619,6 +624,7 @@ export function createData(config: CreateDataInput) {
     store.session.pending[sessionID]?.forEach((item) => outbox.delete(item.id))
     messageIndex.delete(sessionID)
     messagePages.delete(sessionID)
+    messageResync.delete(sessionID)
     sync.invalidate(`session:${sessionID}`)
     sync.invalidate(`session.family:${sessionID}`)
     sync.invalidate(`session.pending:${sessionID}`)
@@ -1091,26 +1097,31 @@ export function createData(config: CreateDataInput) {
         return
       case "session.execution.succeeded":
       case "session.execution.failed":
-      case "session.execution.interrupted":
-        setSessionActive(event.data.sessionID, "idle")
-        message.update(event.data.sessionID, (draft) => {
-          const currentAssistant = message.activeAssistant(draft)
-          if (currentAssistant) currentAssistant.retry = undefined
+      case "session.execution.interrupted": {
+        const shutdown = event.type === "session.execution.interrupted" && event.data.reason === "shutdown"
+        // One update, so observers of the idle status already see the idle marker.
+        batch(() => {
+          setSessionActive(event.data.sessionID, "idle")
+          message.update(event.data.sessionID, (draft) => {
+            const currentAssistant = message.activeAssistant(draft)
+            if (currentAssistant) currentAssistant.retry = undefined
+          })
+          if (shutdown) return
+          // Mirror the projected idle marker so turn boundaries match before the next message read.
+          message.insert(event.data.sessionID, {
+            id: messageIDFromEvent(event.id),
+            type: "idle",
+            outcome:
+              event.type === "session.execution.succeeded"
+                ? "succeeded"
+                : event.type === "session.execution.failed"
+                  ? "failed"
+                  : "interrupted",
+            ...(event.type === "session.execution.failed" ? { error: event.data.error } : {}),
+            time: { created: event.created },
+          })
         })
-        if (event.type === "session.execution.interrupted" && event.data.reason === "shutdown") return
-        // Mirror the projected idle marker so turn boundaries match before the next message read.
-        message.insert(event.data.sessionID, {
-          id: messageIDFromEvent(event.id),
-          type: "idle",
-          outcome:
-            event.type === "session.execution.succeeded"
-              ? "succeeded"
-              : event.type === "session.execution.failed"
-                ? "failed"
-                : "interrupted",
-          ...(event.type === "session.execution.failed" ? { error: event.data.error } : {}),
-          time: { created: event.created },
-        })
+        if (shutdown) return
         if (
           store.session.message[event.data.sessionID]?.some(
             (item) =>
@@ -1129,6 +1140,7 @@ export function createData(config: CreateDataInput) {
         result.session.invalidate(event.data.sessionID)
         refresh(() => result.session.sync(event.data.sessionID))
         return
+      }
       case "session.viewed":
         if (!store.session.info[event.data.sessionID] && !sync.has(`session:${event.data.sessionID}`)) return
         result.session.invalidate(event.data.sessionID)
@@ -1716,7 +1728,7 @@ export function createData(config: CreateDataInput) {
           return sync.run(`session.message:${sessionID}`, async () => {
             const response = await api().message.list({
               sessionID,
-              limit: config.initialMessageLimit?.() ?? messagePageLimit,
+              limit: Math.max(config.initialMessageLimit?.() ?? messagePageLimit, messageResync.get(sessionID) ?? 0),
               order: "desc",
             })
             const fetched = response.data.toReversed()
@@ -1734,6 +1746,7 @@ export function createData(config: CreateDataInput) {
             const messages = local.length === 0 ? fetched : [...fetched, ...local]
             const oldest = fetched[0]
             batch(() => {
+              messageResync.delete(sessionID)
               messagePages.set(
                 sessionID,
                 new Map(oldest && response.cursor.next ? [[oldest.id, response.cursor.next]] : []),
@@ -1787,7 +1800,7 @@ export function createData(config: CreateDataInput) {
               const response = await api().message.list(
                 {
                   sessionID,
-                  limit: options?.all ? 200 : messagePageLimit,
+                  limit: options?.all ? messagePageMax : messagePageLimit,
                   cursor: next,
                 },
                 { signal },
@@ -1825,12 +1838,14 @@ export function createData(config: CreateDataInput) {
         /**
          * Drop older messages, keeping at least `tail`. Cuts at a loaded page boundary and restores that page's cursor,
          * so `loadMore` refetches exactly what was dropped. Without a boundary within twice `tail` (history that grew
-         * from live events), keeps the last `tail` and invalidates the read so the next sync starts a fresh page.
+         * from live events), keeps the last `tail` and invalidates the read so the next sync refetches what it shows.
+         * Returns false when an older page is still loading; trim again once `loading` clears.
          */
         trim(sessionID: string, tail: number) {
           const messages = store.session.message[sessionID]
-          if (!messages || messages.length <= tail) return
-          if (messageLoads.has(sessionID) || sync.pending(`session.message:${sessionID}`)) return
+          if (!messages || messages.length <= tail) return true
+          // A sync in flight replaces the whole list when it commits, so only a page being prepended defers the cut.
+          if (store.session.messageLoading[sessionID]) return false
           const positions = messageIndex.get(sessionID)
           let cut: { position: number; cursor: string | undefined } | undefined
           for (const [id, cursor] of messagePages.get(sessionID) ?? []) {
@@ -1839,8 +1854,9 @@ export function createData(config: CreateDataInput) {
             if (!cut || position > cut.position) cut = { position, cursor }
           }
           if (!cut || messages.length - cut.position > tail * 2) {
-            if (messages.length <= tail * 2) return
+            if (messages.length <= tail * 2) return true
             cut = { position: messages.length - tail, cursor: undefined }
+            messageResync.set(sessionID, Math.min(tail, messagePageMax))
             sync.invalidate(`session.message:${sessionID}`)
           }
           const { position, cursor } = cut
@@ -1859,6 +1875,7 @@ export function createData(config: CreateDataInput) {
             setStore("session", "message", sessionID, reconcile(kept))
             setStore("session", "messageCursor", sessionID, cursor)
           })
+          return true
         },
         /** Estimated retained size in bytes, from the length of every string in the transcript. */
         size(sessionID: string) {

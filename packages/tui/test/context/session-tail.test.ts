@@ -57,15 +57,86 @@ test("re-trims a hidden tail that background events grow", async () => {
     expect(setup.ids("a")[0]).toBe("msg_a_080")
     expect(setup.data.session.message.more("a")).toBe(true)
 
-    // Past it, keep the newest messages and refetch the newest page on the next view.
+    // Past it, keep the newest messages and refetch as many on the next view.
     setup.append("a", 30)
     expect(setup.ids("a")).toHaveLength(40)
     expect(setup.data.session.message.more("a")).toBe(false)
     await setup.view("a")
-    expect(setup.ids("a")).toEqual(range("a", 80, 100))
+    expect(setup.ids("a")).toEqual(range("a", 60, 100))
     expect(setup.data.session.message.more("a")).toBe(true)
   } finally {
     setup.dispose()
+  }
+})
+
+test("trims a transcript hidden mid-load once its page lands", async () => {
+  const setup = fixture({ a: 100, b: 10 })
+  try {
+    await setup.view("a")
+    for (const _ of [1, 2, 3]) await setup.data.session.message.loadMore("a")
+    const loading = setup.data.session.message.loadMore("a")
+    const view = setup.view("b")
+    expect(setup.ids("a")).toHaveLength(80)
+
+    await Promise.all([loading, view])
+    expect(setup.ids("a")).toEqual(range("a", 60, 100))
+  } finally {
+    setup.dispose()
+  }
+})
+
+test("keeps a subagent's ancestors whole while it is viewed", async () => {
+  const setup = fixture({ p: 100, c: 100, x: 10 }, { parents: { c: "p" } })
+  try {
+    await setup.view("p")
+    for (const _ of [1, 2, 3]) await setup.data.session.message.loadMore("p")
+    await setup.view("c")
+    expect(setup.ids("p")).toHaveLength(80)
+
+    await setup.view("x")
+    expect(setup.ids("p")).toEqual(range("p", 60, 100))
+  } finally {
+    setup.dispose()
+  }
+})
+
+test("re-measures a hidden transcript whose content changed at the same length", async () => {
+  const setup = fixture({ a: 40, b: 20, c: 10 }, { budget: 45_000, text: 1_000 })
+  try {
+    await setup.view("a")
+    await setup.data.session.message.loadMore("a")
+    await setup.view("b")
+    expect(setup.ids("a")).toHaveLength(40)
+
+    // Small background output replaces the large history, back at 40 messages.
+    setup.append("a", 70)
+    expect(setup.ids("a")).toHaveLength(40)
+    expect(setup.data.session.message.size("a")).toBeLessThan(10_000)
+
+    await setup.view("c")
+    expect(setup.ids("a")).toHaveLength(40)
+    expect(setup.ids("b")).toHaveLength(20)
+  } finally {
+    setup.dispose()
+  }
+})
+
+test("never evicts a family while one of its sessions is running", async () => {
+  // Outside the retained set, then over the byte budget.
+  for (const limit of [1, 3]) {
+    const setup = fixture({ a: 20, b: 20, c: 20 }, { limit, budget: 30_000, text: 1_000 })
+    try {
+      await setup.view("a")
+      setup.data.session.setStatus("a", "running")
+      await setup.view("b")
+      await setup.view("c")
+      expect(setup.ids("a")).toHaveLength(20)
+
+      setup.data.session.setStatus("a", "idle")
+      expect(setup.ids("a")).toHaveLength(0)
+    } finally {
+      setup.dispose()
+    }
   }
 })
 
@@ -112,7 +183,14 @@ function message(session: string, index: number) {
 
 function fixture(
   counts: Record<string, number>,
-  options: { limit?: number; budget?: number; tail?: number; text?: number; keep?: string[] } = {},
+  options: {
+    limit?: number
+    budget?: number
+    tail?: number
+    text?: number
+    keep?: string[]
+    parents?: Record<string, string>
+  } = {},
 ) {
   const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
   const reads: string[] = []
@@ -152,6 +230,7 @@ function fixture(
     const remember = (id: string, updated = 0) =>
       data.session.remember({
         id,
+        parentID: options.parents?.[id],
         projectID: "project",
         cost: 0,
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
