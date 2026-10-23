@@ -1,4 +1,13 @@
-import { ErrorBoundary, createComputed, createEffect, createMemo, on, Show, type ParentProps } from "solid-js"
+import {
+  ErrorBoundary,
+  createComputed,
+  createEffect,
+  createMemo,
+  on,
+  onCleanup,
+  Show,
+  type ParentProps,
+} from "solid-js"
 import { Title } from "@solidjs/meta"
 import { useParams } from "@solidjs/router"
 import { createStore } from "solid-js/store"
@@ -136,6 +145,7 @@ function ResolvedTargetSessionRoute() {
       },
     ),
   )
+  onCleanup(sessionOpenTiming.cancel)
 
   const current = createSessionResolution(
     () => params.id,
