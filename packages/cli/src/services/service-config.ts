@@ -1,10 +1,11 @@
 import { Global } from "@opencode/util/global"
 import { OPENCODE_CHANNEL, OPENCODE_VERSION } from "../version"
 import { Hash } from "@opencode/util/hash"
-import { Service } from "@opencode/client/effect/service"
-import { Effect, FileSystem, Option, Schema } from "effect"
+import { Service, type Endpoint, type Info as RegistrationInfo } from "@opencode/client/effect/service"
+import { Effect, FileSystem, Option, Redacted, Schema } from "effect"
 import { randomBytes } from "crypto"
 import path from "path"
+import { Env } from "../env"
 import { selfCommand } from "../util/process"
 import { RemoteTunnel } from "./remote-tunnel"
 
@@ -122,6 +123,10 @@ const paths = Effect.gen(function* () {
   return {
     fs,
     file,
+    name,
+    state: global.state,
+    config: global.config,
+    home: global.home,
     legacyConfigFile: legacy ? path.join(global.config, legacy) : undefined,
     legacyRegistrationFiles: [
       ...(legacy ? [path.join(global.state, legacy)] : []),
@@ -131,13 +136,55 @@ const paths = Effect.gen(function* () {
   }
 })
 
+const readFileInfo = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, file: string) {
+  const text = yield* fs.readFileString(file).pipe(Effect.option)
+  if (Option.isNone(text)) return {} as Info
+  const info = yield* decodeInfo(text.value).pipe(Effect.option)
+  return Option.isSome(info) ? info.value : ({} as Info)
+})
+
+const readEffective = Effect.gen(function* () {
+  const { config: configDir, configFile, file: primaryFile, fs, name } = yield* paths
+  const primary = yield* read()
+  if (
+    name === "service.json" ||
+    primary.port !== undefined ||
+    primary.password !== undefined ||
+    primary.hostname !== undefined ||
+    primary.env !== undefined ||
+    (yield* fs.exists(configFile)) ||
+    (yield* fs.exists(primaryFile))
+  ) {
+    return { config: primary, fallbackChannel: false }
+  }
+  const fallback = yield* readFileInfo(fs, path.join(configDir, "service.json"))
+  return { config: fallback, fallbackChannel: Object.keys(fallback).length > 0 }
+})
+
 export const options = Effect.fnUntraced(function* (input: { readonly checkVersion?: boolean } = {}) {
-  const { file, legacyRegistrationFiles } = yield* paths
-  yield* Effect.forEach(legacyRegistrationFiles, (legacy) => migrateRegistration(legacy, file))
+  const { fs, file: primaryFile, home, legacyRegistrationFiles, name, state } = yield* paths
+  yield* Effect.forEach(legacyRegistrationFiles, (legacy) => migrateRegistration(legacy, primaryFile))
+  const { config, fallbackChannel } = yield* readEffective
+  const targetNames = fallbackChannel ? [name, "service.json"] : [name]
+  const configuredState = config.env?.XDG_STATE_HOME ? path.join(config.env.XDG_STATE_HOME, "opencode") : undefined
+  const homeState =
+    config.env?.XDG_STATE_HOME !== undefined && config.password !== undefined
+      ? path.join(home, ".local", "state", "opencode")
+      : undefined
+  const homeStateFiles = new Set(homeState ? targetNames.map((target) => path.join(homeState, target)) : [])
+  const candidates = [
+    ...new Set([
+      primaryFile,
+      ...targetNames.map((target) => path.join(state, target)),
+      ...(configuredState ? targetNames.map((target) => path.join(configuredState, target)) : []),
+      ...homeStateFiles,
+    ]),
+  ]
+  const file = yield* findActiveRegistrationFile(fs, candidates, primaryFile, homeStateFiles, config.password)
   return {
     file,
-    version: input.checkVersion ? OPENCODE_VERSION : undefined,
-    env: (yield* read()).env,
+    version: input.checkVersion && file === primaryFile ? OPENCODE_VERSION : undefined,
+    env: config.env,
     command: [
       ...selfCommand(),
       "serve",
@@ -145,6 +192,155 @@ export const options = Effect.fnUntraced(function* (input: { readonly checkVersi
     ],
   }
 })
+
+const findActiveRegistrationFile = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  candidates: ReadonlyArray<string>,
+  primaryFile: string,
+  homeStateFiles: ReadonlySet<string>,
+  configuredPassword: string | undefined,
+) {
+  if (candidates.length <= 1) return primaryFile
+  const secondary: string[] = []
+  for (const candidate of candidates.slice(1)) {
+    const text = yield* fs.readFileString(candidate).pipe(Effect.option)
+    if (Option.isNone(text)) continue
+    const info = yield* decodeRegistration(text.value).pipe(Effect.option)
+    if (Option.isNone(info)) continue
+    if (homeStateFiles.has(candidate) && info.value.password !== configuredPassword) continue
+    secondary.push(candidate)
+  }
+  if (secondary.length === 0) return primaryFile
+  const primaryText = yield* fs.readFileString(primaryFile).pipe(Effect.option)
+  if (Option.isSome(primaryText)) {
+    const primaryInfo = yield* decodeRegistration(primaryText.value).pipe(Effect.option)
+    // Preserve damaged registrations so the running owner can notice and self-evict.
+    if (Option.isNone(primaryInfo)) return primaryFile
+    if ((yield* Service.discover({ file: primaryFile, version: undefined })) !== undefined) return primaryFile
+  }
+  for (const candidate of secondary) {
+    if ((yield* Service.discover({ file: candidate, version: undefined })) !== undefined) return candidate
+  }
+  return primaryFile
+})
+
+export const registeredVersion = Effect.fnUntraced(function* (file?: string) {
+  const { fs, file: defaultFile } = yield* paths
+  const text = yield* fs.readFileString(file ?? defaultFile).pipe(Effect.option)
+  if (Option.isNone(text)) return undefined
+  const info = yield* decodeRegistration(text.value).pipe(Effect.option)
+  return Option.isSome(info) ? info.value.version : undefined
+})
+
+export type ConfiguredProbe =
+  | {
+      readonly state: "ready" | "waiting" | "failed"
+      readonly endpoint: Endpoint
+      readonly version: string
+      readonly pid: number
+    }
+  | {
+      readonly state: "unauthorized" | "incompatible"
+      readonly endpoint: Endpoint
+    }
+
+export const probeConfigured = Effect.fnUntraced(function* (options: { readonly file?: string } = {}) {
+  const { fs } = yield* paths
+  let registeredInfo: RegistrationInfo | undefined
+  if (options.file !== undefined) {
+    const text = yield* fs.readFileString(options.file).pipe(Effect.option)
+    if (Option.isSome(text)) {
+      const decoded = yield* decodeRegistration(text.value).pipe(Effect.option)
+      if (Option.isNone(decoded)) return undefined
+      registeredInfo = decoded.value
+    }
+  }
+  const { config, fallbackChannel } = yield* readEffective
+  const envPassword = yield* Env.password
+  const hasConfiguredTarget =
+    config.port !== undefined ||
+    config.password !== undefined ||
+    config.hostname !== undefined ||
+    envPassword !== undefined
+  const rawHost = config.hostname ?? "127.0.0.1"
+  const connectHost = rawHost === "0.0.0.0" ? "127.0.0.1" : rawHost === "::" ? "::1" : rawHost
+  const port = config.port ?? defaultPort(fallbackChannel ? "latest" : OPENCODE_CHANNEL)
+  const configuredURL = hasConfiguredTarget
+    ? `http://${connectHost.includes(":") ? `[${connectHost}]` : connectHost}:${port}`
+    : undefined
+  const urls = [...new Set([configuredURL, registeredInfo?.url].filter((url): url is string => url !== undefined))]
+  if (urls.length === 0) return undefined
+  const passwords = [
+    ...new Set(
+      [envPassword ? Redacted.value(envPassword) : undefined, config.password, registeredInfo?.password].filter(
+        (value): value is string => value !== undefined && value.length > 0,
+      ),
+    ),
+  ]
+  const candidates = passwords.length > 0 ? passwords : [undefined]
+  let unauthorized: Endpoint | undefined
+  let incompatible: Endpoint | undefined
+  for (const url of urls) {
+    for (const candidatePassword of candidates) {
+      const endpoint = {
+        url,
+        auth:
+          candidatePassword === undefined
+            ? undefined
+            : { type: "basic" as const, username: "opencode", password: candidatePassword },
+      } satisfies Endpoint
+      const result = yield* Effect.promise(() =>
+        fetch(new URL("/api/info", url), {
+          headers: Service.headers(endpoint),
+          signal: AbortSignal.timeout(1_500),
+        })
+          .then(async (response) => ({
+            status: response.status,
+            ok: response.ok,
+            body: (await response.json().catch(() => undefined)) as unknown,
+          }))
+          .catch(() => undefined),
+      )
+      if (result === undefined) break
+      if (result.status === 401 && isUnauthorizedBody(result.body)) {
+        unauthorized = endpoint
+        continue
+      }
+      const serverInfo = decodeServerInfo(result.body)
+      if (serverInfo === undefined) {
+        if (url === configuredURL) incompatible = { url }
+        break
+      }
+      return {
+        state: result.ok ? ("ready" as const) : result.status === 500 ? ("failed" as const) : ("waiting" as const),
+        endpoint,
+        version: serverInfo.version,
+        pid: serverInfo.pid,
+      } satisfies ConfiguredProbe
+    }
+  }
+  if (unauthorized !== undefined)
+    return { state: "unauthorized" as const, endpoint: unauthorized } satisfies ConfiguredProbe
+  if (incompatible !== undefined)
+    return { state: "incompatible" as const, endpoint: incompatible } satisfies ConfiguredProbe
+  return undefined
+})
+
+export const discover = Effect.fnUntraced(function* (file?: string) {
+  const found = yield* probeConfigured({ file })
+  return found?.state === "ready" ? found : undefined
+})
+
+function isUnauthorizedBody(input: unknown) {
+  return typeof input === "object" && input !== null && "_tag" in input && input._tag === "UnauthorizedError"
+}
+
+function decodeServerInfo(input: unknown) {
+  if (typeof input !== "object" || input === null) return
+  if (!("version" in input) || typeof input.version !== "string") return
+  if (!("pid" in input) || typeof input.pid !== "number" || !Number.isInteger(input.pid) || input.pid < 0) return
+  return { version: input.version, pid: input.pid }
+}
 
 export const read = Effect.fn("cli.service-config.read")(function* () {
   const { fs, configFile, legacyConfigFile } = yield* paths
