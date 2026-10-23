@@ -6,7 +6,17 @@ import { it } from "../../core/test/lib/effect"
 import { ServerFetch } from "../src/fetch"
 
 const messages: SessionMessageInfo[] = [
-  { id: "msg_z", type: "user", text: "First request", time: { created: 300 } },
+  {
+    id: "msg_z",
+    type: "user",
+    text: "First request",
+    time: { created: 300 },
+    files: [
+      { name: "image.png", data: "AQID", mime: "image/png", source: { type: "inline" } },
+      { name: "empty.txt", data: "", mime: "text/plain", source: { type: "inline" } },
+      { name: "note.txt", data: "YWJj", mime: "text/plain", source: { type: "uri", uri: "file:///project/note.txt" } },
+    ],
+  },
   {
     id: "msg_assistant",
     type: "assistant",
