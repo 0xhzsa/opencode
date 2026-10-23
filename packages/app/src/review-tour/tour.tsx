@@ -9,6 +9,7 @@ import { createStore, produce } from "solid-js/store"
 import { Portal } from "solid-js/web"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { base64Encode } from "@opencode/util/encode"
+import { useExtensionHost } from "@/runtime/extension/host"
 import { useLanguage } from "@/runtime/i18n/language"
 import { Persist, persisted } from "@/runtime/persistence/storage"
 import { Persistence } from "@/runtime/persistence/schema"
@@ -25,9 +26,11 @@ import { useTabs } from "@/shell/tabs/tabs"
 import { TourCard, TourPill, verdictPrompt, type TourStatus } from "./card"
 import { StopKnobs } from "./knobs"
 import { loadManifest, TourVerdict, type TourStop } from "./manifest"
-import { arrive, stopScope, type StopScope, type TourApp, type TourDebug } from "./setup"
+import { arrive, stopScope, type StopScope, type TourApp } from "./setup"
 import { selectorError, SpotlightRing } from "./spotlight"
 import { motion, sprung } from "./spring"
+
+const decodeDebug = Schema.decodeUnknownOption(Schema.Struct({ visible: Schema.Boolean, motion: Schema.Boolean }))
 
 const TourState = Persistence.struct({
   manifest: Schema.String,
@@ -49,6 +52,7 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
   const settingsSurface = useSettingsSurface()
   const settings = useSettings()
   const tabs = useTabs()
+  const extensions = useExtensionHost()
   const servers = useServers()
   const global = useGlobal()
   const [manifest] = createResource(() => props.url, loadManifest)
@@ -79,6 +83,13 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
   const index = () => Math.min(Math.max(0, state.stop), count() - 1)
   const stop = () => (view.closed ? undefined : tour()?.stops[index()])
 
+  // The debug extension's own store: whether its bar and Knobs panel show. A global store, so not a function of a session.
+  const debugBar = () => {
+    const bar = extensions.stores("debug")?.bar
+
+    return bar && "ready" in bar ? bar : undefined
+  }
+
   const healthy = () => servers.list.find((conn) => global.servers.health[ServerConnection.key(conn)]?.healthy)
 
   const app: TourApp = {
@@ -104,23 +115,21 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
 
       return true
     },
-    appearance: () => ({
-      tabLayout: settings.appearance.tabLayout(),
-      sidebarOpen: settings.appearance.sidebarOpen(),
-    }),
+    appearance: () =>
+      settings.ready()
+        ? { tabLayout: settings.appearance.tabLayout(), sidebarOpen: settings.appearance.sidebarOpen() }
+        : undefined,
     setAppearance: (values) => {
       if (values.tabLayout !== undefined) settings.appearance.setTabLayout(values.tabLayout)
 
       if (values.sidebarOpen !== undefined) settings.appearance.setSidebarOpen(values.sidebarOpen)
     },
-    hasCommand: (id) => command.options.some((option) => option.id === id),
-    command: (id) => void command.trigger(id),
-    debug: (): TourDebug =>
-      document.querySelector("[data-component=debug-knobs]")
-        ? "knobs"
-        : document.querySelector("[data-component=debug-bar]")
-          ? "bar"
-          : "off",
+    debug: () => {
+      const bar = debugBar()
+
+      return bar?.ready() ? Option.getOrUndefined(decodeDebug(bar.value)) : undefined
+    },
+    setDebug: (state) => debugBar()?.set(state),
     palette: () => command.show(),
     dialogOpen: () => !!dialog.active,
     closeDialog: () => dialog.close(),

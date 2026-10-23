@@ -12,12 +12,12 @@ export type TourApp = {
   openTab: (sessionID: string) => void
   /** Opens a Settings page; false when there's no such page. */
   settings: (tab: string) => boolean
-  appearance: () => Required<TourAppearance>
+  /** The appearance settings, once they've loaded. */
+  appearance: () => Required<TourAppearance> | undefined
   setAppearance: (values: TourAppearance) => void
-  hasCommand: (id: string) => boolean
-  command: (id: string) => void
-  /** What the debug bar shows, read from the page. */
-  debug: () => TourDebug
+  /** The debug extension's stored state, once it has loaded, whether or not its lazy bar has mounted yet. */
+  debug: () => TourDebug | undefined
+  setDebug: (state: TourDebug) => void
   palette: () => void
   dialogOpen: () => boolean
   closeDialog: () => void
@@ -25,7 +25,8 @@ export type TourApp = {
 
 export type TourAppearance = NonNullable<TourStop["appearance"]>
 
-export type TourDebug = "off" | NonNullable<TourStop["debug"]>
+/** Whether the debug bar shows, and its Knobs panel with it. */
+export type TourDebug = { visible: boolean; motion: boolean }
 
 /**
  * Runs a stop's setup in order: its tabs, its appearance, one place to go, the debug bar, its knobs, then the palette.
@@ -40,7 +41,7 @@ export async function arrive(stop: TourStop, app: TourApp, scope: StopScope, sig
 
   stop.tabs?.forEach(app.openTab)
 
-  if (stop.appearance) scope.appearance(stop.appearance)
+  if (stop.appearance) await scope.appearance(stop.appearance, signal)
 
   go(stop, app)
 
@@ -88,8 +89,9 @@ function go(stop: TourStop, app: TourApp) {
 }
 
 /**
- * What a stop changed, so leaving it puts it back: knobs, appearance and the debug bar. Knobs register when their
- * surface's module loads, so a value for one that hasn't registered yet waits for it.
+ * What a stop changed, so leaving it puts it back: knobs, appearance and the debug bar. Each is read from its state,
+ * never the page, so a surface still loading when the stop ends still goes back. Knobs register when their surface's
+ * module loads, so a value for one that hasn't registered yet waits for it.
  */
 export function stopScope(app: TourApp) {
   const original = new Map<string, { knob: MotionKnob; value: MotionKnob["value"] }>()
@@ -116,18 +118,15 @@ export function stopScope(app: TourApp) {
 
       return knobs.every((knob) => JSON.stringify(knob.value) === JSON.stringify(values[knob.id]))
     },
-    appearance(values: TourAppearance) {
-      const before = app.appearance()
+    async appearance(values: TourAppearance, signal: AbortSignal) {
+      const before = await until(app.appearance, signal, "the settings")
       app.setAppearance(values)
       undo.push(() => app.setAppearance(before))
     },
     async debug(level: NonNullable<TourStop["debug"]>, signal: AbortSignal) {
-      await until(() => app.hasCommand("debug.toggle") && app.hasCommand("debug.knobs"), signal, "the debug bar")
-
-      const before = app.debug()
-      showDebug(app, before, level)
-      undo.push(() => showDebug(app, app.debug(), before))
-      await until(() => app.debug() === level, signal, "the debug bar")
+      const before = await until(app.debug, signal, "the debug bar")
+      app.setDebug({ visible: true, motion: level === "knobs" })
+      undo.push(() => app.setDebug(before))
     },
     restore() {
       undo
@@ -141,18 +140,6 @@ export function stopScope(app: TourApp) {
 }
 
 export type StopScope = ReturnType<typeof stopScope>
-
-// The debug bar's commands toggle: one shows and hides the bar, the other its Knobs panel, with the bar.
-function showDebug(app: TourApp, from: TourDebug, to: TourDebug) {
-  if (from === to) return
-
-  if (to === "knobs") return app.command("debug.knobs")
-
-  if (to === "bar") return app.command(from === "off" ? "debug.toggle" : "debug.knobs")
-
-  if (from === "knobs") app.command("debug.knobs")
-  app.command("debug.toggle")
-}
 
 function registered(values: { readonly [id: string]: KnobValue }, signal: AbortSignal) {
   return Promise.all(

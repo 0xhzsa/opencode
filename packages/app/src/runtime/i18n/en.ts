@@ -1259,7 +1259,6 @@ export const dict = {
   "usage.signedOut.body": "Connect OpenCode Console to see your workspace's budgets and Go usage.",
   "usage.error": "Usage limits couldn't be loaded.",
   "usage.retry": "Try again",
-||||||| parent of 129d613244 (feat(app): add a review tour floater for dev and Beta builds)
 
   "tour.position": "{{current}}/{{total}}",
   "tour.previous": "Previous stop (⌥,)",
