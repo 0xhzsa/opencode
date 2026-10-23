@@ -206,7 +206,7 @@ it.effect("searches session messages and reads them past compaction", () =>
             id: SessionMessage.ID.make(id),
             session_id: discussed.id,
             type,
-            seq: index + 1,
+            seq: (index + 1) * 7,
             time_created: message.time.created,
             data,
           }
@@ -233,56 +233,50 @@ it.effect("searches session messages and reads them past compaction", () =>
     expect(found.sessions.map((session: { sessionID: string }) => session.sessionID).toSorted()).toEqual(
       [discussed.id, titled.id].toSorted(),
     )
-    expect(found.sessions.find((session: { sessionID: string }) => session.sessionID === discussed.id).matches).toEqual(
-      [
-        { snippet: "We dropped chains of accepts because the mapping breaks.", cursor: "from:msg_2" },
-        { snippet: "why not chains of accepts?", cursor: "from:msg_1" },
+    expect(found.sessions.find((session: { sessionID: string }) => session.sessionID === titled.id)).toMatchObject({
+      messages: 0,
+    })
+    expect(found.sessions.find((session: { sessionID: string }) => session.sessionID === discussed.id)).toMatchObject({
+      messages: 5,
+      matches: [
+        { index: 1, snippet: "We dropped chains of accepts because the mapping breaks." },
+        { index: 0, snippet: "why not chains of accepts?" },
       ],
-    )
+    })
     expect((yield* run("session_list", { search: "toolonly" })).sessions).toEqual([])
 
-    // A match's cursor reads from that message onward, across the compaction.
-    expect(yield* run("session_read", { sessionID: discussed.id, cursor: "from:msg_2" })).toEqual({
+    // A match's index reads from that message onward, across the compaction.
+    expect(yield* run("session_read", { sessionID: discussed.id, offset: 1 })).toEqual({
+      total: 5,
       messages: [
-        { id: "msg_2", role: "assistant", text: "We dropped chains of accepts because the mapping breaks." },
-        { id: "msg_3", role: "compaction", text: "Summary" },
-        { id: "msg_4", role: "user", text: "now fix the tests" },
-        { id: "msg_5", role: "assistant", text: "Done." },
+        { index: 1, role: "assistant", text: "We dropped chains of accepts because the mapping breaks." },
+        { index: 2, role: "compaction", text: "Summary" },
+        { index: 3, role: "user", text: "now fix the tests" },
+        { index: 4, role: "assistant", text: "Done." },
       ],
     })
 
-    // Without a cursor it reads the latest messages and pages back to the start.
-    const latest = yield* run("session_read", { sessionID: discussed.id, limit: 2 })
-    expect(latest).toEqual({
+    // Without an offset it reads the latest messages.
+    expect(yield* run("session_read", { sessionID: discussed.id, limit: 2 })).toEqual({
+      total: 5,
       messages: [
-        { id: "msg_4", role: "user", text: "now fix the tests" },
-        { id: "msg_5", role: "assistant", text: "Done." },
+        { index: 3, role: "user", text: "now fix the tests" },
+        { index: 4, role: "assistant", text: "Done." },
       ],
-      cursor: "before:msg_4",
     })
-    const earlier = yield* run("session_read", {
-      sessionID: discussed.id,
-      limit: 2,
-      cursor: latest.cursor,
-      tools: true,
-    })
-    expect(earlier).toEqual({
+    expect(yield* run("session_read", { sessionID: discussed.id, offset: 0, limit: 2, tools: true })).toEqual({
+      total: 5,
       messages: [
+        { index: 0, role: "user", text: "why not chains of accepts?" },
         {
-          id: "msg_2",
+          index: 1,
           role: "assistant",
           text: "We dropped chains of accepts because the mapping breaks.",
           tools: [{ name: "read", input: '{"path":"evolve.ts"}', output: "toolonly" }],
         },
-        { id: "msg_3", role: "compaction", text: "Summary" },
       ],
-      cursor: "before:msg_2",
     })
-    expect(yield* run("session_read", { sessionID: discussed.id, limit: 2, cursor: earlier.cursor })).toEqual({
-      messages: [{ id: "msg_1", role: "user", text: "why not chains of accepts?" }],
-    })
-
-    expect(yield* call("session_read", { sessionID: discussed.id, cursor: "nope" })).toContain("Invalid cursor: nope")
+    expect(yield* run("session_read", { sessionID: discussed.id, offset: 9 })).toEqual({ total: 5, messages: [] })
   }),
 )
 

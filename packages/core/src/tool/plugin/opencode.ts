@@ -49,12 +49,15 @@ const SessionListOutput = Schema.Struct({
       title: Schema.optional(Schema.String),
       directory: Schema.String,
       parentID: Schema.optional(Session.ID),
-      updated: Schema.Number.annotate({ description: "Unix timestamp in milliseconds." }),
+      updated: Schema.String.annotate({ description: "ISO 8601 time, UTC." }),
+      messages: Schema.Number.annotate({ description: "Number of messages in the session." }),
       matches: Schema.optional(
         Schema.Array(
           Schema.Struct({
+            index: Schema.Number.annotate({
+              description: "Pass as session_read's offset, or a little lower for context.",
+            }),
             snippet: Schema.String,
-            cursor: Schema.String.annotate({ description: "Pass to session_read to read from this message." }),
           }),
         ),
       ).annotate({ description: "Messages that matched the search, newest first." }),
@@ -68,17 +71,17 @@ export const SessionReadInput = Schema.Struct({
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))).annotate({
     description: "Maximum number of messages. Defaults to 20.",
   }),
-  cursor: Schema.optionalKey(Schema.String).annotate({
-    description:
-      "Cursor from session_read or a session_list match. Omit to read the latest messages; the returned cursor continues in the same direction.",
+  offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))).annotate({
+    description: "Index of the first message to read, counting from 0. Omit to read the latest messages.",
   }),
   tools: Schema.optionalKey(Schema.Boolean).annotate({ description: "Include tool calls and their output." }),
 })
 
 const SessionReadOutput = Schema.Struct({
+  total: Schema.Number.annotate({ description: "Number of messages in the session. Indexes run from 0 to total - 1." }),
   messages: Schema.Array(
     Schema.Struct({
-      id: Schema.String,
+      index: Schema.Number,
       role: Schema.String,
       text: Schema.optional(Schema.String),
       tools: Schema.optional(
@@ -92,8 +95,9 @@ const SessionReadOutput = Schema.Struct({
         ),
       ),
     }),
-  ).annotate({ description: "Oldest first. Long text is shortened." }),
-  cursor: Schema.optional(Schema.String).annotate({ description: "Omitted when there is nothing more to read." }),
+  ).annotate({
+    description: "Oldest first. Long text is shortened. Hidden messages, such as agent switches, still use an index.",
+  }),
 })
 
 export const WorktreeCreateInput = Schema.Struct({
@@ -224,7 +228,7 @@ export const Plugin = {
         draft.add({
           name: "session_list",
           description:
-            "List sessions across all projects, most recently updated first. With search, find sessions whose title or messages mention something, then pass a match's cursor to session_read to read that part of the conversation, including history from before compaction.",
+            "List sessions across all projects, most recently updated first. With search, find sessions whose title or messages mention something, then pass a match's index as session_read's offset to read that part of the conversation, including history from before compaction.",
           input: SessionListInput,
           output: SessionListOutput,
           options: { namespace: "opencode", codemode: true },
@@ -233,8 +237,12 @@ export const Plugin = {
               const limit = input.limit ?? 20
               if (input.search === undefined) {
                 const page = yield* sessions.list({ limit, cursor: input.cursor })
+                const counts = yield* sessions.counts(page.data.map((session) => session.id))
                 return {
-                  output: { sessions: page.data.map((session) => listEntry(session)), cursor: page.cursor.next },
+                  output: {
+                    sessions: page.data.map((session) => listEntry(session, counts.get(session.id) ?? 0)),
+                    cursor: page.cursor.next,
+                  },
                 }
               }
               const search = input.search
@@ -254,62 +262,42 @@ export const Plugin = {
                     DateTime.toEpochMillis(right.time.updated) - DateTime.toEpochMillis(left.time.updated),
                 )
                 .slice(0, limit)
-                .map((session) => {
-                  const hits = matches.get(session.id)?.slice(0, 3)
-                  return listEntry(
-                    session,
-                    hits?.map((hit) => ({
-                      snippet: snippet(messageText(hit.message), search),
-                      cursor: `from:${hit.message.id}`,
-                    })),
-                  )
-                })
-              return { output: { sessions: listed } }
+              const counts = yield* sessions.counts(listed.map((session) => session.id))
+              return {
+                output: {
+                  sessions: listed.map((session) =>
+                    listEntry(
+                      session,
+                      counts.get(session.id) ?? 0,
+                      matches
+                        .get(session.id)
+                        ?.slice(0, 3)
+                        .map((hit) => ({ index: hit.index, snippet: snippet(messageText(hit.message), search) })),
+                    ),
+                  ),
+                },
+              }
             }).pipe(Effect.mapError((error) => new ToolFailure({ message: "Unable to list sessions", error }))),
         })
         draft.add({
           name: "session_read",
           description:
-            "Read a session's messages, including those from before compaction. Omit cursor to read the latest messages, or pass a cursor from a session_list match to read from that message onward.",
+            "Read a session's messages by index, including those from before compaction. Omit offset to read the latest messages, or pass a session_list match's index, or a little lower for context, to read that part of the conversation.",
           input: SessionReadInput,
           output: SessionReadOutput,
           options: { namespace: "opencode", codemode: true },
           execute: (input) =>
-            Effect.gen(function* () {
-              const limit = input.limit ?? 20
-              const cursor = input.cursor === undefined ? undefined : /^(before|from|after):(.+)$/.exec(input.cursor)
-              if (input.cursor !== undefined && !cursor)
-                return yield* new ToolFailure({ message: `Invalid cursor: ${input.cursor}` })
-              const direction = cursor?.[1] ?? "before"
-              const id = cursor?.[2] as SessionMessage.ID | undefined
-              const start =
-                direction === "from" && id !== undefined
-                  ? yield* sessions.message({ sessionID: input.sessionID, messageID: id })
-                  : undefined
-              if (direction === "from" && !start)
-                return yield* new ToolFailure({ message: `Message ${id} is not in session ${input.sessionID}` })
-              const rows = yield* sessions.messages({
-                sessionID: input.sessionID,
-                limit: start ? limit - 1 : limit,
-                order: direction === "before" ? "desc" : "asc",
-                cursor: id === undefined ? undefined : { id, direction: "next" },
-              })
-              const page = direction === "before" ? rows.toReversed() : start ? [start, ...rows] : rows
-              const edge = direction === "before" ? page[0] : page.at(-1)
-              return {
+            sessions.page({ sessionID: input.sessionID, offset: input.offset, limit: input.limit ?? 20 }).pipe(
+              Effect.map((page) => ({
                 output: {
-                  messages: page.flatMap((message) => readEntry(message, input.tools === true) ?? []),
-                  cursor:
-                    page.length === limit && edge
-                      ? `${direction === "before" ? "before" : "after"}:${edge.id}`
-                      : undefined,
+                  total: page.total,
+                  messages: page.messages.flatMap(
+                    (entry) => readEntry(entry.index, entry.message, input.tools === true) ?? [],
+                  ),
                 },
-              }
-            }).pipe(
-              Effect.mapError((error) =>
-                error instanceof ToolFailure
-                  ? error
-                  : new ToolFailure({ message: `Unable to read session ${input.sessionID}`, error }),
+              })),
+              Effect.mapError(
+                (error) => new ToolFailure({ message: `Unable to read session ${input.sessionID}`, error }),
               ),
             ),
         })
@@ -448,13 +436,18 @@ export const Plugin = {
 
 const TEXT_MAX_CHARS = 2_000
 
-function listEntry(session: Session.Info, matches?: ReadonlyArray<{ snippet: string; cursor: string }>) {
+function listEntry(
+  session: Session.Info,
+  messages: number,
+  matches?: ReadonlyArray<{ index: number; snippet: string }>,
+) {
   return {
     sessionID: session.id,
     title: session.title,
     directory: session.location.directory,
     parentID: session.parentID,
-    updated: DateTime.toEpochMillis(session.time.updated),
+    updated: DateTime.formatIso(session.time.updated),
+    messages,
     matches,
   }
 }
@@ -489,17 +482,15 @@ function clip(text: string) {
   return `${text.slice(0, TEXT_MAX_CHARS)}… [${text.length - TEXT_MAX_CHARS} more characters]`
 }
 
-function readEntry(message: SessionMessage.Info, tools: boolean) {
+function readEntry(index: number, message: SessionMessage.Info, tools: boolean) {
   if (message.type === "user" || message.type === "synthetic" || message.type === "system" || message.type === "skill")
-    return { id: message.id, role: message.type, text: clip(message.text) }
+    return { index, role: message.type, text: clip(message.text) }
   if (message.type === "compaction")
-    return message.status === "completed"
-      ? { id: message.id, role: "compaction", text: clip(message.summary) }
-      : undefined
+    return message.status === "completed" ? { index, role: "compaction", text: clip(message.summary) } : undefined
   if (message.type === "shell")
     return tools
       ? {
-          id: message.id,
+          index,
           role: "shell",
           text: clip([`$ ${message.command}`, message.output?.output].filter(Boolean).join("\n")),
         }
@@ -526,7 +517,7 @@ function readEntry(message: SessionMessage.Info, tools: boolean) {
     : []
   if (!text && calls.length === 0) return undefined
   return {
-    id: message.id,
+    index,
     role: "assistant",
     text: text ? clip(text) : undefined,
     tools: calls.length > 0 ? calls : undefined,
