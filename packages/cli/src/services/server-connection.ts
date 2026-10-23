@@ -87,7 +87,7 @@ const resolveManaged = Effect.fnUntraced(function* (options: EnsureOptions, mism
     if (registered !== undefined) {
       const version = yield* ServiceConfig.registeredVersion(options.file)
       if (version !== undefined && version !== OPENCODE_VERSION) warnVersionMismatch(registered.url, version)
-      return registered
+      return yield* Service.ensure({ ...options, version: undefined })
     }
     const configured = yield* ServiceConfig.probeConfigured({ file: options.file })
     if (configured?.state === "ready") {
@@ -108,7 +108,7 @@ const resolveManaged = Effect.fnUntraced(function* (options: EnsureOptions, mism
       const version = yield* ServiceConfig.registeredVersion(options.file)
       if (version !== undefined && version !== OPENCODE_VERSION) warnVersionMismatch(compatible.url, version)
     }
-    return compatible
+    return yield* Service.ensure(options)
   }
   const existing = yield* Service.discover({ ...options, version: undefined })
   if (existing !== undefined) {

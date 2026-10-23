@@ -2,10 +2,9 @@ import { Global } from "@opencode/util/global"
 import { OPENCODE_CHANNEL, OPENCODE_VERSION } from "../version"
 import { Hash } from "@opencode/util/hash"
 import { Service, type Endpoint, type Info as RegistrationInfo } from "@opencode/client/effect/service"
-import { Effect, FileSystem, Option, Redacted, Schema } from "effect"
+import { Effect, FileSystem, Option, Schema } from "effect"
 import { randomBytes } from "crypto"
 import path from "path"
-import { Env } from "../env"
 import { selfCommand } from "../util/process"
 import { RemoteTunnel } from "./remote-tunnel"
 
@@ -124,8 +123,6 @@ const paths = Effect.gen(function* () {
     fs,
     file,
     name,
-    state: global.state,
-    config: global.config,
     home: global.home,
     legacyConfigFile: legacy ? path.join(global.config, legacy) : undefined,
     legacyRegistrationFiles: [
@@ -136,60 +133,25 @@ const paths = Effect.gen(function* () {
   }
 })
 
-const readFileInfo = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, file: string) {
-  const text = yield* fs.readFileString(file).pipe(Effect.option)
-  if (Option.isNone(text)) return {} as Info
-  const info = yield* decodeInfo(text.value).pipe(Effect.option)
-  return Option.isSome(info) ? info.value : ({} as Info)
-})
-
-const readEffective = Effect.gen(function* () {
-  const { config: configDir, configFile, file: primaryFile, fs, name } = yield* paths
-  const primary = yield* read()
-  if (
-    name === "service.json" ||
-    primary.port !== undefined ||
-    primary.password !== undefined ||
-    primary.hostname !== undefined ||
-    primary.env !== undefined ||
-    (yield* fs.exists(configFile)) ||
-    (yield* fs.exists(primaryFile))
-  ) {
-    return { config: primary, fallbackChannel: false }
-  }
-  const fallback = yield* readFileInfo(fs, path.join(configDir, "service.json"))
-  return { config: fallback, fallbackChannel: Object.keys(fallback).length > 0 }
-})
-
 export const options = Effect.fnUntraced(function* (input: { readonly checkVersion?: boolean } = {}) {
-  const { fs, file: primaryFile, home, legacyRegistrationFiles, name, state } = yield* paths
+  const { fs, file: primaryFile, home, legacyRegistrationFiles, name } = yield* paths
   yield* Effect.forEach(legacyRegistrationFiles, (legacy) => migrateRegistration(legacy, primaryFile))
-  const { config, fallbackChannel } = yield* readEffective
-  const targetNames = fallbackChannel ? [name, "service.json"] : [name]
+  const config = yield* read()
   const configuredState = config.env?.XDG_STATE_HOME ? path.join(config.env.XDG_STATE_HOME, "opencode") : undefined
   const homeState =
     config.env?.XDG_STATE_HOME !== undefined && config.password !== undefined
       ? path.join(home, ".local", "state", "opencode")
       : undefined
-  const homeStateFiles = new Set(homeState ? targetNames.map((target) => path.join(homeState, target)) : [])
+  const homeStateFiles = new Set(homeState ? [path.join(homeState, name)] : [])
   const candidates = [
-    ...new Set([
-      primaryFile,
-      ...targetNames.map((target) => path.join(state, target)),
-      ...(configuredState ? targetNames.map((target) => path.join(configuredState, target)) : []),
-      ...homeStateFiles,
-    ]),
+    ...new Set([primaryFile, ...(configuredState ? [path.join(configuredState, name)] : []), ...homeStateFiles]),
   ]
   const file = yield* findActiveRegistrationFile(fs, candidates, primaryFile, homeStateFiles, config.password)
   return {
     file,
     version: input.checkVersion && file === primaryFile ? OPENCODE_VERSION : undefined,
     env: config.env,
-    command: [
-      ...selfCommand(),
-      "serve",
-      "--service",
-    ],
+    command: [...selfCommand(), "serve", "--service"],
   }
 })
 
@@ -255,69 +217,61 @@ export const probeConfigured = Effect.fnUntraced(function* (options: { readonly 
       registeredInfo = decoded.value
     }
   }
-  const { config, fallbackChannel } = yield* readEffective
-  const envPassword = yield* Env.password
-  const hasConfiguredTarget =
-    config.port !== undefined ||
-    config.password !== undefined ||
-    config.hostname !== undefined ||
-    envPassword !== undefined
+  const config = yield* read()
   const rawHost = config.hostname ?? "127.0.0.1"
   const connectHost = rawHost === "0.0.0.0" ? "127.0.0.1" : rawHost === "::" ? "::1" : rawHost
-  const port = config.port ?? defaultPort(fallbackChannel ? "latest" : OPENCODE_CHANNEL)
-  const configuredURL = hasConfiguredTarget
-    ? `http://${connectHost.includes(":") ? `[${connectHost}]` : connectHost}:${port}`
-    : undefined
-  const urls = [...new Set([configuredURL, registeredInfo?.url].filter((url): url is string => url !== undefined))]
-  if (urls.length === 0) return undefined
-  const passwords = [
-    ...new Set(
-      [envPassword ? Redacted.value(envPassword) : undefined, config.password, registeredInfo?.password].filter(
-        (value): value is string => value !== undefined && value.length > 0,
-      ),
-    ),
-  ]
-  const candidates = passwords.length > 0 ? passwords : [undefined]
+  const configuredURL =
+    config.port !== undefined || config.password !== undefined || config.hostname !== undefined
+      ? `http://${connectHost.includes(":") ? `[${connectHost}]` : connectHost}:${config.port ?? defaultPort()}`
+      : undefined
+  // Each password is only ever sent to the URL it belongs to.
+  const targets = [
+    ...(configuredURL === undefined ? [] : [{ url: configuredURL, password: config.password || undefined }]),
+    ...(registeredInfo === undefined
+      ? []
+      : [{ url: registeredInfo.url, password: registeredInfo.password || undefined }]),
+  ].filter(
+    (target, index, all) =>
+      all.findIndex((other) => other.url === target.url && other.password === target.password) === index,
+  )
   let unauthorized: Endpoint | undefined
   let incompatible: Endpoint | undefined
-  for (const url of urls) {
-    for (const candidatePassword of candidates) {
-      const endpoint = {
-        url,
-        auth:
-          candidatePassword === undefined
-            ? undefined
-            : { type: "basic" as const, username: "opencode", password: candidatePassword },
-      } satisfies Endpoint
-      const result = yield* Effect.promise(() =>
-        fetch(new URL("/api/info", url), {
-          headers: Service.headers(endpoint),
-          signal: AbortSignal.timeout(1_500),
-        })
-          .then(async (response) => ({
-            status: response.status,
-            ok: response.ok,
-            body: (await response.json().catch(() => undefined)) as unknown,
-          }))
-          .catch(() => undefined),
-      )
-      if (result === undefined) break
-      if (result.status === 401 && isUnauthorizedBody(result.body)) {
-        unauthorized = endpoint
-        continue
-      }
-      const serverInfo = decodeServerInfo(result.body)
-      if (serverInfo === undefined) {
-        if (url === configuredURL) incompatible = { url }
-        break
-      }
-      return {
-        state: result.ok ? ("ready" as const) : result.status === 500 ? ("failed" as const) : ("waiting" as const),
-        endpoint,
-        version: serverInfo.version,
-        pid: serverInfo.pid,
-      } satisfies ConfiguredProbe
+  for (const target of targets) {
+    const endpoint = {
+      url: target.url,
+      auth:
+        target.password === undefined
+          ? undefined
+          : { type: "basic" as const, username: "opencode", password: target.password },
+    } satisfies Endpoint
+    const result = yield* Effect.promise(() =>
+      fetch(new URL("/api/info", target.url), {
+        headers: Service.headers(endpoint),
+        signal: AbortSignal.timeout(1_500),
+      })
+        .then(async (response) => ({
+          status: response.status,
+          ok: response.ok,
+          body: (await response.json().catch(() => undefined)) as unknown,
+        }))
+        .catch(() => undefined),
+    )
+    if (result === undefined) continue
+    if (result.status === 401 && isUnauthorizedBody(result.body)) {
+      unauthorized = endpoint
+      continue
     }
+    const serverInfo = decodeServerInfo(result.body)
+    if (serverInfo === undefined) {
+      if (target.url === configuredURL) incompatible = { url: target.url }
+      continue
+    }
+    return {
+      state: result.ok ? ("ready" as const) : result.status === 500 ? ("failed" as const) : ("waiting" as const),
+      endpoint,
+      version: serverInfo.version,
+      pid: serverInfo.pid,
+    } satisfies ConfiguredProbe
   }
   if (unauthorized !== undefined)
     return { state: "unauthorized" as const, endpoint: unauthorized } satisfies ConfiguredProbe
