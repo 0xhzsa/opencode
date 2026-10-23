@@ -136,21 +136,13 @@ export interface SessionRetry {
   decision: SessionRetryDecision
 }
 
-/** Synthetic input recorded before the Session continues instead of going idle. */
-export interface SessionIdleContinuation {
-  text: string
-  description?: string
-  metadata?: Record<string, unknown>
-}
-
 /**
  * Runs when a Session finishes its work and has no pending input, just before it goes idle.
- * It does not run after interruption or failure. Set `continue` to record synthetic input and
- * run another step in the same execution instead of going idle.
+ * It does not run after interruption or failure. Input admitted by the hook, such as a
+ * synthetic message, runs in the same execution instead of the Session going idle.
  */
 export interface SessionIdle {
   readonly sessionID: Session.ID
-  continue?: SessionIdleContinuation
 }
 
 export interface SessionHooks {
