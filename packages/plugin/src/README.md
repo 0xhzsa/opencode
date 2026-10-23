@@ -123,6 +123,16 @@ await ctx.session.hook("retry", (event) => {
 })
 ```
 
+When a Session finishes its work with no pending input, the `idle` hook runs just before it goes idle. It does not run
+after interruption or failure. Setting `continue` records synthetic input and runs another step in the same execution,
+so a plugin that always continues must bound its own loop:
+
+```ts
+await ctx.session.hook("idle", (event) => {
+  event.continue = { text: "Run the tests and fix any failures.", metadata: { source: "my-plugin" } }
+})
+```
+
 Promise tools use complete executable tool values with async executors:
 
 ```ts
