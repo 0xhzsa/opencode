@@ -21,10 +21,6 @@ const MessageTypes = {
 } satisfies Record<SessionMessage.Type, true>
 
 export const SessionMessagesQuery = Schema.Struct({
-  attachments: Schema.optional(Schema.Literals(["inline", "reference"])).annotate({
-    description:
-      "Defaults to inline. Reference replaces inline user attachment bytes with opencode-attachment: URIs; resolve them with session.message.get before display or reuse. Pass the same mode on each page.",
-  }),
   limit: Schema.optional(
     Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(200)),
   ).annotate({
@@ -69,18 +65,20 @@ export const PublicSessionMessage = Schema.Union([
   SessionMessage.Idle,
 ]).annotate({ identifier: "Session.Message.Info" })
 
+const SessionMessagesPage = {
+  data: Schema.Array(PublicSessionMessage),
+  cursor: Schema.Struct({
+    previous: Schema.String.pipe(Schema.optional),
+    next: Schema.String.pipe(Schema.optional),
+  }),
+}
+
 export const MessageGroup = HttpApiGroup.make("server.message")
   .add(
     HttpApiEndpoint.get("session.messages", "/api/session/:sessionID/message", {
       params: { sessionID: Session.ID },
       query: SessionMessagesQuery,
-      success: Schema.Struct({
-        data: Schema.Array(PublicSessionMessage),
-        cursor: Schema.Struct({
-          previous: Schema.String.pipe(Schema.optional),
-          next: Schema.String.pipe(Schema.optional),
-        }),
-      }).annotate({ identifier: "SessionMessagesResponse" }),
+      success: Schema.Struct(SessionMessagesPage).annotate({ identifier: "SessionMessagesResponse" }),
       error: [InvalidCursorError, SessionNotFoundError, UnknownError],
     }).annotateMerge(
       OpenApi.annotations({
@@ -88,6 +86,25 @@ export const MessageGroup = HttpApiGroup.make("server.message")
         summary: "Get session messages",
         description:
           "Retrieve projected messages for a session, optionally filtered by type. Items keep the requested order across pages; use cursor.next or cursor.previous to move through the ordered timeline, passing the same type filter on each page.",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.get("session.timeline", "/api/experimental/session/:sessionID/timeline", {
+      params: { sessionID: Session.ID },
+      query: SessionMessagesQuery,
+      success: Schema.Struct(SessionMessagesPage).annotate({
+        identifier: "SessionTimelineResponse",
+        description:
+          "Messages for display. User attachment bytes are replaced by experimental opencode-attachment:<sessionID>/<messageID>/<index> URIs with empty data; resolve them with session.message.get before display or reuse.",
+      }),
+      error: [InvalidCursorError, SessionNotFoundError, UnknownError],
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "experimental.session.message.timeline",
+        summary: "Get session timeline",
+        description:
+          "Retrieve the same pages as session.message.list, with user attachment bytes replaced by references. Experimental: may change without compatibility guarantees.",
       }),
     ),
   )

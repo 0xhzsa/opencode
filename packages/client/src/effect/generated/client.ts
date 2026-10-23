@@ -109,6 +109,8 @@ import type {
   SessionViewOutput,
   MessageListInput,
   MessageListOutput,
+  MessageTimelineInput,
+  MessageTimelineOutput,
   ModelListInput,
   ModelListOutput,
   ModelDefaultInput,
@@ -857,7 +859,18 @@ const EndpointMessageList = (raw: RawClient["server.message"]) => (input: Messag
     }).pipe(Effect.mapError(mapClientError)),
   )
 
-const adaptGroupMessage = (raw: RawClient["server.message"]) => ({ list: EndpointMessageList(raw) })
+const EndpointMessageTimeline = (raw: RawClient["server.message"]) => (input: MessageTimelineInput) =>
+  preserveEffect<MessageTimelineOutput>()(
+    raw["session.timeline"]({
+      params: { sessionID: input["sessionID"] },
+      query: { limit: input["limit"], order: input["order"], cursor: input["cursor"], type: input["type"] },
+    }).pipe(Effect.mapError(mapClientError)),
+  )
+
+const adaptGroupMessage = (raw: RawClient["server.message"]) => ({
+  list: EndpointMessageList(raw),
+  timeline: EndpointMessageTimeline(raw),
+})
 
 const EndpointModelList = (raw: RawClient["server.model"]) => (input?: ModelListInput) =>
   preserveEffect<ModelListOutput>()(

@@ -99,6 +99,39 @@ it.live("filters message types before paginating in either direction through the
   }),
 )
 
+it.live("keeps attachment bytes on the stable list and references them on the experimental timeline", () =>
+  Effect.gen(function* () {
+    const fixture = yield* setup
+    yield* Effect.promise(async () => {
+      const input = { sessionID: fixture.sessionID, type: "user", limit: 2 } as const
+      expect((await fixture.api.message.list({ ...input, order: "asc" })).data[0]).toEqual(messages[0])
+      const timeline = await fixture.api.message.timeline({ ...input, order: "asc" })
+      expect(timeline.data[0]).toMatchObject({
+        id: "msg_z",
+        text: "First request",
+        files: [
+          {
+            name: "image.png",
+            data: "",
+            mime: "image/png",
+            source: { type: "uri", uri: `opencode-attachment:${fixture.sessionID}/msg_z/0` },
+          },
+          { name: "empty.txt", data: "", source: { type: "inline" } },
+          { name: "note.txt", data: "YWJj", source: { type: "uri", uri: "file:///project/note.txt" } },
+        ],
+      })
+      expect(await fixture.api.session.message.get({ sessionID: fixture.sessionID, messageID: "msg_z" })).toEqual(
+        messages[0],
+      )
+      if (!timeline.cursor.next) throw new Error("Expected a next cursor")
+      expect((await fixture.api.message.timeline({ ...input, cursor: timeline.cursor.next })).data).toEqual([
+        messages[5],
+        messages[7],
+      ])
+    })
+  }),
+)
+
 it.live("rejects unknown message type filters at the HTTP boundary", () =>
   Effect.gen(function* () {
     const fixture = yield* setup

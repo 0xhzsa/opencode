@@ -192,14 +192,8 @@ function createServerController(
   const sdk = createServerSdkContext(conn, scope)
 
   const source = createData({
-    // Only the timeline store opts into references; every other caller gets original bytes.
-    api: () => ({
-      ...sdk.api,
-      message: {
-        ...sdk.api.message,
-        list: (query, options) => sdk.api.message.list({ attachments: "reference", ...query }, options),
-      },
-    }),
+    // Only the timeline store reads attachment references; every other caller gets original bytes.
+    api: () => ({ ...sdk.api, message: { ...sdk.api.message, list: sdk.api.message.timeline } }),
     initialMessageLimit: () => (timelinePreset(settings.general.timelineDetail())?.id === "compact" ? 40 : 20),
     event: {
       on: sdk.event.on,
