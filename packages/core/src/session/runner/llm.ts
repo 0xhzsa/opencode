@@ -161,15 +161,10 @@ const layer = Layer.effect(
               if (!force && !continuing && pending?.delivery === "queue" && promotable === "steer")
                 return DrainResult.Complete()
               if (!force && !continuing && !pending) {
-                // The Session would go idle; a plugin may record input to keep this execution working.
-                const idle = yield* restore(hooks.trigger("session", "idle", { sessionID }))
-                if (!idle.continue) return DrainResult.Complete()
-                yield* bus.publish(SessionEvent.Synthetic, {
-                  sessionID,
-                  text: idle.continue.text,
-                  description: idle.continue.description,
-                  metadata: idle.continue.metadata,
-                })
+                // The Session would go idle; a plugin may admit input to keep this execution working.
+                yield* restore(hooks.trigger("session", "idle", { sessionID }))
+                if (!(yield* SessionInbox.has(db, sessionID, "input"))) return DrainResult.Complete()
+                continue
               }
               const ready = yield* restore(
                 Effect.gen(function* () {
