@@ -434,7 +434,7 @@ export const Plugin = {
   }),
 }
 
-const TEXT_MAX_CHARS = 2_000
+const TEXT_MAX_CHARS = 10_000
 
 function listEntry(
   session: Session.Info,
