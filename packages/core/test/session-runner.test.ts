@@ -1208,6 +1208,46 @@ describe("SessionRunnerLLM", () => {
     expect(idles).toEqual([2])
   })
 
+  scenario("keeps idle hook input pending across a compaction admitted with it", function* (s) {
+    const hooks = yield* PluginHooks.Service
+    const idles: Session.ID[] = []
+    yield* hooks.register("session", "idle", (event) =>
+      Effect.gen(function* () {
+        idles.push(event.sessionID)
+        if (idles.length > 1) return
+        yield* s.session.synthetic({ sessionID, text: "Keep going", resume: false }).pipe(Effect.orDie)
+        yield* s.session.compact({ sessionID }).pipe(Effect.orDie)
+      }),
+    )
+    yield* s.llm.push(
+      TestLLM.text("First answer", "text-first"),
+      TestLLM.text("## Objective\n- summary", "hook-summary"),
+      TestLLM.text("Second answer", "text-second"),
+    )
+
+    yield* s.runPrompt("Start")
+
+    expect(idles).toEqual([sessionID, sessionID])
+    expect(s.requests).toHaveLength(3)
+    expect(userTexts(s.requests[2])).toContain("Keep going")
+    expect((yield* s.context).filter((message) => message.type === "synthetic")).toHaveLength(1)
+    expect(yield* s.inbox).toEqual([])
+  })
+
+  scenario("does not run the session idle hook after manual compaction of an idle session", function* (s) {
+    yield* s.runPrompt("First")
+    const hooks = yield* PluginHooks.Service
+    const idles: Session.ID[] = []
+    yield* hooks.register("session", "idle", (event) => Effect.sync(() => idles.push(event.sessionID)))
+    yield* s.llm.push(TestLLM.text("## Objective\n- summary", "idle-summary"))
+
+    yield* s.session.compact({ sessionID })
+    yield* s.resume
+
+    expect(s.requests).toHaveLength(2)
+    expect(idles).toEqual([])
+  })
+
   scenario("executes the tool advertised before a registry reload", function* (s) {
     const registry = yield* Tool.Service
     const scope = yield* Scope.make()

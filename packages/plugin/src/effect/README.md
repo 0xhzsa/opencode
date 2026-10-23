@@ -125,8 +125,8 @@ yield *
   )
 ```
 
-When a Session finishes its work with no pending input, the `idle` hook runs just before it goes idle. It does not run
-after interruption or failure. Input the hook admits runs in the same execution instead of the Session going idle, so a
+When a Session finishes model work with no pending input, the `idle` hook runs just before it goes idle. It does not
+run after interruption, failure, or control-only work such as a manual compaction. Input the hook admits runs in the same execution instead of the Session going idle, so a
 plugin that always admits input must bound its own loop:
 
 ```ts
