@@ -43,7 +43,7 @@ describe("Vercel AI Gateway Images", () => {
         {
           type: "other",
           message: "Use aspectRatio",
-          providerMetadata: { gateway: { type: "deprecated", setting: "size", message: "Use aspectRatio" } },
+          providerMetadata: { gateway: { type: "other", message: "Use aspectRatio" } },
         },
       ])
       expect(response.providerMetadata).toEqual({
@@ -81,7 +81,7 @@ describe("Vercel AI Gateway Images", () => {
                     images: ["iVBORw0KGgo=", "iVBORw0KGgo="],
                     warnings: [
                       { type: "unsupported", feature: "mask", details: "Applied to the whole image" },
-                      { type: "deprecated", setting: "size", message: "Use aspectRatio" },
+                      { type: "other", message: "Use aspectRatio" },
                     ],
                     providerMetadata: {
                       blackForestLabs: { images: [{ seed: 42 }] },

@@ -2,11 +2,11 @@ import { Effect, Schema } from "effect"
 import type { HttpClientResponse } from "effect/http"
 import { ImageModel, ImageResponse, type ImageRequestFor } from "../image.js"
 import type { Media } from "../media.js"
-import type { GatewayOptions } from "../providers/vercel-ai-gateway.js"
 import { MediaProtocol } from "../route/media-protocol.js"
 import { MediaRoute } from "../route/media.js"
 import { ProviderMetadata, mergeJsonRecords } from "../schema/index.js"
 import { JsonObject, ProviderShared, optionalNullish } from "./shared.js"
+import type { GatewayOptions } from "./utils/gateway-options.js"
 import { MediaInput } from "./utils/media-input.js"
 
 const route = MediaProtocol.identity({
@@ -39,7 +39,6 @@ const Warning = Schema.StructWithRest(
   Schema.Struct({
     type: Schema.String,
     feature: optionalNullish(Schema.String),
-    setting: optionalNullish(Schema.String),
     details: optionalNullish(Schema.String),
     message: optionalNullish(Schema.String),
   }),
@@ -102,15 +101,14 @@ const decodeResponse = Effect.fn("VercelAIGatewayImages.decodeResponse")(functio
 ) {
   const output = yield* decodeDocument(response)
   const decoded = output.value
-  // The Gateway returns bare base64 without a media type; the bytes are sniffed instead.
-  const images = yield* Effect.forEach(decoded.images, (image, index) =>
-    MediaInput.decodedAsset(output.invalid, `${route.name} result ${index}`, image, undefined),
-  )
-  if (images.length === 0) return yield* output.invalid(`${route.name} returned no images`)
+  if (decoded.images.length === 0) return yield* output.invalid(`${route.name} returned no images`)
   const warnings = decoded.warnings ?? []
   const usage = decoded.usage
   return new ImageResponse({
-    images,
+    // The Gateway returns bare base64 without a media type; the bytes are sniffed instead.
+    images: yield* Effect.forEach(decoded.images, (image, index) =>
+      MediaInput.decodedAsset(output.invalid, `${route.name} result ${index}`, image, undefined),
+    ),
     usage: usage && { type: "tokens", input: usage.inputTokens, output: usage.outputTokens, total: usage.totalTokens },
     // Upstreams that ignore a field (such as `seed` or `aspectRatio`) report it here instead of failing.
     notices:
@@ -120,7 +118,7 @@ const decodeResponse = Effect.fn("VercelAIGatewayImages.decodeResponse")(functio
             type: "other" as const,
             message:
               warning.message ??
-              `${route.name} reported ${warning.type} ${warning.feature ?? warning.setting}${
+              `${route.name} reported ${warning.type} ${warning.feature}${
                 warning.details === undefined ? "" : `: ${warning.details}`
               }`,
             providerMetadata: { gateway: warning },
