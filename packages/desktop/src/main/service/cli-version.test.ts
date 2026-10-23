@@ -51,12 +51,26 @@ describe("cli-version", () => {
 
   // The file follows the CLI, not the app: a source build of the desktop runs whichever CLI it downloaded or built.
   test.each([
-    { version: "0.0.0-dev-9", server: undefined, expected: path.join("/state", "opencode", "service-dev.json") },
-    { version: "2.0.32", server: undefined, expected: undefined },
-    { version: "0.0.0-beta-2", server: undefined, expected: undefined },
+    { version: "0.0.0-dev-9", server: "", expected: path.join("/state", "opencode", "service-dev.json") },
+    { version: "2.0.32", server: "", expected: undefined },
+    { version: "0.0.0-beta-2", server: "", expected: undefined },
     { version: "local", server: "local", expected: path.join("/state", "opencode", "service-local.json") },
+    // The startup probe of a packaged build honours the override too, so it looks where the connection will.
+    { version: "0.0.0-beta-2", server: "local", expected: path.join("/state", "opencode", "service-local.json") },
   ])("serviceFile($version, server=$server)", (input) => {
-    expect(serviceFile({ ...input, stateHome: "/state" })).toBe(input.expected)
+    expect(
+      serviceFile({
+        version: input.version,
+        env: { OPENCODE_DESKTOP_SERVER_CHANNEL: input.server, XDG_STATE_HOME: "/state" },
+        home: "/home",
+      }),
+    ).toBe(input.expected)
+  })
+
+  test("serviceFile falls back to ~/.local/state", () => {
+    expect(serviceFile({ version: "0.0.0-dev-9", env: {}, home: "/home" })).toBe(
+      path.join("/home", ".local", "state", "opencode", "service-dev.json"),
+    )
   })
 
   test.each([
@@ -71,13 +85,13 @@ describe("cli-version", () => {
     { pinned: false, message: "Background service failed to start", expected: true },
     { pinned: false, message: "Timed out waiting for the background service to start", expected: true },
     {
-      version: releasedBuild,
+      pinned: false,
       message:
         "Background service uses an incompatible health protocol. Update this client or explicitly restart the service.",
       expected: false,
     },
     { pinned: true, message: "Background service failed to start", expected: false },
-  ])("shouldRetryEnsure($message) -> $expected", (input) => {
+  ])("shouldRetryEnsure(pinned=$pinned, $message) -> $expected", (input) => {
     expect(shouldRetryEnsure(input.pinned, input.message)).toBe(input.expected)
   })
 })

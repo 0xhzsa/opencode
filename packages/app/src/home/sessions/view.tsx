@@ -178,6 +178,7 @@ export function HomeSessionsView(props: HomeSessionsViewProps) {
             fallback={
               <HomeSessionsEmpty
                 onNewSession={props.canCreateSession ? props.onCreateSession : undefined}
+                devChannel={props.desktop && import.meta.env.VITE_OPENCODE_CHANNEL === "dev"}
                 language={props.language}
               />
             }
@@ -910,7 +911,11 @@ function HomeSessionProjectName(props: { name: string; search?: boolean; trailin
   )
 }
 
-function HomeSessionsEmpty(props: { onNewSession?: () => void; language: ReturnType<typeof useLanguage> }) {
+function HomeSessionsEmpty(props: {
+  onNewSession?: () => void
+  devChannel: boolean
+  language: ReturnType<typeof useLanguage>
+}) {
   return (
     <div class="flex min-h-full flex-col items-center gap-4 px-6 pt-[52px] text-center">
       <div
@@ -935,6 +940,11 @@ function HomeSessionsEmpty(props: { onNewSession?: () => void; language: ReturnT
             {props.language.t("command.session.new")}
           </Button>
         )}
+      </Show>
+      <Show when={props.devChannel}>
+        <p class="text-center text-[13px] leading-5 tracking-[-0.04px] text-v2-text-text-faint [font-weight:440]">
+          {props.language.t("home.sessions.empty.devChannel")}
+        </p>
       </Show>
     </div>
   )

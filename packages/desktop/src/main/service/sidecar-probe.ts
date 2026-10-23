@@ -20,10 +20,7 @@ export function startSidecarProbe() {
 
   if (version === "") return
 
-  const file = serviceFile({
-    version: bundled,
-    stateHome: process.env.XDG_STATE_HOME ?? path.join(homedir(), ".local", "state"),
-  })
+  const file = serviceFile({ version: bundled, env: process.env, home: homedir() })
 
   probe = import("@opencode/client/service")
     .then(({ Service }) => Service.discover({ file, version }))

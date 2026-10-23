@@ -36,7 +36,6 @@ export const layer = Layer.effect(
 const connect = Effect.fn("BackgroundService.connect")(function* (mode: "initial" | "reconnect") {
   yield* Effect.logInfo("starting v2 background service")
   const fs = yield* FileSystem.FileSystem
-  const path = yield* Path.Path
   const desktopCli = yield* DesktopCli.Service
   const runFork = Effect.runForkWith(yield* Effect.context<FileSystem.FileSystem | Path.Path>())
   const isolated = !app.isPackaged && process.env.OPENCODE_DESKTOP_ISOLATED_SERVER === "1"
@@ -46,11 +45,7 @@ const connect = Effect.fn("BackgroundService.connect")(function* (mode: "initial
   if (isolated) process.env.XDG_STATE_HOME = app.getPath("userData")
   const client = yield* Effect.promise(() => import("@opencode/client/service"))
 
-  const file = serviceFile({
-    version: cli.version,
-    server: process.env.OPENCODE_DESKTOP_SERVER_CHANNEL,
-    stateHome: process.env.XDG_STATE_HOME ?? path.join(app.getPath("home"), ".local", "state"),
-  })
+  const file = serviceFile({ version: cli.version, env: process.env, home: app.getPath("home") })
 
   const ensure = (required = version) =>
     client.Service.ensure({

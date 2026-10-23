@@ -37,13 +37,16 @@ export function releasedBuild(version: string) {
 export function serviceFile(input: {
   /** The CLI's version. */
   readonly version: string
-  /** `OPENCODE_DESKTOP_SERVER_CHANNEL`: `local` for a CLI built from this checkout. */
-  readonly server?: string
-  readonly stateHome: string
+  /** Reads `OPENCODE_DESKTOP_SERVER_CHANNEL` (`local` for a CLI built from this checkout) and `XDG_STATE_HOME`. */
+  readonly env: NodeJS.ProcessEnv
+  readonly home: string
 }) {
-  if (input.server === "local") return path.join(input.stateHome, "opencode", "service-local.json")
+  const stateHome = input.env.XDG_STATE_HOME ?? path.join(input.home, ".local", "state")
 
-  if (!releasedBuild(input.version)) return path.join(input.stateHome, "opencode", "service-dev.json")
+  if (input.env.OPENCODE_DESKTOP_SERVER_CHANNEL === "local")
+    return path.join(stateHome, "opencode", "service-local.json")
+
+  if (!releasedBuild(input.version)) return path.join(stateHome, "opencode", "service-dev.json")
 
   return undefined
 }
