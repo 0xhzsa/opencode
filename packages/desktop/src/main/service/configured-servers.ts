@@ -8,3 +8,7 @@ let current: ReturnType<typeof createServerSettings> | undefined
 export function configuredServers() {
   return (current ??= createServerSettings(getStore(), (message) => log.warn(message))).get()
 }
+
+export function reloadConfiguredServers() {
+  current?.reload()
+}

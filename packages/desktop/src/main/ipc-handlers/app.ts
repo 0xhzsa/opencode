@@ -1,4 +1,4 @@
-import { BrowserWindow } from "electron"
+import { BrowserWindow, dialog } from "electron"
 import { parseDesktopNativeBundle } from "@opencode/app/i18n/desktop-native"
 import { Effect } from "effect"
 import { AppRpcs } from "../../shared/ipc-rpc"
@@ -15,7 +15,9 @@ import { finishFirstLaunchOnboarding, isFirstLaunchOnboardingPending } from "../
 import { BackgroundService } from "../service/background-service"
 import { DesktopCli } from "../service/desktop-cli"
 import { SidecarCredentials } from "../service/sidecar-credentials"
-import { configuredServers } from "../service/configured-servers"
+import { configuredServers, reloadConfiguredServers } from "../service/configured-servers"
+import { confirmServerLink, serverLinkConfirmation } from "../lifecycle/add-server-link"
+import { getStore } from "../storage/store"
 import { getLastFocusedWindow, getMainWindows, setBackgroundColor } from "../windows"
 import { sender } from "./context"
 
@@ -42,8 +44,25 @@ export const appHandlers = AppRpcs.toLayer(
             defaultServer: active?.webContents === sender(handoff, context) ? settings.public.defaultServer : undefined,
           }
         }),
+      AppConfirmServerLink: ({ url }, context) =>
+        promise(async () => {
+          const win = BrowserWindow.fromWebContents(sender(handoff, context))
+
+          if (!win) return false
+
+          const accepted = await confirmServerLink(url, getStore(), async (server) => {
+            const result = await dialog.showMessageBox(win, serverLinkConfirmation(server))
+
+            return result.response === 1
+          })
+
+          if (accepted) reloadConfiguredServers()
+
+          return accepted
+        }),
       AppReconnectService: () => background.reconnect.pipe(Effect.map(SidecarCredentials.ready)),
-      AppConsumeInitialDeepLinks: () => Effect.sync(lifecycle.consumeInitialDeepLinks),
+      AppConsumeInitialDeepLinks: (_, context) =>
+        Effect.sync(() => lifecycle.consumeInitialDeepLinks(sender(handoff, context))),
       AppIsFirstLaunchOnboardingPending: isFirstLaunchOnboardingPending,
       AppFinishFirstLaunchOnboarding: ({ createDefaultProject }) =>
         finishFirstLaunchOnboarding(createDefaultProject).pipe(Effect.orDie),

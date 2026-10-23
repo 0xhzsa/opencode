@@ -15,6 +15,7 @@ import type {
 export type ElectronAPI = {
   awaitInitialization(): Promise<ServerReadyData | null>
   getServerSettings(): Promise<{ servers: { url: string; name?: string }[]; defaultServer?: string; fallback: boolean }>
+  confirmServerLink(url: string): Promise<boolean>
   reconnectService(): Promise<ServerReadyData>
   consumeInitialDeepLinks(): Promise<string[]>
   isFirstLaunchOnboardingPending(): Promise<boolean>

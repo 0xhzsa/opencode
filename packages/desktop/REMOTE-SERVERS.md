@@ -32,6 +32,14 @@ If settings or a password file cannot be read or validated, Desktop discards the
 
 Settings and password files are read once per launch. File entries take precedence over UI entries at the same URL and are marked **From opencode.settings** in Settings > Servers. Edit those entries in the file. They are not copied into renderer persistence; removing one exposes any original UI entry again. Passwords stay in main-process memory and are attached only to requests from the app renderer to the exact configured origin (and to trusted extension requests for that server).
 
+## Add-server links
+
+`opencode://add-server?url=https%3A%2F%2Fstudio.example%3A4096&name=Studio&default=1`
+
+Desktop shows a native confirmation sheet with the URL before adding anything. Cancel is the default action. `default=1` also selects the server on Home and makes it the next launch's default. Only `url`, optional `name`, and optional `default=0|1` are accepted. Passwords, password-file paths, tokens, URL user information, and duplicate parameters are rejected.
+
+Confirmed links add an entry to `opencode.settings` and refresh the accepting window's server list. Existing entries retain their name and password-file reference. The server then appears as **From opencode.settings** and can be configured there. No password is imported by a link; configure `passwordFile` separately for authenticated servers. Setting a default affects local startup on the next launch, and respects an explicit `startLocalServer` override.
+
 ## Existing storage and startup
 
 `src/main/service/background-service.ts` calls `Service.ensure` using the staged bundled CLI's `serve --service` command. `sidecar-probe.ts` performs early read-only discovery; `background-service-state.ts` shares the startup result. The renderer awaits it through `AppAwaitInitialization` and contributes a `sidecar` connection. The local credential stays in `SidecarCredentials` in main-process memory; `windows/security.ts` adds Authorization.

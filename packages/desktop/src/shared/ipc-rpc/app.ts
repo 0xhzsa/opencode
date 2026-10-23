@@ -15,6 +15,11 @@ export const AppGetServerSettings = Rpc.make("AppGetServerSettings", {
   }),
 })
 
+export const AppConfirmServerLink = Rpc.make("AppConfirmServerLink", {
+  payload: { url: Schema.String },
+  success: Schema.Boolean,
+})
+
 export const AppReconnectService = Rpc.make("AppReconnectService", { success: ServerReadyData })
 
 export const AppConsumeInitialDeepLinks = Rpc.make("AppConsumeInitialDeepLinks", {
@@ -71,6 +76,7 @@ export const AppRelaunch = Rpc.make("AppRelaunch")
 export const AppRpcs = RpcGroup.make(
   AppAwaitInitialization,
   AppGetServerSettings,
+  AppConfirmServerLink,
   AppReconnectService,
   AppConsumeInitialDeepLinks,
   AppIsFirstLaunchOnboardingPending,

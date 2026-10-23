@@ -230,6 +230,11 @@ function locale(value: string) {
 const normalizeScript = (script?: string) => (script === "Aran" ? "Arab" : script)
 
 export const DESKTOP_NATIVE_ENGLISH = {
+  "desktop.serverLink.title": "Add this server?",
+  "desktop.serverLink.default": "Use this server by default when OpenCode opens.",
+  "desktop.serverLink.name": "Name from link: {{name}}",
+  "desktop.serverLink.cancel": "Cancel",
+  "desktop.serverLink.add": "Add server",
   "desktop.menu.app": "OpenCode",
   "desktop.menu.file": "File",
   "desktop.menu.edit": "Edit",
@@ -309,6 +314,7 @@ export type DesktopNativeMessages = Record<DesktopNativeKey, string>
 
 export type DesktopNativeBundle = { locale: DesktopNativeLocale; messages: DesktopNativeMessages }
 
+// SAFETY: every own key comes from this literal English catalog.
 export const DESKTOP_NATIVE_KEYS = Object.keys(DESKTOP_NATIVE_ENGLISH) as DesktopNativeKey[]
 
 export const DESKTOP_NATIVE_MAX_PAYLOAD_BYTES = 64 * 1024
@@ -319,10 +325,13 @@ export function createDesktopNativeBundle(
 ): DesktopNativeBundle {
   return {
     locale,
+    // SAFETY: the complete catalog key list is mapped to translated strings.
     messages: Object.fromEntries(DESKTOP_NATIVE_KEYS.map((key) => [key, translate(key)])) as DesktopNativeMessages,
   }
 }
 
+// SAFETY: this is the IPC validation boundary; every field is checked before the final domain assertion.
+/* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/no-runtime-typeof, anti-slop/no-unsafe-dictionary-type -- see SAFETY above */
 export function parseDesktopNativeBundle(value: unknown): DesktopNativeBundle | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
 
@@ -332,11 +341,13 @@ export function parseDesktopNativeBundle(value: unknown): DesktopNativeBundle | 
     return undefined
   }
 
+  // SAFETY: the object guard above permits field inspection, without trusting either value.
   const bundle = value as { locale?: unknown; messages?: unknown }
 
   if (!DESKTOP_NATIVE_LOCALES.some((locale) => locale === bundle.locale)) return undefined
 
   if (!bundle.messages || typeof bundle.messages !== "object" || Array.isArray(bundle.messages)) return undefined
+  // SAFETY: messages was checked to be a non-null, non-array object.
   const messages = bundle.messages as Record<string, unknown>
   const keys = Object.keys(messages)
 
@@ -346,8 +357,10 @@ export function parseDesktopNativeBundle(value: unknown): DesktopNativeBundle | 
 
   if (!keys.every((key) => key in DESKTOP_NATIVE_ENGLISH)) return undefined
 
+  // SAFETY: locale, exact catalog membership, and every message's string type were checked above.
   return bundle as DesktopNativeBundle
 }
+/* oxlint-enable anti-slop/no-unknown-parameters, anti-slop/no-runtime-typeof, anti-slop/no-unsafe-dictionary-type */
 
 export function formatDesktopNativeMessage(message: string, params?: Record<string, string | number>) {
   if (!params) return message

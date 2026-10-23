@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import path from "node:path"
 import { Option, Schema } from "effect"
 import type { SettingsStore } from "../storage/store"
+import { serverOrigin } from "../../shared/server-url"
 
 class ServerSettingsError extends Error {}
 
@@ -58,23 +59,6 @@ export function parseServerSettings(input: unknown) {
     defaultServer,
     startLocalServer: value.startLocalServer ?? !defaultServer,
   }
-}
-
-export function serverOrigin(value: string) {
-  if (!URL.canParse(value)) return
-  const url = new URL(value)
-
-  if (
-    !["http:", "https:"].includes(url.protocol) ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    url.pathname !== "/"
-  )
-    return
-
-  return url.origin
 }
 
 /** Read and check the same descriptor; passwords never enter renderer storage. */

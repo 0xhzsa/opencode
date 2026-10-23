@@ -19,7 +19,7 @@ import { useTheme } from "@opencode/ui/theme/context"
 import { showToast } from "@opencode/ui/toast"
 import type { BaseRouterProps } from "@solidjs/router"
 import { useNavigate } from "@solidjs/router"
-import { createEffect, createMemo, createResource, lazy, Show, Suspense } from "solid-js"
+import { createEffect, createMemo, createResource, lazy, onCleanup, onMount, Show, Suspense } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { ElectronAPI } from "./api-types"
 import { DesktopFirstLaunchOnboarding } from "./onboarding"
@@ -28,6 +28,7 @@ import { bindDesktopMenu } from "./platform/menu"
 import { createSidecarResolver, initializationData, sidecarHttp } from "./startup/initialization"
 import { preloadStoredLocale } from "./startup/locale"
 import { LoadingSplash } from "./startup/splash"
+import { listenServerLinks } from "./startup/deep-links"
 import { getLastActiveUrl } from "./window/route-storage"
 import { DesktopMemoryRouter } from "./window/router"
 
@@ -64,7 +65,7 @@ export function DesktopApp(props: { api: ElectronAPI; version: string }) {
 
   const platform = createDesktopPlatform(props.api, windowState)
   const [sidecar, { mutate: setSidecar }] = createResource(() => props.api.awaitInitialization())
-  const [settings] = createResource(() => props.api.getServerSettings())
+  const [settings, { mutate: setSettings }] = createResource(() => props.api.getServerSettings())
 
   const [locale] = createResource(() => preloadStoredLocale(platform))
 
@@ -144,7 +145,12 @@ export function DesktopApp(props: { api: ElectronAPI; version: string }) {
             pending={firstLaunch() ?? false}
             onReady={() => setStartup("onboardingReady", true)}
           />
-          <DesktopEffects api={props.api} />
+          <DesktopEffects
+            api={props.api}
+            onServersChanged={async () => {
+              setSettings(await props.api.getServerSettings())
+            }}
+          />
           <Suspense fallback={null}>
             <Show when={initializationData(sidecar)} keyed>
               {(server) => <MigrationStatus server={server} />}
@@ -220,7 +226,8 @@ function DesktopStartupReady(props: {
   return null
 }
 
-function DesktopEffects(props: { api: ElectronAPI }) {
+function DesktopEffects(props: { api: ElectronAPI; onServersChanged: () => Promise<void> }) {
+  onMount(() => onCleanup(listenServerLinks(props.api, props.onServersChanged)))
   const command = useCommand()
   bindDesktopMenu((id) => command.trigger(id))
   const theme = useTheme()

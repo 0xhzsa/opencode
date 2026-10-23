@@ -1,23 +1,26 @@
 export * as ApplicationLifecycle from "./index"
 
 import { app, BrowserWindow } from "electron"
-import type { Event } from "electron"
+import type { Event, WebContents } from "electron"
 import { Context, Effect, Layer } from "effect"
 import { DeepLinksOpened } from "../../shared/ipc-rpc/events"
 import { emitIpcEvent } from "../ipc-events"
 import { DesktopLogging, scoped } from "../native/logging"
 import { DesktopStorage } from "../storage"
 import { safeWebContentsURL } from "../windows/state"
+// SAFETY: this lifecycle layer is the composition root that owns the window registry and its finalizers.
+// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- see SAFETY above
 import { getLastFocusedWindow, getWindowByID, makeMainWindows, setAppQuitting, setRelaunchHandler } from "../windows"
 import { marks } from "./marks"
 import { initializeFirstLaunchOnboarding } from "./onboarding"
 import { Shutdown } from "./shutdown"
 import { consoleReturnWindow } from "./deep-link"
+import { takeInitialDeepLinks } from "./deep-link-inbox"
 
 export interface Interface {
   readonly relaunch: () => void
   readonly prepareToRestart: Effect.Effect<void>
-  readonly consumeInitialDeepLinks: () => string[]
+  readonly consumeInitialDeepLinks: (contents: WebContents) => string[]
   readonly createWindow: () => BrowserWindow
   readonly restoreWindows: () => BrowserWindow[]
 }
@@ -32,7 +35,8 @@ const runtime = Layer.effect(
     const windows = yield* makeMainWindows()
     const createWindow = windows.create
     const restoreWindows = windows.restore
-    const pendingDeepLinks: string[] = []
+    const pendingDeepLinks = takeInitialDeepLinks()
+    const deepLinkConsumers = new WeakSet<WebContents>()
     let shutdownReady = false
     const prepareToRestart = shutdown.run.pipe(Effect.ensuring(Effect.sync(() => (shutdownReady = true))))
 
@@ -46,7 +50,6 @@ const runtime = Layer.effect(
 
     const emitDeepLinks = (urls: string[]) => {
       if (!urls.length) return
-      pendingDeepLinks.push(...urls)
 
       const target = urls.flatMap((url) => {
         const id = consoleReturnWindow(url)
@@ -55,9 +58,10 @@ const runtime = Layer.effect(
         return win ? [win] : []
       })[0]
 
-      const win = target ?? getLastFocusedWindow()
+      const win = target ?? getLastFocusedWindow() ?? createWindow()
 
-      if (win) emitIpcEvent(win.webContents, new DeepLinksOpened({ urls }))
+      if (!deepLinkConsumers.has(win.webContents)) pendingDeepLinks.push(...urls)
+      else emitIpcEvent(win.webContents, new DeepLinksOpened({ urls }))
 
       return win
     }
@@ -80,7 +84,7 @@ const runtime = Layer.effect(
       const urls = argv.filter((arg) => arg.startsWith("opencode://"))
 
       if (urls.length) {
-        runFork(Effect.logInfo("deep link received via second-instance", { urls }))
+        runFork(Effect.logInfo("deep link received via second-instance", { count: urls.length }))
         focusWindow(emitDeepLinks(urls) ?? null)
       }
 
@@ -89,7 +93,7 @@ const runtime = Layer.effect(
 
     const openUrl = (event: Event, url: string) => {
       event.preventDefault()
-      runFork(Effect.logInfo("deep link received via open-url", { url }))
+      runFork(Effect.logInfo("deep link received via open-url"))
       focusWindow(emitDeepLinks([url]) ?? null)
     }
 
@@ -163,7 +167,12 @@ const runtime = Layer.effect(
     return Service.of({
       relaunch,
       prepareToRestart,
-      consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
+      consumeInitialDeepLinks: (contents) => {
+        deepLinkConsumers.add(contents)
+        contents.once("did-start-loading", () => deepLinkConsumers.delete(contents))
+
+        return pendingDeepLinks.splice(0)
+      },
       createWindow,
       restoreWindows: () => {
         if (!windowsWired) {
