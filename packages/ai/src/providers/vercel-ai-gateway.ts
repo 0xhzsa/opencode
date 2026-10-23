@@ -12,6 +12,7 @@ import { AnthropicMessages } from "../protocols/anthropic-messages.js"
 import { OpenAIChat } from "../protocols/openai-chat.js"
 import { OpenResponses } from "../protocols/open-responses.js"
 import { JsonObject, optionalNull, ProviderShared } from "../protocols/shared.js"
+import { VercelAIGatewayImages } from "../protocols/vercel-ai-gateway-images.js"
 import { gatewayProtocol } from "../protocols/utils/gateway-protocol.js"
 import type { ProviderPackage } from "../provider-package.js"
 import { Auth } from "../route/auth.js"
@@ -20,6 +21,7 @@ import { Route, type RouteDefaultsInput } from "../route/client.js"
 import { Endpoint } from "../route/endpoint.js"
 import { RequestExecutor } from "../route/executor.js"
 import { Framing } from "../route/framing.js"
+import { MediaRoute } from "../route/media.js"
 import type { Protocol } from "../route/protocol.js"
 import {
   AIError,
@@ -35,6 +37,8 @@ import {
   Usage,
 } from "../schema/index.js"
 import type { OpenResponsesProviderOptionsInput } from "./open-responses-options.js"
+
+export type { VercelAIGatewayImageOptions } from "../protocols/vercel-ai-gateway-images.js"
 
 export const id = ProviderID.make("vercel-ai-gateway")
 const baseURL = "https://ai-gateway.vercel.sh/v1"
@@ -276,6 +280,9 @@ export const configure = (input: Options = {}) => {
     if (modelID.startsWith("meta/muse-")) return chat(modelID)
     return messages(modelID)
   }
+  // Media models are served from the native `/v4/ai` API beside the `/v1` compatibility endpoints.
+  const media = MediaRoute.deployment({ ...input, baseURL: endpoint?.replace(/\/v1\/?$/, "/v4/ai") }, configured.auth)
+  const image = (modelID: string | ModelID) => VercelAIGatewayImages.model({ ...media, id: modelID })
   const evaluation = (modelID: string | ModelID) =>
     EvaluationModel.make<EvaluationOptions>({
       id: modelID,
@@ -350,7 +357,7 @@ export const configure = (input: Options = {}) => {
           }),
       },
     })
-  return { id, model, messages, responses, chat, experimental: { evaluation }, configure }
+  return { id, model, messages, responses, chat, image, experimental: { evaluation }, configure }
 }
 
 export const provider = configure()
@@ -358,6 +365,7 @@ export const experimental = provider.experimental
 export const messages = provider.messages
 export const responses = provider.responses
 export const chat = provider.chat
+export const image = provider.image
 
 export const model: ProviderPackage.Definition<Settings, ProviderOptionsInput>["model"] = (modelID, settings) =>
   fromSettings(settings).model(modelID)

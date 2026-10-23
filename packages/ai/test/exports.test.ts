@@ -178,6 +178,10 @@ describe("public exports", () => {
     expect(Meta.provider.image).toBe(Meta.image)
     expect(ZAI.configure({ apiKey: "fixture" }).image("glm-image").route.id).toBe("zai-images")
     expect(ZAI.provider.image).toBe(ZAI.image)
+    expect(VercelAIGateway.configure({ apiKey: "fixture" }).image("openai/gpt-image-2").route.id).toBe(
+      "vercel-ai-gateway-images",
+    )
+    expect(VercelAIGateway.provider.image).toBe(VercelAIGateway.image)
     expect(XAI.configure({ apiKey: "fixture" }).video("grok-imagine-video-1.5").route.id).toBe("xai-video")
     expect(XAI.provider.video).toBe(XAI.video)
     expect(Google.configure({ apiKey: "fixture" }).video("veo-3.1-generate-preview").route.id).toBe("google-video")

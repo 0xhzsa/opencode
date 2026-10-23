@@ -553,9 +553,13 @@ call rather than being dropped, so check this table before swapping only the `mo
 | Replicate             | ✗   | ✗         | ✗             | ✗      | ✗        | ✗ (use `providerOptions`)        | ✗                   |
 | Stability `image`     | 1   | ✗         | ✓             | ✓      | ✓        | 1 (not on `core`)                | ✗                   |
 | Stability `upscale()` | ✗   | ✗         | ✗             | ✓      | ✓        | exactly 1 (required)             | ✗                   |
+| Vercel AI Gateway²    | ✓   | ✓         | ✓             | ✓      | ✗        | ✓                                | ✓                   |
 
 ✓ lowers natively; ✗ fails whenever the field is set (including `n: 1`); `1` means `n > 1` fails. ¹ `Image.stream` on OpenAI generates one image. fal
 rejects `size` and `aspectRatio` together; which one a fal or BFL model takes depends on the model.
+² The Gateway forwards every field it accepts; when the upstream model ignores one, the response carries a `notices`
+entry instead of failing. Gateway routing options go in `providerOptions.gateway` and upstream options under their
+namespace, such as `providerOptions.openai`.
 
 `Media.Asset` is the one asset type shared by image requests, image responses, LLM messages, and tool results.
 `asset.source` is the serializable `Media.Source` (`bytes`, `base64`, `url`, or `ref`); `asset.bytes()`,
