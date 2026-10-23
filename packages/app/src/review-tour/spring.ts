@@ -23,6 +23,9 @@ export function sprung(
     get value() {
       return spring.value
     },
+    get target() {
+      return spring.target
+    },
     set(target: number) {
       const reduced = prefersReducedMotion()
 

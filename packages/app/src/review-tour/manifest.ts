@@ -7,15 +7,21 @@ import { Schema } from "effect"
 //     "stops": [
 //       { "id": "R-158", "title": "One search list", "look": "Sessions list first.", "palette": "desktop" },
 //       {
+//         "id": "R-145", "title": "Sidebar preview glides", "look": "Hover down the tabs.", "session": "ses_…",
+//         "tabs": ["ses_…", "ses_…"], "appearance": { "tabLayout": "vertical", "sidebarOpen": true },
+//         "tune": ["Sidebar hover"], "spotlight": "[data-slot=vertical-tabs-sidebar]"
+//       },
+//       {
 //         "id": "D-10", "title": "Activity chip", "look": "Flip the chip above the composer.", "session": "ses_…",
-//         "spotlight": "[data-component=session-activity-chips]",
-//         "options": [{ "label": "1 · Today", "knobs": { "activity.chip": "today" } }, { "label": "3 · CSS orb", "knobs": { "activity.chip": "orb" } }]
+//         "options": [{ "label": "Today", "knobs": { "activity.chip": "today" } }, { "label": "CSS orb", "knobs": { "activity.chip": "orb" } }]
 //       }
 //     ]
 //   }
 //
-// A stop with options is a decision; any other stop is a review. On arrival a stop goes to at most one place (`route`,
-// `session`, `settings` or `story`), sets its knobs, opens the palette with its text, then rings its spotlight.
+// A stop with options is a decision; any other stop is a review. On arrival a stop opens its tabs, sets its appearance,
+// goes to at most one place (`route`, `session`, `settings` or `story`), shows the debug bar, sets its knobs and opens
+// the palette with its text. Its spotlight rings briefly, and its `tune` knobs and `tweaks` show in a card above the
+// floater. Leaving the stop puts the appearance, the debug bar and the knobs back.
 
 /** A Knobs value: a choice's option, a toggle, a number, or a spring. */
 const KnobValue = Schema.Union([
@@ -30,6 +36,19 @@ export type KnobValue = typeof KnobValue.Type
 const Knobs = Schema.Record(Schema.String, KnobValue)
 
 const Option = Schema.Struct({ label: Schema.String, knobs: Schema.optional(Knobs) })
+
+/**
+ * A before/after style to flip in place, such as a label's weight. The first option is the app as built and restyles
+ * nothing; each other option sets `property` to its `value` on every element `selector` matches.
+ */
+const Tweak = Schema.Struct({
+  label: Schema.String,
+  selector: Schema.String,
+  property: Schema.String,
+  options: Schema.NonEmptyArray(Schema.Struct({ label: Schema.String, value: Schema.optional(Schema.String) })),
+})
+
+export type TourTweak = typeof Tweak.Type
 
 export type TourOption = typeof Option.Type
 
@@ -46,7 +65,20 @@ const Stop = Schema.Struct({
   settings: Schema.optional(Schema.String),
   /** A components-lab story, by file name (`review-tour`) or by the lab's file key. */
   story: Schema.optional(Schema.String),
+  /** Sessions on the first healthy server to open as tabs first. */
+  tabs: Schema.optional(Schema.Array(Schema.String)),
+  appearance: Schema.optional(
+    Schema.Struct({
+      tabLayout: Schema.optional(Schema.Literals(["horizontal", "vertical", "inbox"])),
+      sidebarOpen: Schema.optional(Schema.Boolean),
+    }),
+  ),
+  /** Shows the debug bar, or the bar and its Knobs panel. */
+  debug: Schema.optional(Schema.Literals(["bar", "knobs"])),
   knobs: Schema.optional(Knobs),
+  /** Knobs to tune in the card above the floater, by id, group or card, as a components-lab story names them. */
+  tune: Schema.optional(Schema.Array(Schema.String)),
+  tweaks: Schema.optional(Schema.Array(Tweak)),
   /** Text to type into the ⌘K palette; an empty string just opens it. */
   palette: Schema.optional(Schema.String),
   /** A CSS selector to ring. */

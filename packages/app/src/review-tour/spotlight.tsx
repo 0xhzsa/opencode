@@ -5,14 +5,24 @@ import { motion, sprung } from "./spring"
 // Space between the element and its ring.
 const gap = 4
 
+// How long the ring shows once its element is found, to draw the eye there.
+const flash = 1500
+
 /**
  * A soft ring around the first element matching `selector`, tagged with the stop's id so a recording shows which stop
- * it belongs to. It never takes the pointer. It follows the element as it moves, fades in once the element exists, and
- * when `leaving` fades out where it is before `onGone`.
+ * it belongs to. It never takes the pointer. It follows the element as it moves, flashes for a moment once the element
+ * exists, shows again while `hold` (the pointer is over the floater), and when `leaving` fades out before `onGone`.
  */
-export function SpotlightRing(props: { selector: string; label: string; leaving: boolean; onGone: () => void }) {
+export function SpotlightRing(props: {
+  selector: string
+  label: string
+  hold: boolean
+  leaving: boolean
+  onGone: () => void
+}) {
   let ring!: HTMLDivElement
   let element: Element | undefined
+  let found: number | undefined
   const box = { x: 0, y: 0, width: 0, height: 0 }
 
   const paint = (shown: number) => {
@@ -52,7 +62,11 @@ export function SpotlightRing(props: { selector: string; label: string; leaving:
         paint(presence.value)
       }
 
-      if ((visible ? 1 : 0) !== presence.value) presence.set(visible ? 1 : 0)
+      found ??= visible ? performance.now() : undefined
+
+      const shown = visible && (props.hold || performance.now() - (found ?? 0) < flash) ? 1 : 0
+
+      if (shown !== presence.target) presence.set(shown)
 
       return true
     })

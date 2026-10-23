@@ -2,26 +2,51 @@ import { Schema } from "effect"
 import { motionTuning, type MotionKnob } from "@opencode/ui/motion-tuning"
 import type { KnobValue, TourStop } from "./manifest"
 
-/** What a stop's setup drives: the app's own router, palette, dialogs and Settings. */
+/** What a stop's setup drives: the app's own router, tabs, settings, commands, palette and dialogs. */
 export type TourApp = {
   navigate: (path: string) => void
   /** The first healthy server's route segment and session path. */
   serverSegment: () => string | undefined
   sessionPath: (sessionID: string) => string | undefined
+  /** Opens a session on the first healthy server as a tab, without going to it. */
+  openTab: (sessionID: string) => void
   /** Opens a Settings page; false when there's no such page. */
   settings: (tab: string) => boolean
+  appearance: () => Required<TourAppearance>
+  setAppearance: (values: TourAppearance) => void
+  hasCommand: (id: string) => boolean
+  command: (id: string) => void
+  /** What the debug bar shows, read from the page. */
+  debug: () => TourDebug
   palette: () => void
   dialogOpen: () => boolean
   closeDialog: () => void
 }
 
-/** Runs a stop's setup in order: one place to go, its knobs, then the palette. Spotlights follow on their own. */
-export async function arrive(stop: TourStop, app: TourApp, knobs: KnobScope, signal: AbortSignal) {
+export type TourAppearance = NonNullable<TourStop["appearance"]>
+
+export type TourDebug = "off" | NonNullable<TourStop["debug"]>
+
+/**
+ * Runs a stop's setup in order: its tabs, its appearance, one place to go, the debug bar, its knobs, then the palette.
+ * Spotlights and the Knobs card follow on their own.
+ */
+export async function arrive(stop: TourStop, app: TourApp, scope: StopScope, signal: AbortSignal) {
   if (app.dialogOpen()) app.closeDialog()
+
+  // Right after a load, the servers haven't answered their first health check yet.
+  if (stop.session !== undefined || stop.tabs?.length || stop.route?.includes(":server"))
+    await until(app.serverSegment, signal, "a healthy server")
+
+  stop.tabs?.forEach(app.openTab)
+
+  if (stop.appearance) scope.appearance(stop.appearance)
 
   go(stop, app)
 
-  if (stop.knobs) await knobs.apply(stop.knobs, signal)
+  if (stop.debug) await scope.debug(stop.debug, signal)
+
+  if (stop.knobs) await scope.knobs(stop.knobs, signal)
 
   if (stop.palette === undefined) return
 
@@ -53,21 +78,9 @@ export async function arrive(stop: TourStop, app: TourApp, knobs: KnobScope, sig
 }
 
 function go(stop: TourStop, app: TourApp) {
-  if (stop.route !== undefined) {
-    const segment = stop.route.includes(":server") ? app.serverSegment() : ""
+  if (stop.route !== undefined) return app.navigate(stop.route.replaceAll(":server", app.serverSegment() ?? ""))
 
-    if (segment === undefined) throw new Error("No healthy server for :server")
-
-    return app.navigate(stop.route.replaceAll(":server", segment))
-  }
-
-  if (stop.session !== undefined) {
-    const path = app.sessionPath(stop.session)
-
-    if (!path) throw new Error("No healthy server to open the session on")
-
-    return app.navigate(path)
-  }
+  if (stop.session !== undefined) return app.navigate(app.sessionPath(stop.session) ?? "/")
 
   if (stop.story !== undefined) return app.navigate(`/components?story=${encodeURIComponent(stop.story)}`)
 
@@ -75,39 +88,77 @@ function go(stop: TourStop, app: TourApp) {
 }
 
 /**
- * The knobs a stop changed, so leaving it puts them back. Knobs register when their surface's module loads, so a value
- * for one that hasn't registered yet waits for it.
+ * What a stop changed, so leaving it puts it back: knobs, appearance and the debug bar. Knobs register when their
+ * surface's module loads, so a value for one that hasn't registered yet waits for it.
  */
-export function knobScope() {
+export function stopScope(app: TourApp) {
   const original = new Map<string, { knob: MotionKnob; value: MotionKnob["value"] }>()
+  const undo: (() => void)[] = []
+
+  const remember = (knob: MotionKnob) => {
+    if (!original.has(knob.id)) original.set(knob.id, { knob, value: knob.value })
+  }
 
   return {
-    async apply(values: { readonly [id: string]: KnobValue }, signal: AbortSignal) {
+    async knobs(values: { readonly [id: string]: KnobValue }, signal: AbortSignal) {
       const knobs = await registered(values, signal)
 
       knobs.forEach((knob) => {
-        if (!original.has(knob.id)) original.set(knob.id, { knob, value: knob.value })
+        remember(knob)
         setKnob(knob, values[knob.id])
       })
     },
+    /** Knobs the stop's card may change, so they go back too. */
+    remember: (knobs: readonly MotionKnob[]) => knobs.forEach(remember),
     /** Whether the knobs hold these values. */
     async holds(values: { readonly [id: string]: KnobValue }, signal: AbortSignal) {
       const knobs = await registered(values, signal)
 
       return knobs.every((knob) => JSON.stringify(knob.value) === JSON.stringify(values[knob.id]))
     },
+    appearance(values: TourAppearance) {
+      const before = app.appearance()
+      app.setAppearance(values)
+      undo.push(() => app.setAppearance(before))
+    },
+    async debug(level: NonNullable<TourStop["debug"]>, signal: AbortSignal) {
+      await until(() => app.hasCommand("debug.toggle") && app.hasCommand("debug.knobs"), signal, "the debug bar")
+
+      const before = app.debug()
+      showDebug(app, before, level)
+      undo.push(() => showDebug(app, app.debug(), before))
+      await until(() => app.debug() === level, signal, "the debug bar")
+    },
     restore() {
+      undo
+        .splice(0)
+        .toReversed()
+        .forEach((step) => step())
       original.forEach((entry) => motionTuning.set(entry.knob, entry.value))
       original.clear()
     },
   }
 }
 
-export type KnobScope = ReturnType<typeof knobScope>
+export type StopScope = ReturnType<typeof stopScope>
+
+// The debug bar's commands toggle: one shows and hides the bar, the other its Knobs panel, with the bar.
+function showDebug(app: TourApp, from: TourDebug, to: TourDebug) {
+  if (from === to) return
+
+  if (to === "knobs") return app.command("debug.knobs")
+
+  if (to === "bar") return app.command(from === "off" ? "debug.toggle" : "debug.knobs")
+
+  if (from === "knobs") app.command("debug.knobs")
+  app.command("debug.toggle")
+}
 
 function registered(values: { readonly [id: string]: KnobValue }, signal: AbortSignal) {
   return Promise.all(
-    Object.keys(values).map((id) => until(() => motionTuning.list().find((knob) => knob.id === id), signal)),
+    Object.keys(values).map((id) =>
+      until(() => motionTuning.list().find((knob) => knob.id === id), signal, `the knob ${id}`),
+    ),
   )
 }
 
@@ -123,8 +174,16 @@ function setKnob(knob: MotionKnob, value: KnobValue | undefined) {
   throw new Error(`${knob.id} can't be ${JSON.stringify(value)}`)
 }
 
-/** Resolves with the first value `read` gives within 15 seconds (a session can be slow to load), checking each frame. */
-export function until<T>(read: () => T | null | undefined, signal: AbortSignal, timeout = 15_000) {
+/**
+ * Resolves with the first value `read` gives other than null, undefined or false within 15 seconds (a session can be
+ * slow to load), checking each frame. `waiting` names what it waits for in the timeout's error.
+ */
+export function until<T>(
+  read: () => T | null | undefined | false,
+  signal: AbortSignal,
+  waiting = "the app",
+  timeout = 15_000,
+) {
   return new Promise<T>((resolve, reject) => {
     const started = performance.now()
 
@@ -133,9 +192,9 @@ export function until<T>(read: () => T | null | undefined, signal: AbortSignal, 
 
       const value = read()
 
-      if (value !== null && value !== undefined) return resolve(value)
+      if (value !== null && value !== undefined && value !== false) return resolve(value)
 
-      if (performance.now() - started > timeout) return reject(new Error("Timed out waiting for the app"))
+      if (performance.now() - started > timeout) return reject(new Error(`Timed out waiting for ${waiting}`))
       requestAnimationFrame(check)
     }
 

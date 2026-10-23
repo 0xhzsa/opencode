@@ -20,6 +20,8 @@ export function TourCard(props: {
   editing?: boolean
   /** A verdict is sending: its controls wait so it goes once. */
   busy?: boolean
+  /** Verdicts go to a coordinator session, rather than staying in the tour. */
+  coordinator?: boolean
   onEdit: (editing: boolean) => void
   onPrevious: () => void
   onNext: () => void
@@ -27,7 +29,7 @@ export function TourCard(props: {
   onVerdict: (verdict: TourVerdict) => void
   onCollapse: () => void
   onClose: () => void
-  /** Starts a drag from the card's header. */
+  /** Starts a drag from the card's header: its top row, title and description. */
   onGrab?: (event: PointerEvent) => void
 }) {
   const language = useLanguage()
@@ -60,63 +62,65 @@ export function TourCard(props: {
     >
       <div
         data-slot="review-tour-header"
-        class="-mr-1 flex h-6 cursor-grab touch-none items-center gap-2 select-none active:cursor-grabbing"
+        class="flex cursor-grab touch-none flex-col gap-2 select-none active:cursor-grabbing"
         onPointerDown={(event) => {
           if (event.target instanceof Element && event.target.closest("button")) return
           props.onGrab?.(event)
         }}
       >
-        <span
-          data-slot="review-tour-id"
-          class="rounded-[4px] bg-[color-mix(in_oklch,var(--v2-background-bg-accent)_16%,transparent)] px-1.5 font-mono text-[12px] leading-5 text-v2-text-text-accent [font-feature-settings:'zero']"
-        >
-          {props.stop.id}
-        </span>
-        <span class="text-[12px] leading-4 text-v2-text-text-faint tabular-nums">
-          {language.t("tour.position", { current: String(props.position), total: String(props.count) })}
-        </span>
-        <span class="flex-1" />
-        <IconButton
-          size="small"
-          variant="ghost"
-          icon={<Icon name="outline-arrow-left" />}
-          aria-label={language.t("tour.previous")}
-          title={language.t("tour.previous")}
-          disabled={props.position <= 1}
-          onClick={props.onPrevious}
-        />
-        <IconButton
-          size="small"
-          variant="ghost"
-          icon={<Icon name="outline-arrow-right" />}
-          aria-label={language.t("tour.next")}
-          title={language.t("tour.next")}
-          disabled={props.position >= props.count}
-          onClick={props.onNext}
-        />
-        <IconButton
-          size="small"
-          variant="ghost"
-          icon={<Icon name="minus" />}
-          aria-label={language.t("tour.collapse")}
-          title={language.t("tour.collapse")}
-          onClick={props.onCollapse}
-        />
-        <IconButton
-          size="small"
-          variant="ghost"
-          icon={<Icon name="xmark-small" />}
-          aria-label={language.t("tour.close")}
-          title={language.t("tour.close")}
-          onClick={props.onClose}
-        />
-      </div>
+        <div class="-mr-1 flex h-6 items-center gap-2">
+          <span
+            data-slot="review-tour-id"
+            class="rounded-[4px] bg-[color-mix(in_oklch,var(--v2-background-bg-accent)_16%,transparent)] px-1.5 font-mono text-[12px] leading-5 text-v2-text-text-accent [font-feature-settings:'zero']"
+          >
+            {props.stop.id}
+          </span>
+          <span class="text-[12px] leading-4 text-v2-text-text-faint tabular-nums">
+            {language.t("tour.position", { current: String(props.position), total: String(props.count) })}
+          </span>
+          <span class="flex-1" />
+          <IconButton
+            size="small"
+            variant="ghost"
+            icon={<Icon name="outline-arrow-left" />}
+            aria-label={language.t("tour.previous")}
+            title={language.t("tour.previous")}
+            disabled={props.position <= 1}
+            onClick={props.onPrevious}
+          />
+          <IconButton
+            size="small"
+            variant="ghost"
+            icon={<Icon name="outline-arrow-right" />}
+            aria-label={language.t("tour.next")}
+            title={language.t("tour.next")}
+            disabled={props.position >= props.count}
+            onClick={props.onNext}
+          />
+          <IconButton
+            size="small"
+            variant="ghost"
+            icon={<Icon name="minus" />}
+            aria-label={language.t("tour.collapse")}
+            title={language.t("tour.collapse")}
+            onClick={props.onCollapse}
+          />
+          <IconButton
+            size="small"
+            variant="ghost"
+            icon={<Icon name="xmark-small" />}
+            aria-label={language.t("tour.close")}
+            title={language.t("tour.close")}
+            onClick={props.onClose}
+          />
+        </div>
 
-      <div class="flex flex-col gap-1">
-        <div class="text-[13px] leading-4 font-medium [text-wrap:balance]">{props.stop.title}</div>
-        <Show when={props.stop.look}>
-          {(look) => <div class="text-[12px] leading-4 text-v2-text-text-muted [text-wrap:pretty]">{look()}</div>}
-        </Show>
+        <div class="flex flex-col gap-1">
+          <div class="text-[13px] leading-4 font-medium [text-wrap:balance]">{props.stop.title}</div>
+          <Show when={props.stop.look}>
+            {(look) => <div class="text-[12px] leading-4 text-v2-text-text-muted [text-wrap:pretty]">{look()}</div>}
+          </Show>
+        </div>
       </div>
 
       <Show
@@ -135,7 +139,13 @@ export function TourCard(props: {
                 >
                   {language.t("tour.ship")}
                 </Button>
-                <Button size="small" variant="neutral" disabled={props.busy} onClick={() => props.onEdit(true)}>
+                <Button
+                  size="small"
+                  variant="neutral"
+                  disabled={props.busy}
+                  title={language.t(props.coordinator ? "tour.changes.coordinator" : "tour.changes.kept")}
+                  onClick={() => props.onEdit(true)}
+                >
                   {language.t("tour.changes")}
                 </Button>
                 <Button
@@ -165,6 +175,9 @@ export function TourCard(props: {
                   send()
                 }}
               />
+              <div class="text-[12px] leading-4 text-v2-text-text-faint">
+                {language.t(props.coordinator ? "tour.note.coordinator" : "tour.note.kept", { id: props.stop.id })}
+              </div>
               <div class="flex gap-1.5">
                 <Button size="small" variant="submit" disabled={!note().trim() || props.busy} onClick={send}>
                   {language.t("tour.send")}

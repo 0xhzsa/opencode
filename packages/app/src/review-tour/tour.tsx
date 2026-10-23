@@ -1,7 +1,10 @@
+// Kept on purpose: the review tour is how Kit reviews features in context, in the running app with each stop set up
+// for him. Cleanup and simplification passes must not delete it, even when nothing in a shipped build uses it.
+
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { useNavigate } from "@solidjs/router"
-import { Schema } from "effect"
-import { createEffect, createResource, For, on, onCleanup, onMount, Show, type JSX } from "solid-js"
+import { Option, Schema } from "effect"
+import { createEffect, createResource, createSignal, For, on, onCleanup, onMount, Show, type JSX } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { Portal } from "solid-js/web"
 import { useDialog } from "@opencode/ui/context/dialog"
@@ -13,24 +16,22 @@ import { ServerConnection, useServers } from "@/runtime/server/registry"
 import { formatServerError } from "@/runtime/server/errors"
 import { useGlobal } from "@/runtime/server/runtime"
 import { isExtensionTab, isRootTab } from "@/settings/route"
+import { useSettings } from "@/settings/model"
 import { useSettingsSurface } from "@/settings/surface"
 import { isEditableTarget, useCommand } from "@/shell/commands/command"
 import { showToast } from "@/shell/notifications/toast"
 import { sessionHref } from "@/shell/routes/session"
+import { useTabs } from "@/shell/tabs/tabs"
 import { TourCard, TourPill, verdictPrompt, type TourStatus } from "./card"
+import { StopKnobs } from "./knobs"
 import { loadManifest, TourVerdict, type TourStop } from "./manifest"
-import { arrive, knobScope, type KnobScope, type TourApp } from "./setup"
+import { arrive, stopScope, type StopScope, type TourApp, type TourDebug } from "./setup"
 import { selectorError, SpotlightRing } from "./spotlight"
 import { motion, sprung } from "./spring"
-
-const Corner = Schema.Literals(["top-left", "top-right", "bottom-left", "bottom-right"])
-
-type Corner = typeof Corner.Type
 
 const TourState = Persistence.struct({
   manifest: Schema.String,
   stop: Schema.Finite,
-  corner: Corner,
   collapsed: Schema.Boolean,
   verdicts: Persistence.record(Persistence.optional(TourVerdict)),
 })
@@ -45,7 +46,9 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
   const navigate = useNavigate()
   const command = useCommand()
   const dialog = useDialog()
-  const settings = useSettingsSurface()
+  const settingsSurface = useSettingsSurface()
+  const settings = useSettings()
+  const tabs = useTabs()
   const servers = useServers()
   const global = useGlobal()
   const [manifest] = createResource(() => props.url, loadManifest)
@@ -53,7 +56,6 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
   const [state, setState, , ready] = persisted(Persist.global("review-tour"), TourState, {
     manifest: "",
     stop: 0,
-    corner: "bottom-right",
     collapsed: false,
     verdicts: {},
   })
@@ -66,9 +68,11 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
     /** What went wrong on this stop; cleared on leaving it. */
     problem?: TourStatus
     flash?: TourStatus
+    /** The pointer is over the floater, so its stop's spotlight shows. */
+    hover: boolean
     selected: { [id: string]: number | undefined }
     rings: { key: number; selector: string; label: string; leaving: boolean }[]
-  }>({ closed: false, editing: false, sending: false, selected: {}, rings: [] })
+  }>({ closed: false, editing: false, sending: false, hover: false, selected: {}, rings: [] })
 
   const tour = () => (manifest.state === "ready" && ready() && state.manifest === props.url ? manifest() : undefined)
   const count = () => tour()?.stops.length ?? 0
@@ -89,12 +93,34 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
 
       return conn && sessionHref(ServerConnection.key(conn), sessionID)
     },
+    openTab: (sessionID) => {
+      const conn = healthy()
+
+      if (conn) tabs.addSessionTab({ server: ServerConnection.key(conn), sessionId: sessionID })
+    },
     settings: (tab) => {
-      if (!isRootTab(tab) && !isExtensionTab(tab, settings.extensions.tabs())) return false
-      settings.open(tab)
+      if (!isRootTab(tab) && !isExtensionTab(tab, settingsSurface.extensions.tabs())) return false
+      settingsSurface.open(tab)
 
       return true
     },
+    appearance: () => ({
+      tabLayout: settings.appearance.tabLayout(),
+      sidebarOpen: settings.appearance.sidebarOpen(),
+    }),
+    setAppearance: (values) => {
+      if (values.tabLayout !== undefined) settings.appearance.setTabLayout(values.tabLayout)
+
+      if (values.sidebarOpen !== undefined) settings.appearance.setSidebarOpen(values.sidebarOpen)
+    },
+    hasCommand: (id) => command.options.some((option) => option.id === id),
+    command: (id) => void command.trigger(id),
+    debug: (): TourDebug =>
+      document.querySelector("[data-component=debug-knobs]")
+        ? "knobs"
+        : document.querySelector("[data-component=debug-bar]")
+          ? "bar"
+          : "off",
     palette: () => command.show(),
     dialogOpen: () => !!dialog.active,
     closeDialog: () => dialog.close(),
@@ -114,8 +140,10 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
     })
   })
 
-  let arrival: { knobs: KnobScope; signal: AbortSignal } | undefined
   let ringKey = 0
+
+  // The stop being set up and what it changed; its Knobs card mounts with it.
+  const [arrival, setArrival] = createSignal<{ stop: TourStop; scope: StopScope; signal: AbortSignal }>()
 
   createEffect(
     on(stop, (current) => {
@@ -137,10 +165,10 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
       if (!current) return
 
       const controller = new AbortController()
-      const knobs = knobScope()
-      arrival = { knobs, signal: controller.signal }
+      const scope = stopScope(app)
+      setArrival({ stop: current, scope, signal: controller.signal })
 
-      arrive(current, app, knobs, controller.signal)
+      arrive(current, app, scope, controller.signal)
         .then(() => {
           // A page that focuses its composer on arrival would keep the tour's keys; the palette's field is the point.
           const focused = document.activeElement
@@ -148,20 +176,20 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
           if (current.palette === undefined && focused instanceof HTMLElement && isEditableTarget(focused))
             focused.blur()
 
-          return showOption(current, knobs, controller.signal)
+          return showOption(current, scope, controller.signal)
         })
         .catch((error) => controller.signal.aborted || problem(formatServerError(error, language.t)))
 
       onCleanup(() => {
         controller.abort()
-        knobs.restore()
-        arrival = undefined
+        setArrival(undefined)
+        scope.restore()
       })
     }),
   )
 
   // A decision shows the option picked before, else whichever its knobs already hold.
-  const showOption = async (current: TourStop, knobs: KnobScope, signal: AbortSignal) => {
+  const showOption = async (current: TourStop, scope: StopScope, signal: AbortSignal) => {
     const options = current.options ?? []
     const verdict = state.verdicts[current.id]
     const picked = verdict?.kind === "pick" ? options.findIndex((option) => option.label === verdict.option) : -1
@@ -169,7 +197,7 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
 
     if (remembered !== undefined) return select(remembered)
 
-    const held = await Promise.all(options.map((option) => option.knobs && knobs.holds(option.knobs, signal)))
+    const held = await Promise.all(options.map((option) => option.knobs && scope.holds(option.knobs, signal)))
     const holding = held.indexOf(true)
 
     if (holding !== -1 && !signal.aborted) setView("selected", current.id, holding)
@@ -177,16 +205,23 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
 
   const select = (option: number) => {
     const current = stop()
-    const here = arrival
+    const here = arrival()
     const values = current?.options?.[option]?.knobs
 
     if (!current?.options?.[option] || !here) return
     setView("selected", current.id, option)
 
     if (values)
-      here.knobs
-        .apply(values, here.signal)
+      here.scope
+        .knobs(values, here.signal)
         .catch((error) => here.signal.aborted || problem(formatServerError(error, language.t)))
+  }
+
+  // The set-up stop, when it has knobs or tweaks for the card above the floater.
+  const tuning = () => {
+    const here = arrival()
+
+    return here?.stop.tune?.length || here?.stop.tweaks?.length ? here : undefined
   }
 
   const problem = (error: string) =>
@@ -295,6 +330,7 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
           <SpotlightRing
             selector={ring.selector}
             label={ring.label}
+            hold={view.hover}
             leaving={ring.leaving}
             onGone={() => setView("rings", (rings) => rings.filter((item) => item.key !== ring.key))}
           />
@@ -303,10 +339,14 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
       <Show when={stop()}>
         {(current) => (
           <Floater
-            corner={state.corner}
             collapsed={state.collapsed}
-            onCorner={(corner) => setState("corner", corner)}
             onCollapsed={(collapsed) => setState("collapsed", collapsed)}
+            onHover={(hover) => setView("hover", hover)}
+            knobs={
+              <Show when={tuning()} keyed>
+                {(here) => <StopKnobs stop={here.stop} scope={here.scope} onProblem={problem} />}
+              </Show>
+            }
             card={(grab) => (
               <TourCard
                 stop={current()}
@@ -317,6 +357,7 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
                 status={view.problem ?? view.flash}
                 editing={view.editing}
                 busy={view.sending}
+                coordinator={!!tour()?.coordinator}
                 onEdit={(editing) => {
                   // A modal palette would keep the note field from taking focus.
                   if (editing && dialog.active) dialog.close()
@@ -343,25 +384,42 @@ export default function ReviewTour(props: { url: string; onEnd: () => void }) {
 }
 
 /**
- * The floater: docked to a corner, dragged 1:1 by its header or pill, and on release springing into the nearest
- * corner. Collapsing fades the card into a pill in the same corner.
+ * The floater: bottom-right until it's dragged by its header or pill, then where it was dropped, kept per browser tab
+ * and inside the window. The stop's Knobs card sits above it. Collapsing fades the card into a pill.
  */
 function Floater(props: {
-  corner: Corner
   collapsed: boolean
-  onCorner: (corner: Corner) => void
   onCollapsed: (collapsed: boolean) => void
+  onHover: (hover: boolean) => void
+  knobs: JSX.Element
   card: (grab: (event: PointerEvent) => void) => JSX.Element
   pill: (grab: (event: PointerEvent) => void) => JSX.Element
 }) {
   let element!: HTMLDivElement
   let cardLayer!: HTMLDivElement
   let pillLayer!: HTMLDivElement
-  const offset = { x: 0, y: 0 }
+  const offset = { ...loadPosition() }
 
   const place = () => (element.style.transform = `translate3d(${offset.x}px, ${offset.y}px, 0)`)
-  const x = sprung(0, { ...motion.calm, travel: true }, (value) => ((offset.x = value), place()))
-  const y = sprung(0, { ...motion.calm, travel: true }, (value) => ((offset.y = value), place()))
+
+  // The offsets that keep the whole floater in the window, reading layout once rather than every frame.
+  const bounds = () => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: [offset.x - rect.left + margin, offset.x + innerWidth - margin - rect.right],
+      y: [offset.y - rect.top + margin, offset.y + innerHeight - margin - rect.bottom],
+    }
+  }
+
+  const clamp = (limits: ReturnType<typeof bounds>, x: number, y: number) => {
+    offset.x = Math.min(Math.max(x, limits.x[0]!), Math.max(limits.x[0]!, limits.x[1]!))
+    offset.y = Math.min(Math.max(y, limits.y[0]!), Math.max(limits.y[0]!, limits.y[1]!))
+    place()
+  }
+
+  // A resized window or a taller card moves the floater back inside.
+  const settle = () => clamp(bounds(), offset.x, offset.y)
 
   const paintOpen = (open: number) => {
     cardLayer.style.opacity = String(open)
@@ -373,7 +431,14 @@ function Floater(props: {
   const open = sprung(props.collapsed ? 0 : 1, motion.settle, paintOpen)
 
   // No animation on load: the first paint is the resting state.
-  onMount(() => paintOpen(props.collapsed ? 0 : 1))
+  onMount(() => {
+    paintOpen(props.collapsed ? 0 : 1)
+    place()
+    const observer = new ResizeObserver(settle)
+    observer.observe(element)
+    onCleanup(() => observer.disconnect())
+  })
+  makeEventListener(window, "resize", settle)
   createEffect(
     on(
       () => props.collapsed,
@@ -381,11 +446,7 @@ function Floater(props: {
       { defer: true },
     ),
   )
-  onCleanup(() => {
-    x.dispose()
-    y.dispose()
-    open.dispose()
-  })
+  onCleanup(() => open.dispose())
 
   const grab = (event: PointerEvent) => {
     if (event.button !== 0) return
@@ -394,6 +455,7 @@ function Floater(props: {
 
     if (!(target instanceof HTMLElement)) return
 
+    const limits = bounds()
     const start = { x: event.clientX - offset.x, y: event.clientY - offset.y }
     let moved = false
 
@@ -402,9 +464,7 @@ function Floater(props: {
     const move = (next: PointerEvent) => {
       moved ||= Math.hypot(next.clientX - event.clientX, next.clientY - event.clientY) > 3
 
-      if (!moved) return
-      x.snap(next.clientX - start.x)
-      y.snap(next.clientY - start.y)
+      if (moved) clamp(limits, next.clientX - start.x, next.clientY - start.y)
     }
 
     const up = () => {
@@ -412,21 +472,9 @@ function Floater(props: {
       target.removeEventListener("pointerup", up)
       target.removeEventListener("pointercancel", up)
 
-      if (!moved) {
-        if (props.collapsed) props.onCollapsed(false)
+      if (moved) return savePosition(offset)
 
-        return
-      }
-
-      // Re-anchor to the nearest corner where the floater is now, then spring the leftover offset away.
-      const before = element.getBoundingClientRect()
-      const corner = nearest(before)
-      props.onCorner(corner)
-      const anchored = element.getBoundingClientRect()
-      x.snap(offset.x + before.left - anchored.left)
-      y.snap(offset.y + before.top - anchored.top)
-      x.set(0)
-      y.set(0)
+      if (props.collapsed) props.onCollapsed(false)
     }
 
     target.addEventListener("pointermove", move)
@@ -434,52 +482,58 @@ function Floater(props: {
     target.addEventListener("pointercancel", up)
   }
 
-  const top = () => props.corner.startsWith("top")
-  const left = () => props.corner.endsWith("left")
-
   return (
     <div
       ref={element}
       data-component="review-tour"
-      data-corner={props.corner}
-      class="pointer-events-none fixed z-[2147483000] grid"
-      style={{
-        top: top() ? "56px" : "auto",
-        bottom: top() ? "auto" : "16px",
-        left: left() ? "16px" : "auto",
-        right: left() ? "auto" : "16px",
-        "justify-items": left() ? "start" : "end",
-        "align-items": top() ? "start" : "end",
+      class="pointer-events-none fixed right-4 bottom-4 z-[2147483000] flex flex-col items-end gap-2"
+      onPointerOver={() => props.onHover(true)}
+      onPointerOut={(event) => {
+        if (!(event.relatedTarget instanceof Node && element.contains(event.relatedTarget))) props.onHover(false)
       }}
     >
-      <div
-        ref={cardLayer}
-        class="[grid-area:1/1]"
-        classList={{ "pointer-events-auto": !props.collapsed }}
-        style={{ "transform-origin": `${top() ? "top" : "bottom"} ${left() ? "left" : "right"}` }}
-        inert={props.collapsed}
-      >
-        {props.card(grab)}
+      <div class="pointer-events-auto" classList={{ hidden: props.collapsed }}>
+        {props.knobs}
       </div>
-      <div
-        ref={pillLayer}
-        class="[grid-area:1/1]"
-        classList={{ "pointer-events-auto": props.collapsed }}
-        style={{ "transform-origin": `${top() ? "top" : "bottom"} ${left() ? "left" : "right"}` }}
-        inert={!props.collapsed}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") props.onCollapsed(false)
-        }}
-      >
-        {props.pill(grab)}
+      <div class="grid items-end justify-items-end">
+        <div
+          ref={cardLayer}
+          class="origin-bottom-right [grid-area:1/1]"
+          classList={{ "pointer-events-auto": !props.collapsed }}
+          inert={props.collapsed}
+        >
+          {props.card(grab)}
+        </div>
+        <div
+          ref={pillLayer}
+          class="origin-bottom-right [grid-area:1/1]"
+          classList={{ "pointer-events-auto": props.collapsed }}
+          inert={!props.collapsed}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") props.onCollapsed(false)
+          }}
+        >
+          {props.pill(grab)}
+        </div>
       </div>
     </div>
   )
 }
 
-function nearest(rect: DOMRect): Corner {
-  const vertical = rect.top + rect.height / 2 < innerHeight / 2 ? "top" : "bottom"
-  const horizontal = rect.left + rect.width / 2 < innerWidth / 2 ? "left" : "right"
+// The floater keeps this far from the window's edges.
+const margin = 8
 
-  return `${vertical}-${horizontal}`
+// Where the floater was dropped, as an offset from its bottom-right home; kept per browser tab.
+const positionKey = "opencode.tour.position"
+
+const decodePosition = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ x: Schema.Finite, y: Schema.Finite })),
+)
+
+function loadPosition() {
+  return Option.getOrElse(decodePosition(sessionStorage.getItem(positionKey)), () => ({ x: 0, y: 0 }))
+}
+
+function savePosition(offset: { x: number; y: number }) {
+  sessionStorage.setItem(positionKey, JSON.stringify(offset))
 }
