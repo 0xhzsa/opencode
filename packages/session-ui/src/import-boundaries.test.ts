@@ -30,7 +30,6 @@ describe("Session UI package boundaries", () => {
     expect(exports["./actions"]).toBe("./src/actions.ts")
     expect(exports["./document"]).toBe("./src/document.ts")
     expect(exports["./message"]).toBe("./src/message/current-message.tsx")
-    expect(exports["./message-part"]).toBe("./src/components/message-part.tsx")
     expect(exports["./timeline"]).toBe("./src/timeline/session-timeline.tsx")
     expect(exports["./timeline/projection"]).toBe("./src/timeline/projection.ts")
   })
