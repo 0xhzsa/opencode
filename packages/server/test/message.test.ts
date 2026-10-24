@@ -105,7 +105,7 @@ it.live("keeps attachment bytes on the stable list and references them on the ex
     yield* Effect.promise(async () => {
       const input = { sessionID: fixture.sessionID, type: "user", limit: 2 } as const
       expect((await fixture.api.message.list({ ...input, order: "asc" })).data[0]).toEqual(messages[0])
-      const timeline = await fixture.api.message.timeline({ ...input, order: "asc" })
+      const timeline = await fixture.api.experimental.session.timeline({ ...input, order: "asc" })
       expect(timeline.data[0]).toMatchObject({
         id: "msg_z",
         text: "First request",
@@ -124,10 +124,9 @@ it.live("keeps attachment bytes on the stable list and references them on the ex
         messages[0],
       )
       if (!timeline.cursor.next) throw new Error("Expected a next cursor")
-      expect((await fixture.api.message.timeline({ ...input, cursor: timeline.cursor.next })).data).toEqual([
-        messages[5],
-        messages[7],
-      ])
+      expect(
+        (await fixture.api.experimental.session.timeline({ ...input, cursor: timeline.cursor.next })).data,
+      ).toEqual([messages[5], messages[7]])
     })
   }),
 )

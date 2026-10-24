@@ -193,7 +193,7 @@ function createServerController(
 
   const source = createData({
     // Only the timeline store reads attachment references; every other caller gets original bytes.
-    api: () => ({ ...sdk.api, message: { ...sdk.api.message, list: sdk.api.message.timeline } }),
+    api: () => ({ ...sdk.api, message: { ...sdk.api.message, list: sdk.api.experimental.session.timeline } }),
     initialMessageLimit: () => (timelinePreset(settings.general.timelineDetail())?.id === "compact" ? 40 : 20),
     event: {
       on: sdk.event.on,
