@@ -587,7 +587,7 @@ function ProviderConnection(props: {
     if (controller.currentMethod()?.type === "key") return active()
 
     const loaded = () =>
-      managedProviders() !== undefined || connectionProviders().some((provider) => provider.id !== "opencode")
+      managedProviders() !== undefined || connectionGroups().some((group) => group.provider.id !== "opencode")
 
     const deadline = Date.now() + 10_000
 

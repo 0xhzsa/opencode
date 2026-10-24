@@ -92,7 +92,9 @@ function DialogConnectedModels(props: {
   const noGoSubscription = createMemo(() => {
     const scoped = props.providerID ? providers().get(props.providerID) : undefined
     if (props.providerID && scoped?.integrationID !== "opencode" && props.providerID !== "opencode") return false
-    if (models().some((model) => model.providerID === "opencode-go")) return false
+    const list = data.location.model.list(location.ref)
+    if (!list) return false
+    if (list.some((model) => model.providerID === "opencode-go")) return false
     const consoleIntegration = data.location.integration.list(location.ref)?.find((item) => item.id === "opencode")
     const active = consoleIntegration ? credentialConnections(consoleIntegration)[0] : undefined
     return Boolean(active && !active.status)
@@ -246,6 +248,7 @@ function DialogConnectedModels(props: {
           command: "model.dialog.favorite",
           title: newDesigns() ? (option) => (isFavorite(option?.value) ? "unfavorite" : "favorite") : "Favorite",
           hidden: !connected(),
+          disabled: (option) => option?.value === NO_GO_SUBSCRIPTION,
           onTrigger: (option) => {
             if (option.value === NO_GO_SUBSCRIPTION) return
             local.model.toggleFavorite(option.value as { providerID: string; modelID: string })
