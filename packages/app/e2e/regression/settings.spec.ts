@@ -1231,11 +1231,15 @@ test("providers: signing in to OpenCode Go without a subscription says why there
   await page.getByRole("button", { name: "Continue in the browser", exact: true }).click()
   await signIn
 
-  const connected = page.getByRole("dialog", { name: "Connected to OpenCode Go" })
+  // The account has no Go connection, so the dialog doesn't claim one.
+  const connected = page.getByRole("dialog", { name: "Connected to OpenCode", exact: true })
   await expect(connected.getByRole("radio", { name: "Big Pickle", exact: true })).toBeVisible()
-  await expect(connected.getByText("No Go subscription on this account", { exact: true })).toBeVisible()
+  const invite = connected.locator('[data-component="go-invite"]')
+  await expect(invite).toContainText("Add OpenCode Go")
+  await expect(invite).toContainText("$10/month")
+  await expect(invite).toContainText("This account has no Go subscription.")
   const subscribe = page.waitForEvent("popup")
-  await connected.getByRole("button", { name: "Subscribe", exact: true }).click()
+  await invite.getByRole("button", { name: "Subscribe", exact: true }).click()
   await expect(await subscribe).toHaveURL("https://opencode.ai/go")
 })
 

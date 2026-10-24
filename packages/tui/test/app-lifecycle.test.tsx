@@ -2326,7 +2326,7 @@ test("free usage limit Subscribe handles mid-auth/mid-sync Escape, sync failure,
   setup.mockInput.pressEnter()
   await setup.waitForFrame((frame) => frame.includes("Select model") && frame.includes("Big Pickle"))
   // Signed in without a Go subscription: the picker says why there are no Go models.
-  await setup.waitForFrame((frame) => frame.includes("No Go subscription on this account"))
+  await setup.waitForFrame((frame) => frame.includes("No Go subscription $10/month"))
   expect(setup.captureCharFrame()).toMatch(/subscribe/i)
   expect(oauthConnectCalls).toBe(oauthCallsBeforeCachedExpired + 1)
   setup.mockInput.pressEscape()

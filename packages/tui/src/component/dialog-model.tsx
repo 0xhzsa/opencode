@@ -196,7 +196,8 @@ function DialogConnectedModels(props: {
       ? [
           {
             value: NO_GO_SUBSCRIPTION,
-            title: "No Go subscription on this account",
+            title: "No Go subscription",
+            description: "$10/month",
             category: connected() ? "OpenCode Go" : undefined,
             footer: newDesigns() ? "subscribe" : "Subscribe",
             onSelect() {
