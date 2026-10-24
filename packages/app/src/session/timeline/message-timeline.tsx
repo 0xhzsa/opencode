@@ -496,9 +496,14 @@ function MessageTimelineView(
           when={Predicate.isTagged(row(), "Activity")}
           fallback={<rowRenderer.Row row={row} onSizeChange={onSizeChange} />}
         >
-          {/* Unlike the bottom lane, this row sits above input still waiting for delivery. Kept while empty, it would
-              open a gap above that input that closes again on delivery, when live status returns to the bottom lane. */}
-          <Show when={showWorking() || backgroundHintPresence.present()}>{activity(() => true)}</Show>
+          {(_) => {
+            // This row sits above input still waiting for delivery. Until live status first shows, it takes no room,
+            // so the waiting input keeps the place delivery leaves it. Once shown, the lane stays for the life of the
+            // row: Working hides and returns several times in one step, and each change would move that input 36px.
+            const shown = createMemo((was) => was || showWorking() || backgroundHintPresence.present(), false)
+
+            return <Show when={shown()}>{activity(() => true)}</Show>
+          }}
         </Show>
       )}
       header={

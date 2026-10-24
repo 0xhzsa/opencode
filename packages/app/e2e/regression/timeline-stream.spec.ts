@@ -647,7 +647,7 @@ test("shows a background subagent's outcome as its own row where it finished", a
   await expect(page).toHaveURL(new RegExp(`/session/${childID}$`))
 })
 
-test("keeps an undelivered notice where delivery leaves it while live status shows nothing", async ({ page }) => {
+test("holds undelivered input still while live status above it comes and goes", async ({ page }) => {
   const timeline = await setupTimeline(page, {
     sessionStatus: { [sessionID]: { type: "busy" } },
     messages: [
@@ -658,38 +658,55 @@ test("keeps an undelivered notice where delivery leaves it while live status sho
   })
 
   const answer = page.getByText("It ships as soon as it's ready.", { exact: true })
-  const notice = page.locator('[data-slot="session-timeline-notice"]')
+  const working = page.locator('[data-component="session-working"]')
+  const activity = page.locator('[data-timeline-key="activity"]')
+  const lane = async () => (await activity.boundingBox())?.height
+  const outcome = (id: string, description: string) =>
+    inboxEnqueued({
+      sessionID,
+      inboxID: id,
+      item: {
+        type: "synthetic",
+        payload: {
+          text: '<subagent state="completed">done</subagent>',
+          description,
+          metadata: { source: "subagent", agent: "general", state: "completed" },
+        },
+        delivery: "steer",
+      },
+    })
+
+  const first = page.locator('[data-slot="session-timeline-notice"]').filter({ hasText: "Audit constraints" })
   const gap = async () => {
-    const [above, below] = await Promise.all([answer.boundingBox(), notice.boundingBox()])
+    const [above, below] = await Promise.all([answer.boundingBox(), first.boundingBox()])
 
     return above && below ? Math.round(below.y - above.y - above.height) : undefined
   }
 
   await expect(answer).toBeVisible()
-  await timeline.send(
-    inboxEnqueued({
-      sessionID,
-      inboxID: "msg_pending_outcome",
-      item: {
-        type: "synthetic",
-        payload: {
-          text: '<subagent state="completed">done</subagent>',
-          description: "Audit constraints",
-          metadata: { source: "subagent", agent: "general", state: "completed" },
-        },
-        delivery: "steer",
-      },
-    }),
-  )
-  await expect(notice).toHaveText(/^General finished · Audit constraints$/)
-  await expect(page.locator('[data-component="session-working"]')).toHaveCount(0)
+  await timeline.send(outcome("msg_pending_outcome", "Audit constraints"))
+  await expect(first).toHaveText(/^General finished · Audit constraints$/)
+  await expect(working).toHaveCount(0)
   // Live status moves above the waiting notice, but takes no room while it has nothing to show.
-  await expect.poll(async () => (await page.locator('[data-timeline-key="activity"]').boundingBox())?.height).toBe(0)
+  await expect.poll(lane).toBe(0)
   const pending = await gap()
 
   await timeline.send(inboxDelivered({ sessionID, inboxID: "msg_pending_outcome" }))
-  await expect(page.locator('[data-timeline-key="activity"]')).toHaveCount(0)
+  await expect(activity).toHaveCount(0)
   await expect.poll(gap).toBe(pending)
+
+  await timeline.send(outcome("msg_pending_review", "Review copy"))
+  await expect(page.locator('[data-slot="session-timeline-notice"]').filter({ hasText: "Review copy" })).toBeVisible()
+  await expect.poll(lane).toBe(0)
+
+  // A finished read keeps Working on; the next streaming text hides it again. Once shown, the lane stays.
+  await timeline.send(partUpdated(toolPart("prt_live_read", "read", "completed", { filePath: "README.md" })))
+  await expect(working).toBeVisible()
+  await expect.poll(lane).toBe(36)
+  await timeline.send(partUpdated(textPart("prt_live_text", "Checking the copy next.")))
+  await expect(page.getByText("Checking the copy next.", { exact: true })).toBeVisible()
+  await expect(working).toHaveCount(0)
+  await expect.poll(lane).toBe(36)
 })
 
 test("jumps from a finished shell's notice to its call", async ({ page }) => {
