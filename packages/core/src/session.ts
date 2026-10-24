@@ -54,6 +54,7 @@ import {
   DestinationUnavailableError,
 } from "./session/move.js"
 import { SessionModelTransport } from "./session/model-transport.js"
+import { ModelPreconnect } from "./model-preconnect.js"
 import { llmClient } from "./effect/app-node-platform.js"
 import { Snapshot } from "./snapshot.js"
 import { Session } from "./session/session.js"
@@ -514,6 +515,7 @@ export const node: LayerNode.Provider<Service, never, typeof Node.tags.values.gl
     Project.node,
     SessionExecution.node,
     SessionModelTransport.node,
+    ModelPreconnect.node,
     llmClient,
     SessionStore.node,
     Instance.node,

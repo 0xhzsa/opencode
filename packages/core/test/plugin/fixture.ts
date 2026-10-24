@@ -19,6 +19,7 @@ import { Location } from "@opencode/core/location"
 import { ManagedPolicy } from "@opencode/core/managed-policy"
 import { Mcp } from "@opencode/core/mcp/index"
 import { Model } from "@opencode/core/model"
+import { ModelPreconnect } from "@opencode/core/model-preconnect"
 import { Npm } from "@opencode/util/npm"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
@@ -96,6 +97,7 @@ export const makePluginTestLayer = (permission = permissionLayer) =>
       KV.node,
       ManagedPolicy.node,
       Mcp.node,
+      ModelPreconnect.node,
       Session.node,
       PersistentPty.node,
       LocationServiceMap.node,

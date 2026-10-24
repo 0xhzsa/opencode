@@ -660,6 +660,21 @@ automatic compaction doesn't pause the session. Defaults to `false`. See
 }
 ```
 
+### Preconnect
+
+Set `preconnect` to `true` to open the model provider's connection as soon as a prompt is sent, so the model request
+doesn't wait for DNS, TCP and TLS setup. OpenCode sends an empty, unauthenticated `GET` to the provider's origin, at
+most once every 4 minutes, which shows up in provider and gateway logs. It's skipped behind proxies and for plugins
+with HTTP hooks. Defaults to `false`.
+
+```jsonc
+{
+  "experimental": {
+    "preconnect": true,
+  },
+}
+```
+
 ### Location idle timeout
 
 `location_idle_timeout` controls how long a project location can go without session activity before OpenCode unloads

@@ -485,6 +485,15 @@ function normalizeExperimental(
         )
         if (value !== undefined) result.background_compaction = value
       }
+      if (own(experimental, "preconnect")) {
+        const value = decodeEncoded(
+          ConfigExperimental.Info.fields.preconnect,
+          experimental.preconnect,
+          ["experimental", "preconnect"],
+          diagnostics,
+        )
+        if (value !== undefined) result.preconnect = value
+      }
       if (own(experimental, "subagent_depth")) {
         const value = decodeEncoded(
           ConfigExperimental.Info.fields.subagent_depth,

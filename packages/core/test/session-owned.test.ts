@@ -17,6 +17,7 @@ import { EventTable } from "../src/event/sql.js"
 import { Image } from "../src/image.js"
 import { Instance } from "../src/instance/service.js"
 import { Location } from "../src/location.js"
+import { ModelPreconnect } from "../src/model-preconnect.js"
 import { Plugin } from "../src/plugin.js"
 import { PluginHooks } from "../src/plugin/hooks.js"
 import { ProjectTable } from "../src/project/sql.js"
@@ -157,10 +158,12 @@ const setup = Effect.fnUntraced(function* (options?: {
       | Instance.Service
       | SessionExecution.Service
       | SessionInbox.Service
+      | ModelPreconnect.Service
       | Scope.Scope
     >(),
     Effect.provideService(Instance.Service, instances),
     Effect.provideService(SessionExecution.Service, options?.execution ?? execution),
+    Effect.provide(ModelPreconnect.noopLayer),
   )
   return { sessions, instances, hooks, locations, activationWaits, resumes, wakes, db: database.db, bus, store }
 })

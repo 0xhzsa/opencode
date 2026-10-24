@@ -15,6 +15,10 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
     description:
       "Enable experimental background compaction: summarize the conversation in the background as it nears the compaction threshold, so automatic compaction does not wait for the summary. Background summaries that are never used still cost tokens. Defaults to false.",
   }),
+  preconnect: Schema.Boolean.pipe(optional).annotate({
+    description:
+      "Open the model provider's connection when a prompt is admitted, with an empty unauthenticated request to its origin, so the model request skips connection setup. Defaults to false.",
+  }),
   subagent_depth: NonNegativeInt.pipe(optional).annotate({
     description: "Maximum subagent nesting depth. Defaults to 1.",
   }),

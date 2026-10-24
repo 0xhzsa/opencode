@@ -48,6 +48,7 @@ export const make = Effect.fn("Session.make")(function* () {
   const execution = yield* SessionExecution.Service
   const admission = yield* SessionInbox.Service
   const fs = yield* FSUtil.Service
+  const preconnect = yield* ModelPreconnect.Service
   const scope = yield* Scope.Scope
 
   const get = Effect.fn("Session.get")(function* (sessionID: SessionSchema.ID) {
@@ -116,7 +117,7 @@ export const make = Effect.fn("Session.make")(function* () {
     )
       return
     yield* bus.publish(SessionEvent.ModelSelected, { sessionID, model: input.model, previous: session.model })
-    yield* ModelPreconnect.warm({ ...session, model: input.model })
+    yield* preconnect.warm({ ...session, model: input.model })
   })
   const mutatePending = (
     sessionID: SessionSchema.ID,
@@ -159,7 +160,7 @@ export const make = Effect.fn("Session.make")(function* () {
       Effect.gen(function* () {
         const session = yield* get(sessionID)
         // Opens the provider connection while the prompt is admitted and its context loads.
-        yield* ModelPreconnect.warm(session)
+        yield* preconnect.warm(session)
         const messageID = input.id ?? SessionMessage.ID.create()
         const admitted = yield* Effect.gen(function* () {
           const existing = yield* admission.reconcile({

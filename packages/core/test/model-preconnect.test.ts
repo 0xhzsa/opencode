@@ -1,13 +1,16 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
 import { LanguageModel } from "@opencode/ai"
 import { OpenAIChat } from "@opencode/ai/protocols"
 import { Agent } from "@opencode/schema/agent"
+import { Document, Info } from "@opencode/schema/config"
+import { ConfigExperimental } from "@opencode/schema/config/experimental"
 import { Model } from "@opencode/schema/model"
 import { Money } from "@opencode/schema/money"
 import { Provider } from "@opencode/schema/provider"
 import { Session } from "@opencode/schema/session"
+import { Config } from "@opencode/core/config"
 import { Location } from "@opencode/core/location"
 import { ModelPreconnect } from "@opencode/core/model-preconnect"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
@@ -20,13 +23,6 @@ import { DateTime, Effect } from "effect"
 import { FetchHttpClient } from "effect/http"
 import { testEffect } from "./lib/effect"
 import { PluginTestLayer } from "./plugin/fixture"
-
-// The preload turns preconnect off so session tests stay offline; this file exercises it.
-const disabled = process.env.OPENCODE_DISABLE_PRECONNECT
-beforeAll(() => void delete process.env.OPENCODE_DISABLE_PRECONNECT)
-afterAll(() => {
-  if (disabled !== undefined) process.env.OPENCODE_DISABLE_PRECONNECT = disabled
-})
 
 const resolved = (provider: string, baseURL: string, transport?: "websocket") => {
   const model = SessionRunnerModel.resolved(OpenAIChat.route.with({ endpoint: { baseURL } }).model({ id: "model" }), {
@@ -49,24 +45,34 @@ const session = (id: string, directory = "/project", model?: Model.Ref) =>
     model,
   })
 
-const fetching = (respond: () => Promise<Response> = () => Promise.resolve(new Response(null, { status: 404 }))) => {
+const provider = Provider.ID.make("provider")
+
+type Respond = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+
+/** Records every warm-up, answering with `respond` (a 404 by default). */
+const fetching = (respond: Respond = () => Promise.resolve(new Response(null, { status: 404 }))) => {
   const calls: Array<{ url: string; init?: RequestInit }> = []
-  const fetch = Object.assign(
+  const pending: Promise<unknown>[] = []
+  const stub = Object.assign(
     (input: string | URL | Request, init?: RequestInit) => {
       calls.push({ url: String(input), init })
-      return respond()
+      const response = respond(input, init)
+      pending.push(response)
+      return response
     },
     { preconnect: globalThis.fetch.preconnect },
   )
   return {
     calls,
     urls: () => calls.map((call) => call.url),
+    settled: () => Promise.allSettled(pending),
     provide: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      effect.pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)),
-    run: (effect: Effect.Effect<void>) =>
-      Effect.runPromise(effect.pipe(Effect.provideService(FetchHttpClient.Fetch, fetch))),
+      effect.pipe(Effect.provideService(FetchHttpClient.Fetch, stub)),
   }
 }
+
+/** A fresh service, so throttling never leaks between tests. */
+const make = () => Effect.runSync(ModelPreconnect.Service.pipe(Effect.provide(ModelPreconnect.layer)))
 
 const serve = async (handle: (request: IncomingMessage, response: ServerResponse) => void) => {
   const requests: Array<{ method?: string; url?: string; authorization?: string }> = []
@@ -96,8 +102,12 @@ describe("ModelPreconnect", () => {
       response.statusCode = request.method === "GET" ? 404 : 200
       response.end(request.method === "GET" ? '{"error":"not found"}' : "ok")
     })
-    await Effect.runPromise(ModelPreconnect.preconnect(new URL(server.origin)))
+    const preconnect = make()
+    const info = session("reuse")
+    await Effect.runPromise(preconnect.remember(info, provider, new URL(server.origin)))
+    await Effect.runPromise(preconnect.warm(info))
     await server.first
+    // Let the drained warm-up socket return to the pool.
     await Bun.sleep(20)
     const response = await fetch(`${server.origin}/v1/messages`, {
       method: "POST",
@@ -117,38 +127,50 @@ describe("ModelPreconnect", () => {
       response.writeHead(302, { location: "/elsewhere" })
       response.end()
     })
-    await Effect.runPromise(ModelPreconnect.preconnect(new URL(server.origin)))
-    await server.first
-    await Bun.sleep(50)
+    const preconnect = make()
+    const info = session("redirect")
+    const fetch = fetching(globalThis.fetch)
+    await Effect.runPromise(preconnect.remember(info, provider, new URL(server.origin)))
+    await Effect.runPromise(fetch.provide(preconnect.warm(info)))
+    await fetch.settled()
+    expect(fetch.calls[0]?.init?.redirect).toBe("manual")
     expect(server.requests.map((request) => request.url)).toEqual(["/"])
   })
 
-  test("warms each origin at most once per window", async () => {
+  test("warms each origin at most once per window, with no headers or body", async () => {
+    const preconnect = make()
     const fetch = fetching()
-    await fetch.run(ModelPreconnect.preconnect(new URL("https://throttle.example/")))
-    await fetch.run(ModelPreconnect.preconnect(new URL("https://throttle.example/")))
-    await fetch.run(ModelPreconnect.preconnect(new URL("https://other.example/")))
+    const first = session("throttle_a", "/a")
+    const second = session("throttle_b", "/b")
+    const other = session("throttle_c", "/c")
+    await Effect.runPromise(preconnect.remember(first, provider, new URL("https://throttle.example")))
+    await Effect.runPromise(preconnect.remember(second, provider, new URL("https://throttle.example")))
+    await Effect.runPromise(preconnect.remember(other, provider, new URL("https://other.example")))
+    for (const info of [first, second, first, other]) await Effect.runPromise(fetch.provide(preconnect.warm(info)))
     expect(fetch.calls.map((call) => [call.url, call.init?.method, call.init?.headers, call.init?.body])).toEqual([
       ["https://throttle.example/", undefined, undefined, undefined],
       ["https://other.example/", undefined, undefined, undefined],
     ])
-    expect(fetch.calls[0]?.init?.redirect).toBe("manual")
   })
 
   test("retries an origin whose warm-up failed, even when fetch throws synchronously", async () => {
-    const rejecting = fetching(() => Promise.reject(new Error("offline")))
-    await rejecting.run(ModelPreconnect.preconnect(new URL("https://offline.example/")))
-    await Bun.sleep(0)
-    await rejecting.run(ModelPreconnect.preconnect(new URL("https://offline.example/")))
-    expect(rejecting.calls).toHaveLength(2)
-
-    const throwing = fetching(() => {
-      throw new Error("bad fetch")
-    })
-    await throwing.run(ModelPreconnect.preconnect(new URL("https://throws.example/")))
-    await Bun.sleep(0)
-    await throwing.run(ModelPreconnect.preconnect(new URL("https://throws.example/")))
-    expect(throwing.calls).toHaveLength(2)
+    const failures: Record<string, Respond> = {
+      rejects: () => Promise.reject(new Error("offline")),
+      throws: () => {
+        throw new Error("bad fetch")
+      },
+    }
+    for (const [name, respond] of Object.entries(failures)) {
+      const preconnect = make()
+      const fetch = fetching(respond)
+      const info = session(name)
+      await Effect.runPromise(preconnect.remember(info, provider, new URL(`https://${name}.example`)))
+      await Effect.runPromise(fetch.provide(preconnect.warm(info)))
+      // The failed warm-up releases its origin once the rejection is handled.
+      await Bun.sleep(0)
+      await Effect.runPromise(fetch.provide(preconnect.warm(info)))
+      expect(fetch.calls).toHaveLength(2)
+    }
   })
 
   test("warms only the origin, never credentials, query, or path", () => {
@@ -164,7 +186,6 @@ describe("ModelPreconnect", () => {
     expect(target(resolved("p", "https://api.example.com/v1", "websocket"))).toBeUndefined()
     for (const name of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "ALL_PROXY"])
       expect(target(resolved("p", "https://api.example.com/v1"), { [name]: "http://proxy:8080" })).toBeUndefined()
-    expect(target(resolved("p", "https://api.example.com/v1"), { OPENCODE_DISABLE_PRECONNECT: "1" })).toBeUndefined()
     const model = resolved("p", "https://ai-sdk.local")
     const route = { ...model.model.route, protocol: "ai-sdk" }
     expect(target({ ...model, model: LanguageModel.update(model.model, { route }) })).toBeUndefined()
@@ -179,6 +200,13 @@ const transport = SessionModelTransport.Service.of({
   closeAll: Effect.void,
 })
 
+const configure = (preconnect: boolean | undefined) =>
+  Effect.gen(function* () {
+    const config = yield* Config.Test
+    const experimental = preconnect === undefined ? undefined : new ConfigExperimental.Info({ preconnect })
+    yield* config.setEntries([new Document({ type: "document", info: new Info(experimental ? { experimental } : {}) })])
+  })
+
 const primary = (info: Session.Info, model: SessionRunnerModel.Resolved) =>
   Effect.gen(function* () {
     const requests = yield* SessionModelRequest.Service.pipe(Effect.provide(SessionModelRequest.layer))
@@ -186,63 +214,77 @@ const primary = (info: Session.Info, model: SessionRunnerModel.Resolved) =>
   }).pipe(Effect.provideService(SessionModelTransport.Service, transport))
 
 describe("ModelPreconnect from primary requests", () => {
+  it.effect("does nothing unless experimental.preconnect is on", () =>
+    Effect.gen(function* () {
+      const preconnect = yield* ModelPreconnect.Service
+      const fetch = fetching()
+      for (const [index, flag] of [undefined, false].entries()) {
+        yield* configure(flag)
+        const info = session(`preconnect_off_${index}`, `/off-${index}`)
+        yield* primary(info, resolved("off-provider", "https://off.example/v1"))
+        yield* fetch.provide(preconnect.warm(info))
+      }
+      expect(fetch.calls).toEqual([])
+    }),
+  )
+
   it.effect("warms a default-model session at its next admission", () =>
     Effect.gen(function* () {
+      yield* configure(true)
+      const preconnect = yield* ModelPreconnect.Service
       const fetch = fetching()
       const info = session("preconnect_default", "/default-project")
-      yield* fetch.provide(ModelPreconnect.warm(info))
+      yield* fetch.provide(preconnect.warm(info))
       expect(fetch.calls).toEqual([])
 
       yield* primary(info, resolved("default-provider", "https://default.example/v1"))
-      yield* fetch.provide(ModelPreconnect.warm(info))
+      yield* fetch.provide(preconnect.warm(info))
       // Another default-model session on the same agent and directory shares the target; another directory does not.
-      yield* fetch.provide(ModelPreconnect.warm(session("preconnect_other", "/elsewhere")))
+      yield* fetch.provide(preconnect.warm(session("preconnect_other", "/elsewhere")))
       expect(fetch.urls()).toEqual(["https://default.example/"])
     }),
   )
 
   it.effect("warms a switched-to provider once a primary request has used it", () =>
     Effect.gen(function* () {
+      yield* configure(true)
+      const preconnect = yield* ModelPreconnect.Service
       const fetch = fetching()
-      yield* primary(
-        session("preconnect_used", "/switch-project"),
-        resolved("switch-provider", "https://switch.example/v1"),
-      )
-      const info = session("preconnect_switch", "/switch-project")
-      yield* fetch.provide(
-        ModelPreconnect.warm({
-          ...info,
-          model: Model.Ref.make({ providerID: Provider.ID.make("switch-provider"), id: Model.ID.make("model") }),
-        }),
-      )
+      yield* primary(session("preconnect_used", "/switch"), resolved("switch-provider", "https://switch.example/v1"))
+      const model = Model.Ref.make({ providerID: Provider.ID.make("switch-provider"), id: Model.ID.make("model") })
+      yield* fetch.provide(preconnect.warm({ ...session("preconnect_switch", "/switch"), model }))
       expect(fetch.urls()).toEqual(["https://switch.example/"])
     }),
   )
 
   it.effect("warms the origin a model.request hook rewrote the route to", () =>
     Effect.gen(function* () {
+      yield* configure(true)
       const hooks = yield* PluginHooks.Service
       yield* hooks.register("session", "model.request", (event) =>
         Effect.sync(() => {
           event.baseURL = "https://rewritten.example/backend-api/codex?key=k"
         }),
       )
+      const preconnect = yield* ModelPreconnect.Service
       const fetch = fetching()
-      const info = session("preconnect_rewrite", "/rewrite-project")
+      const info = session("preconnect_rewrite", "/rewrite")
       yield* primary(info, resolved("rewrite-provider", "https://original.example/v1"))
-      yield* fetch.provide(ModelPreconnect.warm(info))
+      yield* fetch.provide(preconnect.warm(info))
       expect(fetch.urls()).toEqual(["https://rewritten.example/"])
     }),
   )
 
   it.effect("skips providers with HTTP hooks", () =>
     Effect.gen(function* () {
+      yield* configure(true)
       const hooks = yield* PluginHooks.Service
       yield* hooks.register("session", "http.request", () => Effect.void)
+      const preconnect = yield* ModelPreconnect.Service
       const fetch = fetching()
-      const info = session("preconnect_http_hooks", "/hooked-project")
+      const info = session("preconnect_http_hooks", "/hooked")
       yield* primary(info, resolved("hooked-provider", "https://hooked.example/v1"))
-      yield* fetch.provide(ModelPreconnect.warm(info))
+      yield* fetch.provide(preconnect.warm(info))
       expect(fetch.calls).toEqual([])
     }),
   )
