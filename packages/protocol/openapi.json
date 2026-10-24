@@ -147,7 +147,7 @@
         "operationId": "location.get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -248,7 +248,7 @@
         "operationId": "agent.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -335,7 +335,7 @@
             "required": true
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -408,7 +408,7 @@
         "operationId": "plugin.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -477,7 +477,7 @@
         "operationId": "plugin.check",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -569,7 +569,7 @@
         "operationId": "plugin.update",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -648,31 +648,115 @@
         "operationId": "session.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/SessionsQuery.limit"
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Maximum number of sessions to return. Defaults to the newest 50 sessions."
+            },
+            "required": false
           },
           {
-            "$ref": "#/components/parameters/SessionsQuery.order"
+            "name": "order",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": ["asc", "desc"]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Session order for the first page. Use desc for newest first or asc for oldest first."
+            },
+            "required": false
           },
           {
             "$ref": "#/components/parameters/query.search"
           },
           {
-            "$ref": "#/components/parameters/SessionsQuery.parentID"
+            "name": "parentID",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Session.ID"
+                    },
+                    {
+                      "type": "string",
+                      "enum": ["null"]
+                    }
+                  ],
+                  "description": "Filter by parent session. Use null to return only root sessions."
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "required": false
           },
           {
             "$ref": "#/components/parameters/query.archived"
           },
           {
-            "$ref": "#/components/parameters/SessionsQuery.directory"
+            "name": "directory",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AbsolutePath"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "required": false
           },
           {
             "$ref": "#/components/parameters/query.project"
           },
           {
-            "$ref": "#/components/parameters/SessionsQuery.subpath"
+            "name": "subpath",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RelativePath"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "required": false
           },
           {
-            "$ref": "#/components/parameters/SessionsQuery.cursor"
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SessionsCursor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "required": false
           }
         ],
         "security": [],
@@ -3029,7 +3113,7 @@
             "$ref": "#/components/parameters/path.sessionID.Session.ID"
           },
           {
-            "$ref": "#/components/parameters/path.inboxID"
+            "$ref": "#/components/parameters/path.inboxID.Session.Message.ID"
           }
         ],
         "security": [],
@@ -3079,7 +3163,7 @@
             "$ref": "#/components/parameters/path.sessionID.Session.ID"
           },
           {
-            "$ref": "#/components/parameters/path.inboxID"
+            "$ref": "#/components/parameters/path.inboxID.Session.Message.ID"
           }
         ],
         "security": [],
@@ -3224,7 +3308,7 @@
             "$ref": "#/components/parameters/path.sessionID.Session.ID"
           },
           {
-            "$ref": "#/components/parameters/path.key"
+            "$ref": "#/components/parameters/path.key.InstructionEntry.Key"
           }
         ],
         "security": [],
@@ -3299,7 +3383,7 @@
             "$ref": "#/components/parameters/path.sessionID.Session.ID"
           },
           {
-            "$ref": "#/components/parameters/path.key"
+            "$ref": "#/components/parameters/path.key.InstructionEntry.Key"
           }
         ],
         "security": [],
@@ -3969,7 +4053,7 @@
             "$ref": "#/components/parameters/path.sessionID"
           },
           {
-            "$ref": "#/components/parameters/path.formID"
+            "$ref": "#/components/parameters/path.formID.Form.ID"
           }
         ],
         "security": [],
@@ -4043,7 +4127,7 @@
             "$ref": "#/components/parameters/path.sessionID"
           },
           {
-            "$ref": "#/components/parameters/path.formID"
+            "$ref": "#/components/parameters/path.formID.Form.ID"
           },
           {
             "name": "message",
@@ -4130,7 +4214,7 @@
             "$ref": "#/components/parameters/path.sessionID"
           },
           {
-            "$ref": "#/components/parameters/path.formID"
+            "$ref": "#/components/parameters/path.formID.Form.ID"
           }
         ],
         "security": [],
@@ -4354,16 +4438,69 @@
             "$ref": "#/components/parameters/path.sessionID.Session.ID"
           },
           {
-            "$ref": "#/components/parameters/SessionMessagesQuery.limit"
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Maximum number of messages to return. When omitted, the endpoint returns its default page size."
+            },
+            "required": false
           },
           {
-            "$ref": "#/components/parameters/SessionMessagesQuery.order"
+            "name": "order",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": ["asc", "desc"]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Message order for the first page. Use desc for newest first or asc for oldest first."
+            },
+            "required": false
           },
           {
-            "$ref": "#/components/parameters/SessionMessagesQuery.cursor"
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "Opaque pagination cursor returned as cursor.previous or cursor.next in the previous response. Do not combine with order."
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "required": false
           },
           {
-            "$ref": "#/components/parameters/SessionMessagesQuery.type"
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Session.Message.Type"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by message type before pagination. When omitted, all message types are returned. Pass the same type when following cursors."
+            },
+            "required": false
           }
         ],
         "security": [],
@@ -4436,7 +4573,7 @@
         "operationId": "model.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           },
           {
             "name": "type",
@@ -4531,7 +4668,7 @@
         "operationId": "model.default",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -4857,7 +4994,7 @@
         "operationId": "provider.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -4944,7 +5081,7 @@
             "required": true
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -5027,7 +5164,7 @@
         "operationId": "integration.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -5096,10 +5233,10 @@
         "operationId": "integration.get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.integrationID"
+            "$ref": "#/components/parameters/path.integrationID.Integration.ID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -5172,7 +5309,7 @@
         "operationId": "experimental.integration.wellknown.add",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -5238,10 +5375,10 @@
         "operationId": "integration.connect.key",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.integrationID"
+            "$ref": "#/components/parameters/path.integrationID.Integration.ID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -5334,10 +5471,10 @@
         "operationId": "integration.connect.external",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.integrationID"
+            "$ref": "#/components/parameters/path.integrationID.Integration.ID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -5430,10 +5567,10 @@
         "operationId": "integration.oauth.connect",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.integrationID"
+            "$ref": "#/components/parameters/path.integrationID.Integration.ID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -5536,13 +5673,13 @@
         "operationId": "integration.oauth.status",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.integrationID"
+            "$ref": "#/components/parameters/path.integrationID.Integration.ID"
           },
           {
-            "$ref": "#/components/parameters/path.attemptID"
+            "$ref": "#/components/parameters/path.attemptID.Integration.AttemptID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -5616,13 +5753,13 @@
         "operationId": "integration.oauth.cancel",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.integrationID"
+            "$ref": "#/components/parameters/path.integrationID.Integration.ID"
           },
           {
-            "$ref": "#/components/parameters/path.attemptID"
+            "$ref": "#/components/parameters/path.attemptID.Integration.AttemptID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -5671,13 +5808,13 @@
         "operationId": "integration.oauth.complete",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.integrationID"
+            "$ref": "#/components/parameters/path.integrationID.Integration.ID"
           },
           {
-            "$ref": "#/components/parameters/path.attemptID"
+            "$ref": "#/components/parameters/path.attemptID.Integration.AttemptID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -5759,10 +5896,10 @@
         "operationId": "integration.command.connect",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.integrationID"
+            "$ref": "#/components/parameters/path.integrationID.Integration.ID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -5865,13 +6002,13 @@
         "operationId": "integration.command.status",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.integrationID"
+            "$ref": "#/components/parameters/path.integrationID.Integration.ID"
           },
           {
-            "$ref": "#/components/parameters/path.attemptID"
+            "$ref": "#/components/parameters/path.attemptID.Integration.AttemptID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -5945,13 +6082,13 @@
         "operationId": "integration.command.cancel",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.integrationID"
+            "$ref": "#/components/parameters/path.integrationID.Integration.ID"
           },
           {
-            "$ref": "#/components/parameters/path.attemptID"
+            "$ref": "#/components/parameters/path.attemptID.Integration.AttemptID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -6000,7 +6137,7 @@
         "operationId": "mcp.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -6072,7 +6209,7 @@
             "$ref": "#/components/parameters/path.server"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -6146,7 +6283,7 @@
             "$ref": "#/components/parameters/path.server"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -6205,7 +6342,7 @@
             "$ref": "#/components/parameters/path.server"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -6264,7 +6401,7 @@
             "$ref": "#/components/parameters/path.server"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -6320,7 +6457,7 @@
         "operationId": "mcp.resource.catalog",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -6389,7 +6526,7 @@
             "$ref": "#/components/parameters/header.x-opencode-ticket"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           },
           {
             "$ref": "#/components/parameters/query.name"
@@ -6697,7 +6834,7 @@
         "operationId": "credential.update",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.credentialID"
+            "$ref": "#/components/parameters/path.credentialID.Credential.ID"
           }
         ],
         "security": [],
@@ -6751,7 +6888,7 @@
         "operationId": "credential.remove",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.credentialID"
+            "$ref": "#/components/parameters/path.credentialID.Credential.ID"
           }
         ],
         "security": [],
@@ -6790,7 +6927,7 @@
         "operationId": "credential.activate",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.credentialID"
+            "$ref": "#/components/parameters/path.credentialID.Credential.ID"
           }
         ],
         "security": [],
@@ -6964,7 +7101,7 @@
         "operationId": "form.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -7033,7 +7170,7 @@
         "operationId": "permission.request.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -7532,7 +7669,7 @@
             "$ref": "#/components/parameters/path.sessionID.Session.ID"
           },
           {
-            "$ref": "#/components/parameters/path.requestID"
+            "$ref": "#/components/parameters/path.requestID.Permission.ID"
           }
         ],
         "security": [],
@@ -7608,7 +7745,7 @@
             "$ref": "#/components/parameters/path.sessionID.Session.ID"
           },
           {
-            "$ref": "#/components/parameters/path.requestID"
+            "$ref": "#/components/parameters/path.requestID.Permission.ID"
           }
         ],
         "security": [],
@@ -7694,7 +7831,7 @@
         "operationId": "fs.read",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -7758,7 +7895,7 @@
         "operationId": "fs.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           },
           {
             "name": "path",
@@ -7850,7 +7987,7 @@
         "operationId": "fs.find",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           },
           {
             "name": "query",
@@ -7939,7 +8076,7 @@
         "operationId": "experimental.fs.write",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           },
           {
             "name": "path",
@@ -8025,7 +8162,7 @@
         "operationId": "experimental.fs.watch",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -8107,7 +8244,7 @@
         "operationId": "experimental.fs.unwatch",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -8174,7 +8311,7 @@
         "operationId": "command.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -8243,7 +8380,7 @@
         "operationId": "skill.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -8328,7 +8465,7 @@
             "required": true
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -8411,7 +8548,238 @@
         "operationId": "event.subscribe",
         "parameters": [
           {
-            "$ref": "#/components/parameters/EventSubscribeQuery.types"
+            "name": "types",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "location.shutdown",
+                            "models-dev.refreshed",
+                            "credential.updated",
+                            "credential.switched",
+                            "integration.updated",
+                            "provider.updated",
+                            "model.updated",
+                            "agent.updated",
+                            "session.created",
+                            "session.agent.selected",
+                            "session.model.selected",
+                            "session.moved",
+                            "session.renamed",
+                            "session.metadata.updated",
+                            "session.permissions",
+                            "session.viewed",
+                            "session.archived",
+                            "session.unarchived",
+                            "session.usage.updated",
+                            "session.deleted",
+                            "session.forked",
+                            "session.inbox.delivered",
+                            "session.inbox.enqueued",
+                            "session.inbox.cancelled",
+                            "session.inbox.delivery.changed",
+                            "session.execution.started",
+                            "session.execution.succeeded",
+                            "session.execution.failed",
+                            "session.execution.interrupted",
+                            "session.instructions.updated",
+                            "session.synthetic",
+                            "session.skill.activated",
+                            "session.shell.started",
+                            "session.shell.ended",
+                            "session.step.started",
+                            "session.step.streamed",
+                            "session.step.ended",
+                            "session.step.failed",
+                            "session.text.started",
+                            "session.text.delta",
+                            "session.text.ended",
+                            "session.reasoning.started",
+                            "session.reasoning.delta",
+                            "session.reasoning.ended",
+                            "session.tool.input.started",
+                            "session.tool.input.delta",
+                            "session.tool.input.ended",
+                            "session.tool.called",
+                            "session.tool.progress",
+                            "session.tool.success",
+                            "session.tool.failed",
+                            "session.retry.scheduled",
+                            "session.compaction.started",
+                            "session.compaction.delta",
+                            "session.compaction.ended",
+                            "session.compaction.failed",
+                            "session.revert.staged",
+                            "session.revert.cleared",
+                            "session.revert.committed",
+                            "filesystem.changed",
+                            "reference.updated",
+                            "permission.asked",
+                            "permission.replied",
+                            "plugin.updated",
+                            "project.updated",
+                            "worktree.updated",
+                            "worktree.resolved",
+                            "command.updated",
+                            "config.updated",
+                            "skill.updated",
+                            "pty.created",
+                            "pty.updated",
+                            "pty.exited",
+                            "pty.deleted",
+                            "persistent-pty.added",
+                            "persistent-pty.removed",
+                            "shell.created",
+                            "shell.exited",
+                            "shell.deleted",
+                            "form.created",
+                            "form.replied",
+                            "form.cancelled",
+                            "websearch.updated",
+                            "session.status",
+                            "session.idle",
+                            "tui.prompt.append",
+                            "tui.command.execute",
+                            "tui.toast.show",
+                            "tui.session.select",
+                            "installation.updated",
+                            "installation.update-available",
+                            "vcs.branch.updated",
+                            "mcp.status.changed",
+                            "mcp.resources.changed"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "^rpc\\.[\\s\\S]*?$"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "location.shutdown",
+                              "models-dev.refreshed",
+                              "credential.updated",
+                              "credential.switched",
+                              "integration.updated",
+                              "provider.updated",
+                              "model.updated",
+                              "agent.updated",
+                              "session.created",
+                              "session.agent.selected",
+                              "session.model.selected",
+                              "session.moved",
+                              "session.renamed",
+                              "session.metadata.updated",
+                              "session.permissions",
+                              "session.viewed",
+                              "session.archived",
+                              "session.unarchived",
+                              "session.usage.updated",
+                              "session.deleted",
+                              "session.forked",
+                              "session.inbox.delivered",
+                              "session.inbox.enqueued",
+                              "session.inbox.cancelled",
+                              "session.inbox.delivery.changed",
+                              "session.execution.started",
+                              "session.execution.succeeded",
+                              "session.execution.failed",
+                              "session.execution.interrupted",
+                              "session.instructions.updated",
+                              "session.synthetic",
+                              "session.skill.activated",
+                              "session.shell.started",
+                              "session.shell.ended",
+                              "session.step.started",
+                              "session.step.streamed",
+                              "session.step.ended",
+                              "session.step.failed",
+                              "session.text.started",
+                              "session.text.delta",
+                              "session.text.ended",
+                              "session.reasoning.started",
+                              "session.reasoning.delta",
+                              "session.reasoning.ended",
+                              "session.tool.input.started",
+                              "session.tool.input.delta",
+                              "session.tool.input.ended",
+                              "session.tool.called",
+                              "session.tool.progress",
+                              "session.tool.success",
+                              "session.tool.failed",
+                              "session.retry.scheduled",
+                              "session.compaction.started",
+                              "session.compaction.delta",
+                              "session.compaction.ended",
+                              "session.compaction.failed",
+                              "session.revert.staged",
+                              "session.revert.cleared",
+                              "session.revert.committed",
+                              "filesystem.changed",
+                              "reference.updated",
+                              "permission.asked",
+                              "permission.replied",
+                              "plugin.updated",
+                              "project.updated",
+                              "worktree.updated",
+                              "worktree.resolved",
+                              "command.updated",
+                              "config.updated",
+                              "skill.updated",
+                              "pty.created",
+                              "pty.updated",
+                              "pty.exited",
+                              "pty.deleted",
+                              "persistent-pty.added",
+                              "persistent-pty.removed",
+                              "shell.created",
+                              "shell.exited",
+                              "shell.deleted",
+                              "form.created",
+                              "form.replied",
+                              "form.cancelled",
+                              "websearch.updated",
+                              "session.status",
+                              "session.idle",
+                              "tui.prompt.append",
+                              "tui.command.execute",
+                              "tui.toast.show",
+                              "tui.session.select",
+                              "installation.updated",
+                              "installation.update-available",
+                              "vcs.branch.updated",
+                              "mcp.status.changed",
+                              "mcp.resources.changed"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^rpc\\.[\\s\\S]*?$"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only send events of these types, plus the initial server.connected event. When omitted, all events are sent."
+            },
+            "required": false
           }
         ],
         "security": [],
@@ -8538,7 +8906,7 @@
         "operationId": "pty.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -8605,7 +8973,7 @@
         "operationId": "pty.create",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -8705,10 +9073,10 @@
         "operationId": "pty.get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.ptyID"
+            "$ref": "#/components/parameters/path.ptyID.Pty.ID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -8779,10 +9147,10 @@
         "operationId": "pty.update",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.ptyID"
+            "$ref": "#/components/parameters/path.ptyID.Pty.ID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -8884,10 +9252,10 @@
         "operationId": "pty.remove",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.ptyID"
+            "$ref": "#/components/parameters/path.ptyID.Pty.ID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -8943,13 +9311,13 @@
         "operationId": "pty.connect.token",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.ptyID"
+            "$ref": "#/components/parameters/path.ptyID.Pty.ID"
           },
           {
             "$ref": "#/components/parameters/header.x-opencode-ticket"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -9032,7 +9400,7 @@
         "operationId": "pty.connect",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.ptyID"
+            "$ref": "#/components/parameters/path.ptyID.Pty.ID"
           },
           {
             "in": "query",
@@ -9444,7 +9812,7 @@
         "operationId": "server.experimental.persistentPty.get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.ptyID"
+            "$ref": "#/components/parameters/path.ptyID.Pty.ID"
           }
         ],
         "security": [],
@@ -9513,7 +9881,7 @@
         "operationId": "server.experimental.persistentPty.update",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.ptyID"
+            "$ref": "#/components/parameters/path.ptyID.Pty.ID"
           }
         ],
         "security": [],
@@ -9592,7 +9960,7 @@
         "operationId": "server.experimental.persistentPty.remove",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.ptyID"
+            "$ref": "#/components/parameters/path.ptyID.Pty.ID"
           }
         ],
         "security": [],
@@ -9649,7 +10017,7 @@
         "operationId": "server.experimental.persistentPty.snapshot",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.ptyID"
+            "$ref": "#/components/parameters/path.ptyID.Pty.ID"
           }
         ],
         "security": [],
@@ -9720,7 +10088,7 @@
         "operationId": "server.experimental.persistentPty.connectToken",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.ptyID"
+            "$ref": "#/components/parameters/path.ptyID.Pty.ID"
           },
           {
             "$ref": "#/components/parameters/header.x-opencode-ticket"
@@ -9804,7 +10172,7 @@
         "operationId": "persistentPty.connect",
         "parameters": [
           {
-            "$ref": "#/components/parameters/path.ptyID"
+            "$ref": "#/components/parameters/path.ptyID.Pty.ID"
           },
           {
             "$ref": "#/components/parameters/query.cursor"
@@ -9977,7 +10345,7 @@
         "operationId": "shell.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -10044,7 +10412,7 @@
         "operationId": "shell.create",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -10140,7 +10508,7 @@
             "$ref": "#/components/parameters/path.id.Shell.ID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -10214,7 +10582,7 @@
             "$ref": "#/components/parameters/path.id.Shell.ID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -10266,7 +10634,7 @@
             "$ref": "#/components/parameters/path.id.Shell.ID"
           },
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           },
           {
             "name": "cursor",
@@ -10375,7 +10743,7 @@
         "operationId": "reference.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -10701,7 +11069,7 @@
         "operationId": "vcs.init",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           },
           {
             "name": "provider",
@@ -10795,7 +11163,7 @@
         "operationId": "vcs.get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -10861,7 +11229,7 @@
         "operationId": "vcs.base",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -10944,7 +11312,7 @@
         "operationId": "vcs.status",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -11013,7 +11381,7 @@
         "operationId": "vcs.branch.list",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           },
           {
             "$ref": "#/components/parameters/query.search"
@@ -11085,7 +11453,7 @@
         "operationId": "vcs.diff",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           },
           {
             "name": "mode",
@@ -11388,7 +11756,7 @@
         "operationId": "debug.location.evict",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -11538,7 +11906,7 @@
         "operationId": "websearch.providers",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -11617,7 +11985,7 @@
         "operationId": "websearch.query",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -11713,7 +12081,7 @@
         "operationId": "experimental.usage.limits",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -11796,7 +12164,7 @@
         "operationId": "config.get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LocationQuery.location"
+            "$ref": "#/components/parameters/query.location"
           }
         ],
         "security": [],
@@ -19399,437 +19767,6 @@
     },
     "securitySchemes": {},
     "parameters": {
-      "EventSubscribeQuery.types": {
-        "name": "types",
-        "in": "query",
-        "schema": {
-          "anyOf": [
-            {
-              "anyOf": [
-                {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "enum": [
-                        "location.shutdown",
-                        "models-dev.refreshed",
-                        "credential.updated",
-                        "credential.switched",
-                        "integration.updated",
-                        "provider.updated",
-                        "model.updated",
-                        "agent.updated",
-                        "session.created",
-                        "session.agent.selected",
-                        "session.model.selected",
-                        "session.moved",
-                        "session.renamed",
-                        "session.metadata.updated",
-                        "session.permissions",
-                        "session.viewed",
-                        "session.archived",
-                        "session.unarchived",
-                        "session.usage.updated",
-                        "session.deleted",
-                        "session.forked",
-                        "session.inbox.delivered",
-                        "session.inbox.enqueued",
-                        "session.inbox.cancelled",
-                        "session.inbox.delivery.changed",
-                        "session.execution.started",
-                        "session.execution.succeeded",
-                        "session.execution.failed",
-                        "session.execution.interrupted",
-                        "session.instructions.updated",
-                        "session.synthetic",
-                        "session.skill.activated",
-                        "session.shell.started",
-                        "session.shell.ended",
-                        "session.step.started",
-                        "session.step.streamed",
-                        "session.step.ended",
-                        "session.step.failed",
-                        "session.text.started",
-                        "session.text.delta",
-                        "session.text.ended",
-                        "session.reasoning.started",
-                        "session.reasoning.delta",
-                        "session.reasoning.ended",
-                        "session.tool.input.started",
-                        "session.tool.input.delta",
-                        "session.tool.input.ended",
-                        "session.tool.called",
-                        "session.tool.progress",
-                        "session.tool.success",
-                        "session.tool.failed",
-                        "session.retry.scheduled",
-                        "session.compaction.started",
-                        "session.compaction.delta",
-                        "session.compaction.ended",
-                        "session.compaction.failed",
-                        "session.revert.staged",
-                        "session.revert.cleared",
-                        "session.revert.committed",
-                        "filesystem.changed",
-                        "reference.updated",
-                        "permission.asked",
-                        "permission.replied",
-                        "plugin.updated",
-                        "project.updated",
-                        "worktree.updated",
-                        "worktree.resolved",
-                        "command.updated",
-                        "config.updated",
-                        "skill.updated",
-                        "pty.created",
-                        "pty.updated",
-                        "pty.exited",
-                        "pty.deleted",
-                        "persistent-pty.added",
-                        "persistent-pty.removed",
-                        "shell.created",
-                        "shell.exited",
-                        "shell.deleted",
-                        "form.created",
-                        "form.replied",
-                        "form.cancelled",
-                        "websearch.updated",
-                        "session.status",
-                        "session.idle",
-                        "tui.prompt.append",
-                        "tui.command.execute",
-                        "tui.toast.show",
-                        "tui.session.select",
-                        "installation.updated",
-                        "installation.update-available",
-                        "vcs.branch.updated",
-                        "mcp.status.changed",
-                        "mcp.resources.changed"
-                      ]
-                    },
-                    {
-                      "type": "string",
-                      "pattern": "^rpc\\.[\\s\\S]*?$"
-                    }
-                  ]
-                },
-                {
-                  "type": "array",
-                  "items": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "enum": [
-                          "location.shutdown",
-                          "models-dev.refreshed",
-                          "credential.updated",
-                          "credential.switched",
-                          "integration.updated",
-                          "provider.updated",
-                          "model.updated",
-                          "agent.updated",
-                          "session.created",
-                          "session.agent.selected",
-                          "session.model.selected",
-                          "session.moved",
-                          "session.renamed",
-                          "session.metadata.updated",
-                          "session.permissions",
-                          "session.viewed",
-                          "session.archived",
-                          "session.unarchived",
-                          "session.usage.updated",
-                          "session.deleted",
-                          "session.forked",
-                          "session.inbox.delivered",
-                          "session.inbox.enqueued",
-                          "session.inbox.cancelled",
-                          "session.inbox.delivery.changed",
-                          "session.execution.started",
-                          "session.execution.succeeded",
-                          "session.execution.failed",
-                          "session.execution.interrupted",
-                          "session.instructions.updated",
-                          "session.synthetic",
-                          "session.skill.activated",
-                          "session.shell.started",
-                          "session.shell.ended",
-                          "session.step.started",
-                          "session.step.streamed",
-                          "session.step.ended",
-                          "session.step.failed",
-                          "session.text.started",
-                          "session.text.delta",
-                          "session.text.ended",
-                          "session.reasoning.started",
-                          "session.reasoning.delta",
-                          "session.reasoning.ended",
-                          "session.tool.input.started",
-                          "session.tool.input.delta",
-                          "session.tool.input.ended",
-                          "session.tool.called",
-                          "session.tool.progress",
-                          "session.tool.success",
-                          "session.tool.failed",
-                          "session.retry.scheduled",
-                          "session.compaction.started",
-                          "session.compaction.delta",
-                          "session.compaction.ended",
-                          "session.compaction.failed",
-                          "session.revert.staged",
-                          "session.revert.cleared",
-                          "session.revert.committed",
-                          "filesystem.changed",
-                          "reference.updated",
-                          "permission.asked",
-                          "permission.replied",
-                          "plugin.updated",
-                          "project.updated",
-                          "worktree.updated",
-                          "worktree.resolved",
-                          "command.updated",
-                          "config.updated",
-                          "skill.updated",
-                          "pty.created",
-                          "pty.updated",
-                          "pty.exited",
-                          "pty.deleted",
-                          "persistent-pty.added",
-                          "persistent-pty.removed",
-                          "shell.created",
-                          "shell.exited",
-                          "shell.deleted",
-                          "form.created",
-                          "form.replied",
-                          "form.cancelled",
-                          "websearch.updated",
-                          "session.status",
-                          "session.idle",
-                          "tui.prompt.append",
-                          "tui.command.execute",
-                          "tui.toast.show",
-                          "tui.session.select",
-                          "installation.updated",
-                          "installation.update-available",
-                          "vcs.branch.updated",
-                          "mcp.status.changed",
-                          "mcp.resources.changed"
-                        ]
-                      },
-                      {
-                        "type": "string",
-                        "pattern": "^rpc\\.[\\s\\S]*?$"
-                      }
-                    ]
-                  }
-                }
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Only send events of these types, plus the initial server.connected event. When omitted, all events are sent."
-        },
-        "required": false
-      },
-      "LocationQuery.location": {
-        "name": "location",
-        "in": "query",
-        "schema": {
-          "anyOf": [
-            {
-              "type": "object",
-              "properties": {
-                "directory": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              },
-              "additionalProperties": false
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "required": false,
-        "style": "deepObject",
-        "explode": true
-      },
-      "SessionMessagesQuery.cursor": {
-        "name": "cursor",
-        "in": "query",
-        "schema": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Opaque pagination cursor returned as cursor.previous or cursor.next in the previous response. Do not combine with order."
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "required": false
-      },
-      "SessionMessagesQuery.limit": {
-        "name": "limit",
-        "in": "query",
-        "schema": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Maximum number of messages to return. When omitted, the endpoint returns its default page size."
-        },
-        "required": false
-      },
-      "SessionMessagesQuery.order": {
-        "name": "order",
-        "in": "query",
-        "schema": {
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": ["asc", "desc"]
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Message order for the first page. Use desc for newest first or asc for oldest first."
-        },
-        "required": false
-      },
-      "SessionMessagesQuery.type": {
-        "name": "type",
-        "in": "query",
-        "schema": {
-          "anyOf": [
-            {
-              "$ref": "#/components/schemas/Session.Message.Type"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Filter by message type before pagination. When omitted, all message types are returned. Pass the same type when following cursors."
-        },
-        "required": false
-      },
-      "SessionsQuery.cursor": {
-        "name": "cursor",
-        "in": "query",
-        "schema": {
-          "anyOf": [
-            {
-              "$ref": "#/components/schemas/SessionsCursor"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "required": false
-      },
-      "SessionsQuery.directory": {
-        "name": "directory",
-        "in": "query",
-        "schema": {
-          "anyOf": [
-            {
-              "$ref": "#/components/schemas/AbsolutePath"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "required": false
-      },
-      "SessionsQuery.limit": {
-        "name": "limit",
-        "in": "query",
-        "schema": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Maximum number of sessions to return. Defaults to the newest 50 sessions."
-        },
-        "required": false
-      },
-      "SessionsQuery.order": {
-        "name": "order",
-        "in": "query",
-        "schema": {
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": ["asc", "desc"]
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Session order for the first page. Use desc for newest first or asc for oldest first."
-        },
-        "required": false
-      },
-      "SessionsQuery.parentID": {
-        "name": "parentID",
-        "in": "query",
-        "schema": {
-          "anyOf": [
-            {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/Session.ID"
-                },
-                {
-                  "type": "string",
-                  "enum": ["null"]
-                }
-              ],
-              "description": "Filter by parent session. Use null to return only root sessions."
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "required": false
-      },
-      "SessionsQuery.subpath": {
-        "name": "subpath",
-        "in": "query",
-        "schema": {
-          "anyOf": [
-            {
-              "$ref": "#/components/schemas/RelativePath"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "required": false
-      },
       "header.x-opencode-ticket": {
         "name": "x-opencode-ticket",
         "in": "header",
@@ -19845,7 +19782,7 @@
         },
         "required": false
       },
-      "path.attemptID": {
+      "path.attemptID.Integration.AttemptID": {
         "name": "attemptID",
         "in": "path",
         "schema": {
@@ -19853,7 +19790,7 @@
         },
         "required": true
       },
-      "path.credentialID": {
+      "path.credentialID.Credential.ID": {
         "name": "credentialID",
         "in": "path",
         "schema": {
@@ -19861,7 +19798,7 @@
         },
         "required": true
       },
-      "path.formID": {
+      "path.formID.Form.ID": {
         "name": "formID",
         "in": "path",
         "schema": {
@@ -19885,7 +19822,7 @@
         },
         "required": true
       },
-      "path.inboxID": {
+      "path.inboxID.Session.Message.ID": {
         "name": "inboxID",
         "in": "path",
         "schema": {
@@ -19893,7 +19830,7 @@
         },
         "required": true
       },
-      "path.integrationID": {
+      "path.integrationID.Integration.ID": {
         "name": "integrationID",
         "in": "path",
         "schema": {
@@ -19901,7 +19838,7 @@
         },
         "required": true
       },
-      "path.key": {
+      "path.key.InstructionEntry.Key": {
         "name": "key",
         "in": "path",
         "schema": {
@@ -19909,7 +19846,7 @@
         },
         "required": true
       },
-      "path.ptyID": {
+      "path.ptyID.Pty.ID": {
         "name": "ptyID",
         "in": "path",
         "schema": {
@@ -19917,7 +19854,7 @@
         },
         "required": true
       },
-      "path.requestID": {
+      "path.requestID.Permission.ID": {
         "name": "requestID",
         "in": "path",
         "schema": {
@@ -19986,6 +19923,36 @@
           ]
         },
         "required": false
+      },
+      "query.location": {
+        "name": "location",
+        "in": "query",
+        "schema": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "directory": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required": false,
+        "style": "deepObject",
+        "explode": true
       },
       "query.name": {
         "name": "name",
