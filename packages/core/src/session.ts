@@ -98,8 +98,8 @@ type CompactInput = Parameters<Session.Handle["compact"]>[0] & { sessionID: Sess
 
 type ForkInput = {
   sessionID: SessionSchema.ID
-  before?: SessionMessage.ID
-}
+  id?: SessionSchema.ID
+} & ({ before?: SessionMessage.ID; through?: never } | { through?: SessionMessage.ID; before?: never })
 
 export {
   AttachmentError,
@@ -324,27 +324,30 @@ const layer = Layer.effect(
         return yield* result.get(sessionID).pipe(Effect.orDie)
       }),
       fork: Effect.fn("Session.fork")(function* (input) {
+        const sessionID = input.id ?? SessionSchema.ID.create()
+        const recorded = yield* store.get(sessionID)
+        if (recorded) return recorded
         const parent = yield* result.get(input.sessionID)
+        const messageID = input.before ?? input.through
         const boundary = yield* db
           .select({ id: SessionMessageTable.id })
           .from(SessionMessageTable)
           .where(
             and(
               eq(SessionMessageTable.session_id, input.sessionID),
-              input.before ? eq(SessionMessageTable.id, input.before) : undefined,
+              messageID ? eq(SessionMessageTable.id, messageID) : undefined,
             ),
           )
           .orderBy(desc(SessionMessageTable.seq))
           .limit(1)
           .get()
           .pipe(Effect.orDie)
-        if (!boundary && input.before)
+        if (!boundary && messageID)
           return yield* new MessageNotFoundError({
             sessionID: input.sessionID,
-            messageID: input.before,
+            messageID,
           })
         if (!boundary) return yield* new ForkEmptyError({ sessionID: input.sessionID })
-        const sessionID = SessionSchema.ID.create()
         const inherited = yield* db
           .transaction(() =>
             Effect.all({
@@ -356,12 +359,19 @@ const layer = Layer.effect(
         // The fork adopts the parent's newest instruction values rather than the
         // values in effect at the boundary; copied history may contain frozen
         // instruction-update text the initial baseline already reflects.
-        yield* bus.publish(SessionEvent.Forked, {
-          sessionID,
-          parentID: parent.id,
-          boundary: { type: input.before ? "before" : "through", messageID: boundary.id },
-          ...inherited,
-        })
+        yield* bus
+          .publish(SessionEvent.Forked, {
+            sessionID,
+            parentID: parent.id,
+            boundary: { type: input.before ? "before" : "through", messageID: boundary.id },
+            ...inherited,
+          })
+          .pipe(
+            // Concurrent forking lost the projection race. The existing Session identity wins.
+            Effect.catchDefect((defect) =>
+              defect instanceof SessionProjector.SessionAlreadyProjected ? Effect.void : Effect.die(defect),
+            ),
+          )
         return yield* result.get(sessionID).pipe(Effect.orDie)
       }),
       get: (sessionID) => sessions.forSession(sessionID).get(),

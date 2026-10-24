@@ -3432,7 +3432,21 @@ export type SessionRemoveOutput = void
 
 export type SessionForkInput = {
   readonly sessionID: { readonly sessionID: string }["sessionID"]
-  readonly before?: { readonly before?: string | undefined }["before"]
+  readonly id?: {
+    readonly id?: string | undefined
+    readonly before?: string | undefined
+    readonly through?: string | undefined
+  }["id"]
+  readonly before?: {
+    readonly id?: string | undefined
+    readonly before?: string | undefined
+    readonly through?: string | undefined
+  }["before"]
+  readonly through?: {
+    readonly id?: string | undefined
+    readonly before?: string | undefined
+    readonly through?: string | undefined
+  }["through"]
 }
 
 export type SessionForkOutput = { data: SessionInfo }["data"]

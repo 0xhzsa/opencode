@@ -192,15 +192,23 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.fork",
         Effect.fn(function* (ctx) {
+          if (ctx.payload.before && ctx.payload.through)
+            return yield* new InvalidRequestError({ message: "Fork accepts before or through, not both" })
           return {
-            data: yield* session.fork({ sessionID: ctx.params.sessionID, before: ctx.payload.before }).pipe(
-              Effect.catchTag("Session.NotFoundError", missingSession),
-              Effect.catchTag("Session.MessageNotFoundError", missingMessage),
-              Effect.catchTag(
-                "Session.ForkEmptyError",
-                (error) => new InvalidRequestError({ message: error.message, kind: "empty_session" }),
+            data: yield* session
+              .fork({
+                sessionID: ctx.params.sessionID,
+                id: ctx.payload.id,
+                ...(ctx.payload.before ? { before: ctx.payload.before } : { through: ctx.payload.through }),
+              })
+              .pipe(
+                Effect.catchTag("Session.NotFoundError", missingSession),
+                Effect.catchTag("Session.MessageNotFoundError", missingMessage),
+                Effect.catchTag(
+                  "Session.ForkEmptyError",
+                  (error) => new InvalidRequestError({ message: error.message, kind: "empty_session" }),
+                ),
               ),
-            ),
           }
         }),
       )

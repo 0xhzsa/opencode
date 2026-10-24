@@ -881,6 +881,41 @@ describe("Session.create", () => {
     }),
   )
 
+  it.effect("forks through the selected boundary message", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Service
+      const bus = yield* Bus.Service
+      const { db } = yield* Database.Service
+      const parent = yield* session.create({ location })
+      const first = yield* session.prompt({ sessionID: parent.id, text: "First", resume: false })
+      yield* SessionInbox.promote(db, bus, parent.id, "steer")
+      yield* session.prompt({ sessionID: parent.id, text: "Second", resume: false })
+      yield* SessionInbox.promote(db, bus, parent.id, "steer")
+
+      const forked = yield* session.fork({ sessionID: parent.id, through: first.id })
+
+      expect(forked.fork).toEqual({ sessionID: parent.id, boundary: { type: "through", messageID: first.id } })
+      expect(yield* session.context(forked.id)).toMatchObject([Expected.user("First")])
+    }),
+  )
+
+  it.effect("returns the existing fork when one ID is reused", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Service
+      const bus = yield* Bus.Service
+      const { db } = yield* Database.Service
+      const parent = yield* session.create({ location })
+      yield* session.prompt({ sessionID: parent.id, text: "First", resume: false })
+      yield* SessionInbox.promote(db, bus, parent.id, "steer")
+
+      const forked = yield* session.fork({ id, sessionID: parent.id })
+
+      expect(forked.id).toBe(id)
+      expect(yield* session.fork({ id, sessionID: parent.id })).toEqual(forked)
+      expect((yield* session.list()).data).toHaveLength(2)
+    }),
+  )
+
   it.effect("returns the existing Session when one ID is reused with different create arguments", () =>
     Effect.gen(function* () {
       const session = yield* Session.Service
