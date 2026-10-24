@@ -57,11 +57,10 @@ const layer = Layer.effect(
     const titles = yield* FiberMap.make<SessionSchema.ID, void, never>()
     // Outlives a drain so the first Step of the next turn can still be compared, which is where idle expiry shows up.
     const cacheProbe = new CacheProbe.Tracker()
-    if (yield* LogLevel.isEnabled("Debug"))
-      yield* bus.subscribe(SessionEvent.Deleted).pipe(
-        Stream.runForEach((event) => Effect.sync(() => cacheProbe.delete(event.data.sessionID))),
-        Effect.forkScoped({ startImmediately: true }),
-      )
+    yield* bus.subscribe(SessionEvent.Deleted).pipe(
+      Stream.runForEach((event) => Effect.sync(() => cacheProbe.delete(event.data.sessionID))),
+      Effect.forkScoped({ startImmediately: true }),
+    )
 
     /** Debug only: logs why a Step read back less of the prompt cache than the previous Step left behind. */
     const probeCache = Effect.fnUntraced(function* (
@@ -71,7 +70,7 @@ const layer = Layer.effect(
       request: LLMRequest,
     ) {
       const model = `${ref.providerID}/${ref.id}${ref.variant ? `#${ref.variant}` : ""}`
-      const print = cacheProbe.observe(sessionID, { request, model, at: yield* Clock.currentTimeMillis })
+      const print = cacheProbe.observe({ request, model, at: yield* Clock.currentTimeMillis })
       if (!print) return undefined
       return (tokens: TokenUsage.Info) => {
         const miss = cacheProbe.settle(sessionID, print, tokens)

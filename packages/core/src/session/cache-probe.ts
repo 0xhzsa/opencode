@@ -19,8 +19,6 @@ export type Request = Pick<
 interface MessagePrint {
   readonly key: string | undefined
   readonly role: string
-  /** Cheap structural summary; a message whose key and signature match the previous step reuses its hash. */
-  readonly signature: string
   readonly hash: string
   readonly media: number
   readonly checkpoint: boolean
@@ -56,47 +54,27 @@ export interface Miss extends Change {
   readonly idle?: string
 }
 
+const INLINE_DATA_MIN = 1024
+
 // Cache hints only steer breakpoints and metadata never reaches the provider, so neither affects the cached prefix.
+// Inline media is summarized by type and size so hashing stays fast; replacing or cutting it still changes the hash.
 const replacer = (key: string, value: unknown) => {
   if (key === "cache" || key === "metadata") return undefined
-  if (value instanceof Uint8Array) return Hash.fast(Buffer.from(value.buffer, value.byteOffset, value.byteLength))
+  if (key === "source" && value && typeof value === "object" && "data" in value) {
+    const source = value as { type: string; mediaType?: string; data: string | Uint8Array }
+    const size = typeof source.data === "string" ? source.data.length : source.data.byteLength
+    return { type: source.type, mediaType: source.mediaType, size }
+  }
+  if (key === "uri" && typeof value === "string" && value.startsWith("data:") && value.length > INLINE_DATA_MIN)
+    return `${value.slice(0, value.indexOf(",") + 1)}${value.length}`
   return value
 }
 const hash = (value: unknown) => Hash.fast(JSON.stringify(value, replacer) ?? "")
 
-const size = (value: unknown) => {
-  if (typeof value === "string") return value.length
-  if (Array.isArray(value)) return value.length
-  if (value && typeof value === "object") return Object.keys(value).length
-  return 0
-}
-
-const mediaSize = (part: Extract<ContentPart, { type: "media" }>) => {
-  const source = part.media.source
-  if (source.type === "base64") return source.data.length
-  if (source.type === "bytes") return source.data.byteLength
-  if (source.type === "url") return source.url.length
-  return source.id.length
-}
-
-const partSignature = (part: ContentPart): string => {
-  const meta = part.type !== "effort" && "providerMetadata" in part && part.providerMetadata ? "+" : ""
-  switch (part.type) {
-    case "text":
-      return `t${part.text.length}${meta}`
-    case "reasoning":
-      return `r${part.text.length}:${part.encrypted?.length ?? 0}${meta}`
-    case "media":
-      return `m${part.media.mediaType}:${mediaSize(part)}${meta}`
-    case "tool-call":
-      return `c${part.id}:${size(part.input)}${meta}`
-    case "tool-result":
-      return `o${part.id}:${part.result.type}:${size(part.result.value)}${meta}`
-    case "compaction":
-      return `k${part.encrypted?.length ?? part.text?.length ?? 0}`
-    case "effort":
-      return `e${part.effort}:${part.previous}`
-  }
+const mediaCount = (part: ContentPart) => {
+  if (part.type === "media") return 1
+  if (part.type !== "tool-result" || part.result.type !== "content") return 0
+  return part.result.value.filter((item) => item.type === "file").length
 }
 
 // Tool results carry no message id, but their call id is unique within the session.
@@ -107,33 +85,24 @@ const isCheckpoint = (message: Message) =>
     (part) => part.type === "compaction" || (part.type === "text" && part.text.startsWith("<conversation-checkpoint>")),
   )
 
-const printMessage = (message: Message, memo: Map<string, MessagePrint>): MessagePrint => {
-  const key = messageKey(message)
-  const signature = message.role + "|" + message.content.map(partSignature).join("|")
-  const cached = key === undefined ? undefined : memo.get(key)
-  if (cached && cached.signature === signature) return cached
-  return {
-    key,
-    role: message.role,
-    signature,
-    hash: hash(message),
-    media: message.content.filter((part) => part.type === "media").length,
-    checkpoint: isCheckpoint(message),
-  }
-}
+const printMessage = (message: Message): MessagePrint => ({
+  key: messageKey(message),
+  role: message.role,
+  hash: hash(message),
+  media: message.content.reduce((total, part) => total + mediaCount(part), 0),
+  checkpoint: isCheckpoint(message),
+})
 
 const toolPrint = (tool: ToolEntry): readonly [string, string] =>
   tool.type === "namespace"
     ? [tool.name, hash([tool.description, tool.tools])]
     : [tool.name, hash([tool.description, tool.inputSchema, tool.outputSchema, tool.native])]
 
-/** Fingerprints a request. Messages unchanged since `previous` reuse its hashes, so each step hashes only new history. */
-export const fingerprint = (
-  input: { readonly request: Request; readonly model: string; readonly at: number },
-  previous?: Fingerprint,
-): Fingerprint => {
-  const memo = new Map<string, MessagePrint>()
-  for (const message of previous?.messages ?? []) if (message.key !== undefined) memo.set(message.key, message)
+export const fingerprint = (input: {
+  readonly request: Request
+  readonly model: string
+  readonly at: number
+}): Fingerprint => {
   const request = input.request
   return {
     at: input.at,
@@ -146,7 +115,7 @@ export const fingerprint = (
     },
     tools: request.tools.map(toolPrint),
     system: request.system.map((part) => Hash.fast(part.text)),
-    messages: request.messages.map((message) => printMessage(message, memo)),
+    messages: request.messages.map(printMessage),
   }
 }
 
@@ -238,7 +207,8 @@ export const diagnose = (previous: Step, current: Step): Miss | undefined => {
 }
 
 interface Entry extends Step {
-  /** Whether the provider ever reported cache activity; providers without caching never miss. */
+  /** Whether the provider reported cache activity by this step. Implicit caches (OpenAI, Gemini) report no writes,
+   * so a step is only expected to read back once an earlier one showed the provider caches at all. */
   readonly cached: boolean
 }
 
@@ -246,9 +216,9 @@ interface Entry extends Step {
 export class Tracker {
   readonly #entries = new Map<string, Entry>()
 
-  observe(sessionID: string, input: Parameters<typeof fingerprint>[0]): Fingerprint | undefined {
+  observe(input: Parameters<typeof fingerprint>[0]): Fingerprint | undefined {
     try {
-      return fingerprint(input, this.#entries.get(sessionID)?.print)
+      return fingerprint(input)
     } catch {
       return undefined
     }
@@ -260,7 +230,7 @@ export class Tracker {
     this.#entries.delete(sessionID)
     this.#entries.set(sessionID, { print, usage, cached })
     if (this.#entries.size > MAX_SESSIONS) this.#entries.delete(this.#entries.keys().next().value!)
-    if (!previous || !cached) return
+    if (!previous?.cached) return
     try {
       return diagnose(previous, { print, usage })
     } catch {

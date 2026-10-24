@@ -134,13 +134,13 @@ describe("CacheProbe.diagnose", () => {
 })
 
 describe("CacheProbe.fingerprint", () => {
-  test("reuses hashes for unchanged messages instead of rehashing history", () => {
-    const previous = CacheProbe.fingerprint({ request: base, model: "m", at: 0 })
-    const current = CacheProbe.fingerprint(
-      { request: { ...base, messages: [...history, Message.user("next")] }, model: "m", at: 1 },
-      previous,
-    )
-    previous.messages.forEach((message, index) => expect(current.messages[index]).toBe(message))
+  test("hashes inline media by size, not payload", () => {
+    const image = (data: string) =>
+      Message.make({ id: "msg_i", role: "user", content: [Message.media(Media.base64(data, "image/png"))] })
+    const hashOf = (message: Message) =>
+      CacheProbe.fingerprint({ request: { ...base, messages: [message] }, model: "m", at: 0 }).messages[0]!.hash
+    expect(hashOf(image("aGVsbG8="))).toBe(hashOf(image("d29ybGQ=")))
+    expect(hashOf(image("aGVsbG8="))).not.toBe(hashOf(image("aGVsbG8hIQ==")))
   })
 
   test("ignores cache hints, which only move breakpoints", () => {
@@ -158,19 +158,50 @@ describe("CacheProbe.fingerprint", () => {
 })
 
 describe("CacheProbe.Tracker", () => {
-  test("stays quiet for providers that never report cache activity", () => {
+  // Settles `first` then `second` as consecutive steps of one session and returns the diagnosis of `second`.
+  const sequence = (
+    first: CacheProbe.Request,
+    second: CacheProbe.Request,
+    tokens = [usage({ input: 10, write: 50_000 }), usage({ read: 0, write: 50_010 })],
+  ) => {
     const tracker = new CacheProbe.Tracker()
-    const first = tracker.observe("ses_1", { request: base, model: "m", at: 0 })!
-    expect(tracker.settle("ses_1", first, usage({ input: 50_000 }))).toBeUndefined()
-    const second = tracker.observe("ses_1", { request: base, model: "other", at: 1 })!
-    expect(tracker.settle("ses_1", second, usage({ input: 50_100 }))).toBeUndefined()
+    tracker.settle("ses_1", tracker.observe({ request: first, model: "m", at: 0 })!, tokens[0]!)
+    return tracker.settle("ses_1", tracker.observe({ request: second, model: "m", at: 1 })!, tokens[1]!)
+  }
+
+  test("stays quiet for providers that never report cache activity", () => {
+    const tokens = [usage({ input: 50_000 }), usage({ input: 50_100 })]
+    expect(sequence(base, { ...base, tools: [tool("read")] }, tokens)).toBeUndefined()
+  })
+
+  test("does not count an implicit cache's first partial hit as a miss", () => {
+    // OpenAI and Gemini never report writes, so the first step shows no cache activity at all.
+    const tokens = [usage({ input: 50_000 }), usage({ input: 20_100, read: 30_000 })]
+    expect(sequence(base, { ...base, messages: [...history, Message.user("next")] }, tokens)).toBeUndefined()
+  })
+
+  test("detects an image cut inside a tool result", () => {
+    const result = (value: Parameters<typeof Message.tool>[0]["result"]) =>
+      Message.tool({ id: "call_1", name: "read", result: value, resultType: "content" })
+    const file = result([{ type: "file", uri: "data:image/png;base64,aGVsbG8=", mime: "image/png" }])
+    const cut = result([{ type: "text", text: "[removed]" }])
+    expect(sequence({ ...base, messages: [...history, file] }, { ...base, messages: [...history, cut] })).toMatchObject(
+      { reason: "history-rewritten", detail: "messages[3] tool media-removed" },
+    )
+  })
+
+  test("detects a same-length edit to earlier history", () => {
+    const edited = Message.make({ id: "msg_2", role: "assistant", content: "Lookinh" })
+    expect(sequence(base, { ...base, messages: [history[0]!, edited, history[2]!] })).toMatchObject({
+      reason: "history-rewritten",
+      detail: "messages[1] assistant edited",
+    })
   })
 
   test("reports a miss against the last settled step and forgets deleted sessions", () => {
     const tracker = new CacheProbe.Tracker()
-    const first = tracker.observe("ses_1", { request: base, model: "m", at: 0 })!
-    tracker.settle("ses_1", first, usage({ write: 50_000 }))
-    const second = tracker.observe("ses_1", { request: { ...base, tools: [tool("read")] }, model: "m", at: 1 })!
+    tracker.settle("ses_1", tracker.observe({ request: base, model: "m", at: 0 })!, usage({ write: 50_000 }))
+    const second = tracker.observe({ request: { ...base, tools: [tool("read")] }, model: "m", at: 1 })!
     expect(tracker.settle("ses_1", second, usage({ read: 0, write: 49_000 }))).toMatchObject({
       reason: "tools-changed",
       detail: "-edit",
@@ -181,7 +212,7 @@ describe("CacheProbe.Tracker", () => {
 
   test("keeps at most 256 sessions", () => {
     const tracker = new CacheProbe.Tracker()
-    const print = tracker.observe("ses", { request: base, model: "m", at: 0 })!
+    const print = tracker.observe({ request: base, model: "m", at: 0 })!
     for (let index = 0; index < 300; index++) tracker.settle(`ses_${index}`, print, usage({ write: 1 }))
     expect(tracker.size).toBe(256)
   })
