@@ -27,6 +27,7 @@ import { Cause, Context, Effect, Layer, Result, Stream } from "effect"
 import { HttpClientRequest, HttpClientResponse } from "effect/http"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { App } from "../app.js"
+import { ModelPreconnect } from "../model-preconnect.js"
 import { Permission } from "../permission.js"
 import { PluginHooks } from "../plugin/hooks.js"
 import { QuestionTool } from "../tool/plugin/question.js"
@@ -314,6 +315,13 @@ export const layer = Layer.effect(
       const hasHttpHooks =
         (yield* hooks.has("session", "http.request", model.ref.providerID)) ||
         (yield* hooks.has("session", "http.response", model.ref.providerID))
+      // HTTP hooks may send the request anywhere, so only an unhooked route is worth warming.
+      if (kind === "primary")
+        ModelPreconnect.remember(
+          session,
+          model.ref.providerID,
+          hasHttpHooks ? undefined : ModelPreconnect.target({ ...model, model: request.model }),
+        )
       const http: StreamOptions["http"] = hasHttpHooks
         ? (req, handler) =>
             Effect.gen(function* () {

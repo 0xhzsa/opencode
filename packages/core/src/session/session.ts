@@ -9,6 +9,7 @@ import { FSUtil } from "@opencode/util/fs-util"
 import { Bus } from "../bus.js"
 import { Database } from "../database/database.js"
 import { Instance } from "../instance/service.js"
+import { ModelPreconnect } from "../model-preconnect.js"
 import { ShellResult } from "../shell/result.js"
 import type { Skill } from "../skill.js"
 import {
@@ -115,6 +116,7 @@ export const make = Effect.fn("Session.make")(function* () {
     )
       return
     yield* bus.publish(SessionEvent.ModelSelected, { sessionID, model: input.model, previous: session.model })
+    yield* ModelPreconnect.warm({ ...session, model: input.model })
   })
   const mutatePending = (
     sessionID: SessionSchema.ID,
@@ -156,6 +158,8 @@ export const make = Effect.fn("Session.make")(function* () {
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const session = yield* get(sessionID)
+        // Opens the provider connection while the prompt is admitted and its context loads.
+        yield* ModelPreconnect.warm(session)
         const messageID = input.id ?? SessionMessage.ID.create()
         const admitted = yield* Effect.gen(function* () {
           const existing = yield* admission.reconcile({
