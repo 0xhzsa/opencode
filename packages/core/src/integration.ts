@@ -313,7 +313,23 @@ const layer = Layer.effect(
     // Runtime-only: statuses describe the current process's view of a connection and are not persisted.
     const statuses = new Map<string, IntegrationConnection.Status>()
     let statusRevision = 0
-    let listed: { data: Data; credentials: number; statuses: number; value: readonly Info[] } | undefined
+    let listed: { data: Data; credentials: number; statuses: number; env: string; value: readonly Info[] } | undefined
+    let declaredEnv: { data: Data; names: readonly string[] } | undefined
+    // Env connections are read live, so the set ones are part of the list cache key.
+    const presentEnv = (data: Data) => {
+      if (declaredEnv?.data !== data)
+        declaredEnv = {
+          data,
+          names: Array.from(
+            new Set(
+              Array.from(data.integrations.values()).flatMap((entry) =>
+                entry.methods.flatMap((method) => (method.type === "env" ? method.names : [])),
+              ),
+            ),
+          ),
+        }
+      return declaredEnv.names.filter((name) => process.env[name]).join("\0")
+    }
     const statusKey = (integrationID: ID, connection: IntegrationConnection.Info) =>
       `${integrationID}:${IntegrationConnection.key(connection)}`
     const state = State.create<Data, Editor>({
@@ -711,7 +727,13 @@ const layer = Layer.effect(
       list: Effect.fn("Integration.list")(function* () {
         const data = state.get()
         const revision = credentials.revision()
-        if (listed?.data === data && listed.credentials === revision && listed.statuses === statusRevision)
+        const env = presentEnv(data)
+        if (
+          listed?.data === data &&
+          listed.credentials === revision &&
+          listed.statuses === statusRevision &&
+          listed.env === env
+        )
           return listed.value
         const statusesRead = statusRevision
         const saved = Map.groupBy(yield* credentials.all(), (credential) => credential.integrationID)
@@ -721,7 +743,8 @@ const layer = Layer.effect(
           ).toSorted((a, b) => a.name.localeCompare(b.name)),
         )
         // Shared with every caller, including plugins; callers compare by reference to skip rebuilding.
-        if (credentials.revision() === revision) listed = { data, credentials: revision, statuses: statusesRead, value }
+        if (credentials.revision() === revision)
+          listed = { data, credentials: revision, statuses: statusesRead, env, value }
         return value
       }),
       connection: {
