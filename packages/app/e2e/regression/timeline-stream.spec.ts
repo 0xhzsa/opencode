@@ -647,6 +647,51 @@ test("shows a background subagent's outcome as its own row where it finished", a
   await expect(page).toHaveURL(new RegExp(`/session/${childID}$`))
 })
 
+test("keeps an undelivered notice where delivery leaves it while live status shows nothing", async ({ page }) => {
+  const timeline = await setupTimeline(page, {
+    sessionStatus: { [sessionID]: { type: "busy" } },
+    messages: [
+      userMessage(),
+      // Streaming text stands in for Working, so live status has nothing to show.
+      assistantMessage([textPart("prt_streaming_answer", "It ships as soon as it's ready.")], { completed: false }),
+    ],
+  })
+
+  const answer = page.getByText("It ships as soon as it's ready.", { exact: true })
+  const notice = page.locator('[data-slot="session-timeline-notice"]')
+  const gap = async () => {
+    const [above, below] = await Promise.all([answer.boundingBox(), notice.boundingBox()])
+
+    return above && below ? Math.round(below.y - above.y - above.height) : undefined
+  }
+
+  await expect(answer).toBeVisible()
+  await timeline.send(
+    inboxEnqueued({
+      sessionID,
+      inboxID: "msg_pending_outcome",
+      item: {
+        type: "synthetic",
+        payload: {
+          text: '<subagent state="completed">done</subagent>',
+          description: "Audit constraints",
+          metadata: { source: "subagent", agent: "general", state: "completed" },
+        },
+        delivery: "steer",
+      },
+    }),
+  )
+  await expect(notice).toHaveText(/^General finished · Audit constraints$/)
+  await expect(page.locator('[data-component="session-working"]')).toHaveCount(0)
+  // Live status moves above the waiting notice, but takes no room while it has nothing to show.
+  await expect.poll(async () => (await page.locator('[data-timeline-key="activity"]').boundingBox())?.height).toBe(0)
+  const pending = await gap()
+
+  await timeline.send(inboxDelivered({ sessionID, inboxID: "msg_pending_outcome" }))
+  await expect(page.locator('[data-timeline-key="activity"]')).toHaveCount(0)
+  await expect.poll(gap).toBe(pending)
+})
+
 test("jumps from a finished shell's notice to its call", async ({ page }) => {
   await setupTimeline(page, {
     settings: { timelineDetail: detailed },

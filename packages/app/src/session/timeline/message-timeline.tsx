@@ -449,7 +449,9 @@ function MessageTimelineView(
   const activityRow = createMemo(() => projection.rows().some((row) => Predicate.isTagged(row, "Activity")))
 
   // The lane keeps its height while empty, so Working and the hint come and go without moving the rows around it.
-  const activity = () => (
+  // The bottom lane also keeps its height while live status moves into the Activity row, so the tail the activity pill
+  // floats in never closes and a pinned timeline does not shift when input waits.
+  const activity = (live: () => boolean) => (
     <div
       classList={{
         "min-w-0 w-full max-w-full": true,
@@ -457,12 +459,12 @@ function MessageTimelineView(
       }}
     >
       <div class={`flex h-9 items-center gap-2 pt-3 text-[13px] font-[530] leading-text-compact ${turnPadding()}`}>
-        <Show when={showWorking()}>
+        <Show when={live() && showWorking()}>
           <div data-component="session-working" role="status">
             <TextShimmer text={language.t("session.timeline.working")} active />
           </div>
         </Show>
-        <Show when={backgroundHintPresence.present()}>
+        <Show when={live() && backgroundHintPresence.present()}>
           <div
             ref={setBackgroundHintRef}
             data-component="session-background-hint-row"
@@ -482,7 +484,7 @@ function MessageTimelineView(
 
   return (
     <VirtualizedTimeline
-      bottomSpacer={<Show when={!activityRow()}>{activity()}</Show>}
+      bottomSpacer={activity(() => !activityRow())}
       deferred={(row) => {
         if (!Predicate.isTagged(row, "AssistantPart") || row.group.type !== "part") return false
         const content = Timeline.resolveContent(messageByID().get(row.group.ref.messageID), row.group.ref.partID)
@@ -494,7 +496,9 @@ function MessageTimelineView(
           when={Predicate.isTagged(row(), "Activity")}
           fallback={<rowRenderer.Row row={row} onSizeChange={onSizeChange} />}
         >
-          {activity()}
+          {/* Unlike the bottom lane, this row sits above input still waiting for delivery. Kept while empty, it would
+              open a gap above that input that closes again on delivery, when live status returns to the bottom lane. */}
+          <Show when={showWorking() || backgroundHintPresence.present()}>{activity(() => true)}</Show>
         </Show>
       )}
       header={
