@@ -1823,7 +1823,7 @@
             }
           }
         },
-        "description": "Create a child session by copying projected history before a message. Omit before to copy the full history.",
+        "description": "Create a child session by copying projected history before or through a message. Omit before and through to copy the full history. Reusing an id returns the existing session.",
         "summary": "Fork session",
         "requestBody": {
           "content": {
@@ -1831,7 +1831,27 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "id": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/Session.ID"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "before": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/Session.Message.ID"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "through": {
                     "anyOf": [
                       {
                         "$ref": "#/components/schemas/Session.Message.ID"
