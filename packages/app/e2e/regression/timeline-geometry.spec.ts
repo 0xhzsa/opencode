@@ -681,7 +681,7 @@ test("scrolls the timeline behind the composer region, fading at the card, and k
       const card = region.querySelector('[data-component="composer"]')!.getBoundingClientRect()
       const pill = region.querySelector('[data-slot="session-activity-chip"]')!.getBoundingClientRect()
       const hint = viewport.querySelector('[data-component="session-background-hint-row"]')!.getBoundingClientRect()
-      const move = viewport.querySelector('[data-component="session-background-hint"]')!.getBoundingClientRect()
+      const move = viewport.querySelector('[data-component="session-background-hint-row"] button')!.getBoundingClientRect()
       const parts = [...viewport.querySelectorAll("[data-timeline-part-id]")]
       const last = parts.find((element) => element.textContent?.includes("The last answer ends"))!
 
