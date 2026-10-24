@@ -174,7 +174,7 @@ export interface Interface extends State.Transformable<Editor> {
   /** Returns one integration with its methods and current connections. */
   readonly get: (id: ID) => Effect.Effect<Info | undefined>
   /** Returns all integrations with their methods and current connections. */
-  readonly list: () => Effect.Effect<Info[]>
+  readonly list: () => Effect.Effect<readonly Info[]>
   readonly connection: {
     /** Returns the active connection for one integration. */
     readonly active: (id: ID) => Effect.Effect<IntegrationConnection.Info | undefined>
@@ -313,7 +313,7 @@ const layer = Layer.effect(
     // Runtime-only: statuses describe the current process's view of a connection and are not persisted.
     const statuses = new Map<string, IntegrationConnection.Status>()
     let statusRevision = 0
-    let listed: { data: Data; credentials: number; statuses: number; value: Info[] } | undefined
+    let listed: { data: Data; credentials: number; statuses: number; value: readonly Info[] } | undefined
     const statusKey = (integrationID: ID, connection: IntegrationConnection.Info) =>
       `${integrationID}:${IntegrationConnection.key(connection)}`
     const state = State.create<Data, Editor>({
@@ -715,10 +715,12 @@ const layer = Layer.effect(
           return listed.value
         const statusesRead = statusRevision
         const saved = Map.groupBy(yield* credentials.all(), (credential) => credential.integrationID)
-        const value = Array.from(data.integrations.values(), (entry) =>
-          project(entry, resolveConnections(entry, saved.get(entry.ref.id) ?? [])),
-        ).toSorted((a, b) => a.name.localeCompare(b.name))
-        // Callers compare by reference to skip rebuilding what they derive from the list.
+        const value = Object.freeze(
+          Array.from(data.integrations.values(), (entry) =>
+            project(entry, resolveConnections(entry, saved.get(entry.ref.id) ?? [])),
+          ).toSorted((a, b) => a.name.localeCompare(b.name)),
+        )
+        // Shared with every caller, including plugins; callers compare by reference to skip rebuilding.
         if (credentials.revision() === revision) listed = { data, credentials: revision, statuses: statusesRead, value }
         return value
       }),

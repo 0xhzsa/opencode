@@ -379,7 +379,21 @@ describe("Provider and Model", () => {
         (yield* integrations.list()).find((integration) => integration.id === integrationID)?.connections[0]?.status,
       ).toEqual({ status: "needs_auth", message: "Sign in again" })
 
+      const active = Effect.map(
+        integrations.list(),
+        (list) => list.find((integration) => integration.id === integrationID)?.connections[0],
+      )
+      const second = yield* credentials.create({
+        integrationID,
+        label: "Backup",
+        value: Credential.Key.make({ type: "key", key: "backup" }),
+      })
+      expect(yield* active).toMatchObject({ id: second.id })
+      yield* credentials.activate(created.id)
+      expect(yield* active).toMatchObject({ id: created.id })
+
       yield* credentials.remove(created.id)
+      yield* credentials.remove(second.id)
       expect(yield* providers.available()).toEqual([])
     }).pipe(Effect.scoped, Effect.provide(localProviderLayer))
   })
