@@ -2,7 +2,7 @@ import { useWorkspaceLocation } from "@/workspaces/location"
 import { Persist, persisted } from "@/runtime/persistence/storage"
 import type { SessionStepFailed } from "@opencode/client/promise"
 import { onCleanup } from "solid-js"
-import { Option, Schema } from "effect"
+import { Schema } from "effect"
 import { Persistence } from "@/runtime/persistence/schema"
 import { useSessionLayout } from "./session-layout"
 import { useDialog, useI18n } from "@opencode/ui/context"
@@ -47,17 +47,6 @@ function formatLimitReset(locale: string, created: number, retryAfterMs: number 
     locale,
     sameDay ? { timeStyle: "short" } : { dateStyle: "medium", timeStyle: "short" },
   ).format(at)
-}
-
-const GoLimitBody = Schema.fromJsonString(Schema.Struct({ metadata: Schema.Struct({ workspace: Schema.String }) }))
-
-const decodeGoLimitBody = Schema.decodeUnknownOption(GoLimitBody)
-
-/** The Console page where a Go subscriber turns on usage from their balance, scoped to the workspace that hit the limit. */
-export function goLimitLink(error: SessionStepFailed["data"]["error"]) {
-  const workspace = Option.getOrUndefined(decodeGoLimitBody(error.response?.body))?.metadata.workspace
-
-  return workspace ? `https://opencode.ai/console/${encodeURIComponent(workspace)}/go` : "https://opencode.ai/console"
 }
 
 export const GoUpsellState = Persistence.struct({
@@ -140,35 +129,6 @@ export function useUsageExceededDialogs(input?: {
     ))
   }
 
-  const showGoLimitDialog = (evt: SessionStepFailed) => {
-    if (evt.data.sessionID !== params.id || dialog.active) return
-    const seen = goUpsellState[GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT]
-
-    if (seen && Date.now() - seen < GO_UPSELL_WINDOW) return
-
-    if (goUpsellState[GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW]) return
-
-    setGoUpsellState(GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT, Date.now())
-
-    const reset = formatLimitReset(locale(), evt.created, evt.data.error.retryAfterMs)
-
-    dialog.show(() => (
-      <DialogUsageExceeded
-        title={t("dialog.usageExceeded.accountRateLimit.title")}
-        description={
-          reset
-            ? t("dialog.usageExceeded.accountRateLimit.descriptionReset", { time: reset })
-            : t("dialog.usageExceeded.accountRateLimit.description")
-        }
-        actionLabel={t("dialog.usageExceeded.accountRateLimit.actionLabel")}
-        link={goLimitLink(evt.data.error)}
-        onClose={(dontShowAgain) => {
-          if (dontShowAgain) setGoUpsellState(GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW, Date.now())
-        }}
-      />
-    ))
-  }
-
   const whenGoUpsellReady = (show: (evt: SessionStepFailed) => void, evt: SessionStepFailed) => {
     if (goUpsellReady()) show(evt)
     else if (goUpsellInit instanceof Promise) void goUpsellInit.then(() => show(evt))
@@ -180,8 +140,6 @@ export function useUsageExceededDialogs(input?: {
       const error = evt.data.error
 
       if (error.type === "provider.free-limit") return whenGoUpsellReady(showFreeLimitDialog, evt)
-
-      if (error.type === "provider.go-limit") return whenGoUpsellReady(showGoLimitDialog, evt)
 
       if (error.type !== "provider.chatgpt-limit") return
 

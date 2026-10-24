@@ -101,9 +101,7 @@ const source = {
   "dialog.usageExceeded.freeTier.actionLabel": "Subscribe",
   "dialog.usageExceeded.accountRateLimit.title": "Go limit reached",
   "dialog.usageExceeded.accountRateLimit.description":
-    "You've reached your OpenCode Go usage limit. To keep using Go models now, enable usage from your balance.",
-  "dialog.usageExceeded.accountRateLimit.descriptionReset":
-    "You've reached your OpenCode Go usage limit. It resets at {{time}}. To keep using Go models now, enable usage from your balance.",
+    "Usage limit reached. To continue using this model now, enable usage from your available balance",
   "dialog.usageExceeded.accountRateLimit.actionLabel": "Open settings",
 
   "ui.sessionTurn.status.delegating": "Delegating work",
