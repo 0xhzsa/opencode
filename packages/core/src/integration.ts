@@ -312,6 +312,8 @@ const layer = Layer.effect(
     const commandAttempts = SynchronizedRef.makeUnsafe(new Map<AttemptID, CommandAttemptEntry>())
     // Runtime-only: statuses describe the current process's view of a connection and are not persisted.
     const statuses = new Map<string, IntegrationConnection.Status>()
+    let statusRevision = 0
+    let listed: { data: Data; credentials: number; statuses: number; value: Info[] } | undefined
     const statusKey = (integrationID: ID, connection: IntegrationConnection.Info) =>
       `${integrationID}:${IntegrationConnection.key(connection)}`
     const state = State.create<Data, Editor>({
@@ -707,10 +709,18 @@ const layer = Layer.effect(
         return project(entry, resolveConnections(entry, yield* credentials.list(id)))
       }),
       list: Effect.fn("Integration.list")(function* () {
+        const data = state.get()
+        const revision = credentials.revision()
+        if (listed?.data === data && listed.credentials === revision && listed.statuses === statusRevision)
+          return listed.value
+        const statusesRead = statusRevision
         const saved = Map.groupBy(yield* credentials.all(), (credential) => credential.integrationID)
-        return Array.from(state.get().integrations.values(), (entry) =>
+        const value = Array.from(data.integrations.values(), (entry) =>
           project(entry, resolveConnections(entry, saved.get(entry.ref.id) ?? [])),
         ).toSorted((a, b) => a.name.localeCompare(b.name))
+        // Callers compare by reference to skip rebuilding what they derive from the list.
+        if (credentials.revision() === revision) listed = { data, credentials: revision, statuses: statusesRead, value }
+        return value
       }),
       connection: {
         active: Effect.fn("Integration.connection.active")(function* (id) {
@@ -795,6 +805,7 @@ const layer = Layer.effect(
           if (Equal.equals(statuses.get(key), input.status)) return
           if (input.status) statuses.set(key, input.status)
           if (!input.status) statuses.delete(key)
+          statusRevision++
           yield* bus.publish(Integration.Event.Updated, {})
         }),
       },

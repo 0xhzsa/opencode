@@ -329,6 +329,61 @@ describe("Provider and Model", () => {
     }).pipe(Effect.scoped, Effect.provide(localProviderLayer))
   })
 
+  it.effect("reuses integration lists across snapshots until credentials or statuses change", () => {
+    const integrationID = Integration.ID.make("gateway")
+    const providerID = Provider.ID.make("remote")
+    const localProviderLayer = Layer.fresh(
+      AppNodeBuilder.build(LayerNode.group([Provider.node, Credential.node, Integration.node]), [
+        Location.node.replace(locationLayer),
+      ]),
+    )
+
+    return Effect.gen(function* () {
+      const providers = yield* Provider.Service
+      const integrations = yield* Integration.Service
+      const credentials = yield* Credential.Service
+      yield* integrations.transform((editor) => editor.update(integrationID, () => {}))
+      yield* providers.transform((editor) =>
+        editor.update(providerID, (provider) => {
+          provider.integrationID = integrationID
+        }),
+      )
+      const listed = yield* integrations.list()
+      const snapshot = yield* providers.snapshot()
+      expect(yield* integrations.list()).toBe(listed)
+      expect(yield* providers.snapshot()).toBe(snapshot)
+
+      // Each change is visible on the very next read, without waiting for its event.
+      const created = yield* credentials.create({
+        integrationID,
+        label: "Work",
+        value: Credential.Key.make({ type: "key", key: "secret" }),
+      })
+      expect((yield* providers.available()).map((provider) => provider.id)).toEqual([providerID])
+      const connected = yield* integrations.list()
+      expect(connected).not.toBe(listed)
+      expect(yield* integrations.list()).toBe(connected)
+
+      yield* credentials.update(created.id, { label: "Personal" })
+      const connection = required(
+        (yield* integrations.list()).find((integration) => integration.id === integrationID)?.connections[0],
+      )
+      expect(connection).toMatchObject({ label: "Personal" })
+
+      yield* integrations.connection.status({
+        integrationID,
+        connection,
+        status: { status: "needs_auth", message: "Sign in again" },
+      })
+      expect(
+        (yield* integrations.list()).find((integration) => integration.id === integrationID)?.connections[0]?.status,
+      ).toEqual({ status: "needs_auth", message: "Sign in again" })
+
+      yield* credentials.remove(created.id)
+      expect(yield* providers.available()).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(localProviderLayer))
+  })
+
   it.effect("makes an explicitly enabled provider available without a connection", () => {
     const integrationID = Integration.ID.make("gateway")
     const providerID = Provider.ID.make("remote")

@@ -386,7 +386,7 @@ function resourceMcpLayer(
             cancel: unusedIntegration,
           },
         }),
-        Layer.mock(Credential.Service, {}),
+        Layer.mock(Credential.Service, { revision: () => 0 }),
         overrides?.environment ?? hostEnvironmentLayer,
       ),
     ),

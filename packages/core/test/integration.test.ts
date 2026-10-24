@@ -25,6 +25,7 @@ const failingCredentialNode = makeGlobalNode({
       activate: () => Effect.void,
       update: () => Effect.void,
       remove: () => Effect.void,
+      revision: () => 0,
     }),
   ),
   deps: [],

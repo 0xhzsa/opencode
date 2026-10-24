@@ -47,7 +47,7 @@ const it = testEffect(
         command: { connect: unused, status: unused, cancel: unused },
       }),
     ),
-    Credential.node.replace(Layer.mock(Credential.Service, {})),
+    Credential.node.replace(Layer.mock(Credential.Service, { revision: () => 0 })),
     Permission.node.replace(Layer.mock(Permission.Service, { assert: () => Effect.void })),
     Image.node.replace(imagePassthrough),
   ]),

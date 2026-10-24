@@ -676,6 +676,7 @@ describe("Config", () => {
                 activate: () => Effect.die("unused Credential.activate"),
                 update: () => Effect.die("unused Credential.update"),
                 remove: () => Effect.die("unused Credential.remove"),
+                revision: () => 0,
               }),
             ),
             deps: [],
@@ -772,6 +773,7 @@ describe("Config", () => {
         const credentialNode = makeGlobalNode({
           service: Credential.Service,
           layer: Layer.mock(Credential.Service)({
+            revision: () => 0,
             list: () =>
               Effect.succeed(
                 key === undefined
@@ -925,6 +927,7 @@ describe("Config", () => {
                 activate: () => Effect.die("unused Credential.activate"),
                 update: () => Effect.die("unused Credential.update"),
                 remove: () => Effect.die("unused Credential.remove"),
+                revision: () => 0,
               }),
             ),
             deps: [],

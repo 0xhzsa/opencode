@@ -59,6 +59,8 @@ export interface Interface {
   readonly update: (id: ID, updates: Partial<Pick<Info, "label" | "value">>) => Effect.Effect<void>
   /** Removes a stored credential. */
   readonly remove: (id: ID) => Effect.Effect<void>
+  /** Changes synchronously after every write, so readers can cache what they derive from stored credentials. */
+  readonly revision: () => number
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Credential") {}
@@ -84,8 +86,10 @@ const layer = Layer.effect(
         const credential = stored(row)
         return credential ? [credential] : []
       })
+    let revision = 0
 
     return Service.of({
+      revision: () => revision,
       all: Effect.fn("Credential.all")(() =>
         db
           .select()
@@ -156,6 +160,7 @@ const layer = Layer.effect(
             ),
             Effect.orDie,
           )
+        revision++
         yield* Effect.logInfo("credential created", {
           credentialID: credential.id,
           integrationID: credential.integrationID,
@@ -203,6 +208,7 @@ const layer = Layer.effect(
             Effect.orDie,
           )
         if (integrationID) {
+          revision++
           yield* Effect.logInfo("credential activated", { integrationID, credentialID: id })
           yield* bus.publish(Event.Switched, { integrationID, credentialID: id }, { global: true })
         }
@@ -248,6 +254,7 @@ const layer = Layer.effect(
           yield* Effect.logWarning("credential update skipped", { credentialID: id, reason: "credential_removed" })
           return
         }
+        revision++
         yield* Effect.logInfo("credential updated", {
           credentialID: id,
           integrationID: credential.integrationID,
@@ -309,6 +316,7 @@ const layer = Layer.effect(
             Effect.orDie,
           )
         if (!removed) return
+        revision++
         yield* Effect.logInfo("credential removed", {
           credentialID: id,
           integrationID: removed.integrationID,

@@ -444,7 +444,7 @@ const layer = Layer.effect(
     // Registrations may outlive a borrowed service layer; their later disposal must
     // not query dependencies that have already closed.
     yield* Effect.addFinalizer(() => State.shutdown(state.reload()))
-    let cached: { records: Snapshot["records"]; value: Snapshot } | undefined
+    let cached: { records: Snapshot["records"]; connections: readonly Integration.Info[]; value: Snapshot } | undefined
     const snapshot = Effect.fn("Provider.snapshot")(function* () {
       while (true) {
         const revision = integrations.revision()
@@ -453,6 +453,8 @@ const layer = Layer.effect(
         const connections = yield* integrations.list()
         // Either fold can disable a plugin that also contributed to the other domain.
         if (revision !== integrations.revision() || records !== state.get()) continue
+        // Integration.list returns the same array until integrations, credentials or statuses change.
+        if (cached?.records === records && cached.connections === connections) return cached.value
         const byID = new Map(connections.map((integration) => [integration.id, integration]))
         const available = Array.from(records.values()).filter((record) => {
           if (record.provider.activation === "disabled") return false
@@ -473,10 +475,12 @@ const layer = Layer.effect(
           cached?.records === records &&
           cached.value.available.length === available.length &&
           cached.value.available.every((record, index) => record === available[index])
-        )
+        ) {
+          cached = { records, connections, value: cached.value }
           return cached.value
+        }
         const value = freeze({ records, available, providers: available.map((record) => record.provider) }, true)
-        cached = { records, value }
+        cached = { records, connections, value }
         return value
       }
     })
