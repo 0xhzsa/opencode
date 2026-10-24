@@ -72,6 +72,20 @@ describe("CacheProbe.diagnose", () => {
     })
   })
 
+  test("tools changed when a nested schema metadata property changes", () => {
+    const mcp = (description: string) =>
+      new ToolDefinition({
+        name: "edit",
+        description: "edit tool",
+        inputSchema: { type: "object", properties: { metadata: { type: "string", description } } },
+      })
+    const previous = step({ ...base, tools: [tool("read"), mcp("old")] })
+    expect(CacheProbe.diagnose(previous, step({ ...base, tools: [tool("read"), mcp("new")] }, 1_000))).toMatchObject({
+      reason: "tools-changed",
+      detail: "~edit",
+    })
+  })
+
   test("instructions changed", () => {
     expect(diagnose({ ...base, system: [base.system[0]!, SystemPart.make("AGENTS.md: be thorough")] })).toMatchObject({
       reason: "instructions-changed",

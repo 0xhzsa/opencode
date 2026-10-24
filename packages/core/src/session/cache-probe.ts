@@ -56,10 +56,8 @@ export interface Miss extends Change {
 
 const INLINE_DATA_MIN = 1024
 
-// Cache hints only steer breakpoints and metadata never reaches the provider, so neither affects the cached prefix.
 // Inline media is summarized by type and size so hashing stays fast; replacing or cutting it still changes the hash.
 const replacer = (key: string, value: unknown) => {
-  if (key === "cache" || key === "metadata") return undefined
   if (key === "source" && value && typeof value === "object" && "data" in value) {
     const source = value as { type: string; mediaType?: string; data: string | Uint8Array }
     const size = typeof source.data === "string" ? source.data.length : source.data.byteLength
@@ -85,10 +83,19 @@ const isCheckpoint = (message: Message) =>
     (part) => part.type === "compaction" || (part.type === "text" && part.text.startsWith("<conversation-checkpoint>")),
   )
 
+// Message and part cache hints only steer breakpoints and their metadata never reaches the provider, so neither affects
+// the cached prefix. Same-named keys inside schemas, tool inputs and results do, so only these levels are stripped.
+const prefixOf = (message: Message) => ({
+  ...message,
+  cache: undefined,
+  metadata: undefined,
+  content: message.content.map((part) => ({ ...part, cache: undefined, metadata: undefined })),
+})
+
 const printMessage = (message: Message): MessagePrint => ({
   key: messageKey(message),
   role: message.role,
-  hash: hash(message),
+  hash: hash(prefixOf(message)),
   media: message.content.reduce((total, part) => total + mediaCount(part), 0),
   checkpoint: isCheckpoint(message),
 })
