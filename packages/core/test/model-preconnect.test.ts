@@ -257,6 +257,32 @@ describe("ModelPreconnect from primary requests", () => {
     }),
   )
 
+  it.effect("keeps each project's opt-in and origins separate for the same provider", () =>
+    Effect.gen(function* () {
+      const preconnect = yield* ModelPreconnect.Service
+      const fetch = fetching()
+      const model = Model.Ref.make({ providerID: Provider.ID.make("shared-provider"), id: Model.ID.make("model") })
+      const on = session("preconnect_project_on", "/project-on", model)
+      const off = session("preconnect_project_off", "/project-off", model)
+      const gateway = session("preconnect_project_gateway", "/project-gateway", model)
+      yield* configure(true)
+      yield* primary(on, resolved("shared-provider", "https://shared.example/v1"))
+      yield* configure(false)
+      yield* primary(off, resolved("shared-provider", "https://shared-off.example/v1"))
+      yield* configure(true)
+      yield* primary(gateway, resolved("shared-provider", "https://gateway.example/v1"))
+
+      // A project with preconnect off, or one that never ran the provider, is not warmed by another project's request.
+      yield* fetch.provide(preconnect.warm(off))
+      yield* fetch.provide(preconnect.warm(session("preconnect_project_unused", "/project-unused", model)))
+      expect(fetch.calls).toEqual([])
+
+      yield* fetch.provide(preconnect.warm(on))
+      yield* fetch.provide(preconnect.warm(gateway))
+      expect(fetch.urls()).toEqual(["https://shared.example/", "https://gateway.example/"])
+    }),
+  )
+
   it.effect("warms the origin a model.request hook rewrote the route to", () =>
     Effect.gen(function* () {
       yield* configure(true)

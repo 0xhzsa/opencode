@@ -37,10 +37,15 @@ export const target = (resolved: ModelResolver.Resolved, env: Record<string, str
   return new URL(url.origin)
 }
 
-// A session without a model runs its agent's model, or the project's default, so it shares a target with every
-// other such session on that agent and directory.
-const key = (session: Selection) =>
-  session.model ? `provider:${session.model.providerID}` : `agent:${session.location.directory}:${session.agent ?? ""}`
+// Targets are per location: experimental.preconnect and provider base URLs come from that location's config, so a
+// provider remembered in one project never warms another. A session without a model runs its agent's model, or the
+// project's default, so it shares a target with every other such session on that agent and location.
+const key = (session: Selection) => {
+  const location = `${session.location.directory}\0${session.location.workspaceID ?? ""}`
+  return session.model
+    ? `provider:${location}:${session.model.providerID}`
+    : `agent:${location}:${session.agent ?? ""}`
+}
 
 export const layer = Layer.sync(Service, () => {
   const targets = new Map<string, URL | undefined>()
