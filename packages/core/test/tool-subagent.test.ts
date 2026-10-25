@@ -380,18 +380,18 @@ describe("SubagentTool", () => {
           expect(yield* Queue.take(child.notifications)).toContain(SubagentCompletion.NO_TEXT)
 
           // A plugin that keeps retrying empty steps must not wake the parent each time.
-        yield* child.settle
-        for (const _ of [1, 2]) {
-          yield* child.llm.push(TestLLM.stop())
-          yield* child.sessions.synthetic({ sessionID: child.id, text: "Continue from where you left off." })
           yield* child.settle
-        }
-        expect(yield* Queue.size(child.notifications)).toBe(0)
+          for (const _ of [1, 2]) {
+            yield* child.llm.push(TestLLM.stop())
+            yield* child.sessions.synthetic({ sessionID: child.id, text: "Continue from where you left off." })
+            yield* child.settle
+          }
+          expect(yield* Queue.size(child.notifications)).toBe(0)
 
-        yield* child.sessions.synthetic({ sessionID: child.id, text: "Continue from where you left off." })
-        const followUp = yield* Queue.take(child.notifications).pipe(Effect.timeoutOption("3 seconds"))
-        expect(Option.getOrUndefined(followUp)).toBe(child.completed(childText))
-      }),
+          yield* child.sessions.synthetic({ sessionID: child.id, text: "Continue from where you left off." })
+          const followUp = yield* Queue.take(child.notifications).pipe(Effect.timeoutOption("3 seconds"))
+          expect(Option.getOrUndefined(followUp)).toBe(child.completed(childText))
+        }),
       [TestLLM.stop()],
     ),
   )
@@ -409,9 +409,7 @@ describe("SubagentTool", () => {
         yield* child.llm.wait(requests + 1)
         yield* child.sessions.interrupt(child.id)
         yield* child.settle
-        expect(Option.isNone(yield* Queue.take(child.notifications).pipe(Effect.timeoutOption("500 millis")))).toBe(
-          true,
-        )
+        expect(yield* Queue.size(child.notifications)).toBe(0)
       }),
     ),
   )
@@ -428,9 +426,7 @@ describe("SubagentTool", () => {
         yield* child.sessions.synthetic({ sessionID: child.id, text: "Continue from where you left off." })
         yield* child.llm.wait(requests + 1)
         yield* child.sessions.remove(child.parentID)
-        expect(Option.isNone(yield* Queue.take(child.notifications).pipe(Effect.timeoutOption("500 millis")))).toBe(
-          true,
-        )
+        expect(yield* Queue.size(child.notifications)).toBe(0)
         expect(Exit.isFailure(yield* child.sessions.get(child.id).pipe(Effect.exit))).toBe(true)
       }),
     ),
@@ -443,9 +439,7 @@ describe("SubagentTool", () => {
 
         yield* child.sessions.prompt({ sessionID: child.id, text: "One more question." })
         yield* child.settle
-        expect(Option.isNone(yield* Queue.take(child.notifications).pipe(Effect.timeoutOption("500 millis")))).toBe(
-          true,
-        )
+        expect(yield* Queue.size(child.notifications)).toBe(0)
       }),
     ),
   )

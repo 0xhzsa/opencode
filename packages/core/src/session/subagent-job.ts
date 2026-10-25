@@ -181,7 +181,17 @@ const make: Effect.Effect<Interface, never, Session.Service | Job.Service | Bus.
             metadata: {},
             recovery,
             run: Effect.gen(function* () {
-              yield* sessions.resume(recovery.childSessionID)
+              yield* sessions.resume(recovery.childSessionID).pipe(
+                // A failed busy period is this generation's result too, even before its prompt was written.
+                Effect.onError(() =>
+                  sessions.messages({ sessionID: recovery.childSessionID, type: "idle", order: "desc", limit: 1 }).pipe(
+                    Effect.map(([idle]) => {
+                      if (idle) settled.set(recovery.childSessionID, idle.id)
+                    }),
+                    Effect.ignore,
+                  ),
+                ),
+              )
               const messages = yield* sessions.messages({
                 sessionID: recovery.childSessionID,
                 order: "desc",
