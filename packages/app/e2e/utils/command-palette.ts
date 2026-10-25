@@ -36,12 +36,12 @@ export async function openCommandPalette(page: Page, home = false) {
   return { dialog, input, push: mock.push }
 }
 
-export async function openPaletteWorkspace(page: Page, home = false) {
+export async function openPaletteWorkspace(page: Page, home = false, sessions = [paletteSession]) {
   const mock = await mockOpenCodeServer(page, {
     directory: paletteSession.directory,
     project: project({ id: paletteSession.projectID, directory: paletteSession.directory, name: "command-palette" }),
     provider: NO_PROVIDER,
-    sessions: [paletteSession],
+    sessions,
     pageMessages: () => ({ items: [] }),
     findFiles: () => [],
   })

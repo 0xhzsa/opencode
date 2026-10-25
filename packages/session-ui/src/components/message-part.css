@@ -273,6 +273,12 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+
+    /* The variant reads as a qualifier of the model before it, so it is dimmer and never the part that truncates. */
+    &[data-variant] {
+      flex: none;
+      opacity: 0.66;
+    }
   }
 
   [data-slot="user-message-meta-separator"] {
@@ -500,6 +506,11 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+
+    &[data-variant] {
+      flex: none;
+      opacity: 0.66;
+    }
   }
 
   [data-slot="text-part-meta-separator"] {
@@ -997,6 +1008,15 @@
     overflow: auto;
     border-radius: 8px;
     box-shadow: 0 0 0 0.5px var(--v2-border-border-base);
+
+    /* The file wrapper sets Pierre's defaults inline, so override them on the shadow host below that wrapper. */
+    diffs-container {
+      --diffs-min-number-column-width: var(--execute-details-number-width, 1ch);
+      --opencode-diffs-number-inset: 12px;
+      --diffs-gap-block: 4px;
+      /* Wrapped blocks never scroll sideways; Pierre would otherwise subtract a scrollbar track from the bottom gap. */
+      --diffs-scrollbar-gutter-override: 0px;
+    }
   }
 
   [data-slot="execute-details-error"] {
@@ -1759,54 +1779,4 @@
   background: var(--v2-background-bg-layer-01);
   color: var(--v2-text-text-muted);
   transition: none;
-}
-
-/* The message options button sits in the 28px gutter the timeline reserves on the trailing side. */
-[data-component="user-message"],
-[data-component="text-part"] {
-  position: relative;
-
-  [data-slot="message-options"] {
-    position: absolute;
-    top: calc(0.5lh - 12px);
-    inset-inline-end: -28px;
-    z-index: 1;
-    display: flex;
-
-    @media (hover: hover) {
-      opacity: 0;
-    }
-  }
-
-  &:hover [data-slot="message-options"],
-  &:focus-within [data-slot="message-options"],
-  [data-slot="message-options"]:has([data-expanded]) {
-    opacity: 1;
-  }
-}
-
-/* Centered on the bubble's first line. */
-[data-component="user-message"] [data-slot="message-options"] {
-  top: calc(8px + 0.5lh - 12px);
-}
-
-[data-slot="message-options-info"] {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-width: 340px;
-  padding: 4px 8px;
-  font-family: var(--v2-font-family-sans);
-  font-size: 12px;
-  font-weight: 440;
-  line-height: var(--line-height-compact);
-  color: var(--v2-text-text-faint);
-  user-select: text;
-  cursor: default;
-
-  > span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
 }

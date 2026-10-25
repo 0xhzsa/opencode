@@ -27,7 +27,6 @@ import { createTimelineMarkdownLayout } from "./markdown-layout"
 import { attached } from "../components/message-file"
 import type { SessionUserActions, SessionUserAttachmentReference, SessionUserComment } from "../actions"
 import { useData } from "../context"
-import { useMessageMenu } from "../context/message-menu"
 import { useSources } from "../context/sources"
 import { turnSources } from "../sources/sources"
 import { TimelineSeparator } from "../components/timeline-separator"
@@ -127,7 +126,6 @@ export function createSessionTimelineRowRenderer(input: {
 }) {
   const i18n = useI18n()
   const data = useData()
-  const menu = useMessageMenu()
   const sourcesHost = useSources()
   // Cached timelines retain file-change subgroup identities alongside their disclosure choices.
   const patchGroupKeys = input.disclosure.patchGroupKeys ?? new Map<string, string>()
@@ -969,7 +967,7 @@ export function createSessionTimelineRowRenderer(input: {
       <div
         data-timeline-row="TurnGap"
         aria-hidden="true"
-        style={{ height: joined()?.above ? "4px" : `${menu() ? 24 : 16}px` }}
+        style={{ height: joined()?.above ? "4px" : "16px" }}
       />
     )
   }
@@ -1248,8 +1246,10 @@ export function createSessionTimelineRowRenderer(input: {
     // A budget pauses paid models, or only the ones it covers, until it resets at the start of a month.
     const budgetLimit = createMemo(() => {
       const kind = current().kind
+
       if (kind !== "budget-limit" && kind !== "model-budget-limit") return
       const at = current().resetAt
+
       const time =
         at === undefined
           ? undefined
@@ -1260,6 +1260,7 @@ export function createSessionTimelineRowRenderer(input: {
               minute: "2-digit",
               timeZoneName: "shortOffset",
             }).format(at)
+
       if (kind === "budget-limit")
         return {
           text: time
@@ -1267,6 +1268,7 @@ export function createSessionTimelineRowRenderer(input: {
             : i18n.t("ui.sessionTurn.budgetLimit.allUntilReset"),
           action: i18n.t("ui.sessionTurn.budgetLimit.useFreeModel"),
         }
+
       return {
         text: time
           ? i18n.t("ui.sessionTurn.budgetLimit.models", { time })
@@ -1332,7 +1334,7 @@ export function createSessionTimelineRowRenderer(input: {
 
   function layout(row: TimelineRow.TimelineRow, environment: TimelineLayoutEnvironment): TimelineRowLayout {
     if (row._tag === "TurnGap")
-      return { source: "fixed", height: runs().get(row.userMessageID)?.above ? 4 : menu() ? 24 : 16 }
+      return { source: "fixed", height: runs().get(row.userMessageID)?.above ? 4 : 16 }
     if (row._tag === "Activity") return { source: "fixed", height: 36 }
     const width =
       (input.centered?.() && environment.desktop ? Math.min(744, environment.width) : environment.width) -
@@ -1403,7 +1405,7 @@ export function createSessionTimelineRowRenderer(input: {
         if (measured.source === "dom") return measured
         const extra =
           (row.spacing === "content" ? 16 : 24 + (row.spacing === "tool" ? 8 : 0)) +
-          (!menu() && copyContentID(row.userMessageID) === row.group.ref.partID
+          (copyContentID(row.userMessageID) === row.group.ref.partID
             ? 24 - Math.min(4, measured.trailingMargin)
             : 0)
         return { source: "pretext", height: !text ? 0 : measured.height + extra }
@@ -1434,7 +1436,7 @@ export function createSessionTimelineRowRenderer(input: {
         (labelled ? 20 : 0) +
         (imageRows ? imageRows * (46 + 8) : presentation?.voice ? 8 : 0) +
         16 +
-        (joined?.below || (menu() && !labelled) ? 0 : 24) +
+        (joined?.below ? 0 : 24) +
         textLayout.text(TimelineRow.key(row), text, contentWidth, environment.typography, "pre-wrap"),
     }
   }

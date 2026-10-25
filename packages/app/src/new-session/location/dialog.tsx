@@ -11,6 +11,7 @@ import {
   ProjectAvatar,
 } from "@opencode/ui/project-avatar"
 import { TextInput } from "@opencode/ui/text-input"
+import { Tooltip } from "@opencode/ui/tooltip"
 import { createTypeahead } from "@opencode/ui/typeahead"
 import { getFilename } from "@opencode/util/path"
 import { createEffect, createMemo, createResource, For, type JSX, Match, onCleanup, Show, Switch } from "solid-js"
@@ -34,7 +35,8 @@ type LocationEntry =
 
 /**
  * Opens the new-session location dialog: one project list across every ready server, → on a Git project lists where
- * the session can run, and → on "Add project" picks the server when there are several.
+ * the session can run, and → on "Add project" picks the server when there are several. Search projects passes
+ * `projectsOnly` for just the project list: no "Add project", no worktrees and no key hints, like the other palettes.
  */
 export function useNewSessionLocationDialog(input: {
   project: PromptProjectController
@@ -43,13 +45,14 @@ export function useNewSessionLocationDialog(input: {
 }) {
   const dialog = useDialog()
 
-  return (options?: { onWorkspace?: (value: string) => void }) => {
+  return (options?: { onWorkspace?: (value: string) => void; projectsOnly?: boolean }) => {
     void dialog.show(
       () => (
         <NewSessionLocationDialog
           project={input.project}
           workspace={input.workspace}
           onWorkspace={options?.onWorkspace}
+          projectsOnly={options?.projectsOnly}
         />
       ),
       input.onDone,
@@ -61,6 +64,7 @@ function NewSessionLocationDialog(props: {
   project: PromptProjectController
   workspace: NewSessionWorkspaceController
   onWorkspace?: (value: string) => void
+  projectsOnly?: boolean
 }) {
   const dialog = useDialog()
   const language = useLanguage()
@@ -120,14 +124,15 @@ function NewSessionLocationDialog(props: {
 
   const addEntry: LocationEntry = { id: "add", type: "add" }
 
-  // Remote projects also match their server's name, which their tag shows. "Add project" is pinned above the list but
-  // navigates last, so the first project stays the opening row and ArrowUp from it wraps to "Add project" above.
+  // Remote projects also match their server's name, which their tag shows. "Add project" is shown first, above the
+  // heading, but navigates last, so the first project stays the opening row and the arrow keys' wrap-around still
+  // follows the rows on screen.
   const projectEntries = createMemo<LocationEntry[]>(() => [
     ...props.project
       .projects()
       .filter((project) => matches(displayName(project), project.worktree, tagged(project.server)?.name))
       .map((project) => ({ id: projectEntryID(project), type: "project" as const, project })),
-    addEntry,
+    ...(props.projectsOnly ? [] : [addEntry]),
   ])
 
   const serverEntries = createMemo<LocationEntry[]>(() =>
@@ -163,9 +168,9 @@ function NewSessionLocationDialog(props: {
     return projectEntries()
   }
 
-  const pinned = () => !store.drilled && !store.picking
+  const drillable = (project: PromptProject) => !props.projectsOnly && !!project.id && project.vcs === "git"
 
-  const listEntries = () => entries().filter((entry) => entry.type !== "add")
+  const grouped = () => entries().filter((entry) => entry !== addEntry)
 
   const title = () => {
     if (store.drilled) return language.t("session.new.workspace.runIn")
@@ -414,53 +419,69 @@ function NewSessionLocationDialog(props: {
             aria-activedescendant={typeahead.activeID()}
             onInput={(event) => setStore("query", event.currentTarget.value)}
             onKeyDown={handleKeyDown}
+            trailing={
+              <Show when={!props.projectsOnly && !store.drilled && !store.picking}>
+                <Tooltip placement="top" value={language.t("session.new.project.add")}>
+                  <button
+                    type="button"
+                    class="new-session-location-add"
+                    aria-label={language.t("session.new.project.add")}
+                    onClick={() => choose(addEntry)}
+                  >
+                    <Icon name="plus" size="small" />
+                    <span>{language.t("session.new.project.add")}</span>
+                  </button>
+                </Tooltip>
+              </Show>
+            }
           />
         </div>
-        <div id={typeahead.listID} class="new-session-location-list" role="listbox">
-          <Show when={pinned()}>
-            <div class="new-session-location-pinned">{option(addEntry)}</div>
-          </Show>
-          <div class="command-palette-scroll" data-scrollable ref={(el) => (resultsRef = el)}>
-            <div class="command-palette-results">
-              <Show
-                when={listEntries().length > 0}
-                fallback={
-                  // The worktree list may still be loading; hold the row's height without flashing a label.
-                  <div class="command-palette-state" classList={{ invisible: !!store.drilled && listed.loading }}>
-                    {language.t("palette.empty")}
-                  </div>
-                }
-              >
-                <div class="command-palette-group">
-                  <div class="command-palette-group-title">{title()}</div>
-                  <For each={listEntries()}>{option}</For>
+        <div class="command-palette-scroll" data-scrollable ref={(el) => (resultsRef = el)}>
+          <div id={typeahead.listID} class="command-palette-results" role="listbox">
+            <Show
+              when={entries().length > 0}
+              fallback={
+                // The worktree list may still be loading; hold the row's height without flashing a label.
+                <div class="command-palette-state" classList={{ invisible: !!store.drilled && listed.loading }}>
+                  {language.t("palette.empty")}
                 </div>
-              </Show>
-            </div>
+              }
+            >
+              {/* One group, so the heading follows "Add project" at the row rhythm rather than the gap between groups. */}
+              <div class="command-palette-group">
+                <Show when={entries().includes(addEntry)}>{option(addEntry)}</Show>
+                <Show when={grouped().length > 0}>
+                  <div class="command-palette-group-title">{title()}</div>
+                  <For each={grouped()}>{option}</For>
+                </Show>
+              </div>
+            </Show>
           </div>
         </div>
-        <div class="new-session-location-hints">
-          <span>
-            <Keybind keys={["↵"]} variant="neutral" />
-            {language.t("session.new.location.select")}
-          </span>
-          <Show
-            when={store.drilled || store.picking}
-            fallback={
-              <span>
-                <Keybind keys={["→"]} variant="neutral" />
-                {activeEntry()?.type === "add" && choosesServer()
-                  ? language.t("session.new.location.servers")
-                  : language.t("session.new.location.worktrees")}
-              </span>
-            }
-          >
+        <Show when={!props.projectsOnly}>
+          <div class="new-session-location-hints">
             <span>
-              <Keybind keys={["←"]} variant="neutral" />
-              {language.t("session.new.location.back")}
+              <Keybind keys={["↵"]} variant="neutral" />
+              {language.t("session.new.location.select")}
             </span>
-          </Show>
-        </div>
+            <Show
+              when={store.drilled || store.picking}
+              fallback={
+                <span>
+                  <Keybind keys={["→"]} variant="neutral" />
+                  {activeEntry()?.type === "add" && choosesServer()
+                    ? language.t("session.new.location.servers")
+                    : language.t("session.new.location.worktrees")}
+                </span>
+              }
+            >
+              <span>
+                <Keybind keys={["←"]} variant="neutral" />
+                {language.t("session.new.location.back")}
+              </span>
+            </Show>
+          </div>
+        </Show>
       </DialogBody>
     </Dialog>
   )
@@ -556,10 +577,6 @@ function WorkspaceRow(props: { title: string; value: string; description: string
       </div>
     </>
   )
-}
-
-function drillable(project: PromptProject) {
-  return !!project.id && project.vcs === "git"
 }
 
 function projectEntryID(project: PromptProject) {

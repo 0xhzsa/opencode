@@ -1,3 +1,4 @@
+import type { OpenCodeEvent } from "@opencode/client/promise"
 import { expect, test } from "@playwright/test"
 import {
   captureConsoleWarnings,
@@ -127,6 +128,143 @@ test("titlebar search lists recent sessions and opens the typed match", async ({
   await input.press("Enter")
   await expect(dialog).toHaveCount(0)
   await expect(page.getByRole("heading", { name: paletteSession.title, exact: true })).toBeVisible()
+})
+
+test("Search commands lists only commands and runs the chosen one", async ({ page }) => {
+  const { dialog, input } = await openCommandPalette(page, true)
+  await input.fill("search commands")
+  await dialog.getByRole("option", { name: /^Search commands/ }).click()
+  const search = page.getByRole("dialog").getByRole("combobox")
+  await expect(search).toHaveAttribute("placeholder", "Search commands")
+  await expect(search).toBeFocused()
+  await expect(page.getByRole("dialog").getByRole("option", { name: /^Open settings/ })).toBeVisible()
+  await search.fill("Palette fixture")
+  await expect(page.getByRole("dialog").getByText("No results found", { exact: true })).toBeVisible()
+  await search.fill("open settings")
+  await expect(page.getByRole("dialog").getByRole("option")).toHaveCount(1)
+  await search.press("Enter")
+  await expect(page).toHaveURL("/settings")
+})
+
+test("Search projects opens a new session's project picker from a session and from Home", async ({ page }) => {
+  const editor = page.locator('[data-component="composer-editor"]')
+  const picker = page.getByRole("combobox", { name: "Search projects", exact: true })
+  const { dialog, input } = await openCommandPalette(page)
+  await input.fill("search projects")
+  await dialog.getByRole("option", { name: /^Search projects/ }).click()
+  await expect(page).toHaveURL(/\/new-session\?draftId=.+$/)
+  await expect(picker).toBeFocused()
+  // Just the projects: no "Add project", no worktrees and no key hints.
+  const projects = page.getByRole("dialog").getByRole("option")
+  await expect(projects).toHaveCount(1)
+  await expect(projects).toHaveText(/command-palette/)
+  await expect(projects.getByRole("button", { name: "Worktrees", exact: true })).toHaveCount(0)
+  await expect(page.locator(".new-session-location-hints")).toHaveCount(0)
+  await picker.press("Escape")
+  await expect(picker).toHaveCount(0)
+  await expect(editor).toBeFocused()
+
+  await page.goto("/")
+  await expect(
+    page.getByRole("region", { name: "Recent sessions" }).getByRole("button", { name: /Palette fixture session/ }),
+  ).toBeEnabled()
+  await page.keyboard.press("ControlOrMeta+Shift+O")
+  await expect(page).toHaveURL(/\/new-session\?draftId=.+$/)
+  await expect(picker).toBeFocused()
+})
+
+declare global {
+  interface Window {
+    __paletteOrders?: string[][]
+  }
+}
+
+test("titlebar search opens recent sessions in the server's order on every open", async ({ page }) => {
+  const busy = { ...paletteSession, time: { ...paletteSession.time } }
+
+  const fresh = {
+    ...paletteSession,
+    id: "ses_command_palette_fresh",
+    title: "Fresh fixture session",
+    time: { created: 1700000001000, updated: 1700000001000 },
+  }
+
+  const mock = await openPaletteWorkspace(page, true, [busy, fresh])
+  // A step starts after Home loaded its index, so the server now lists the busy session first.
+  busy.time.updated = 1700000002000
+  // SAFETY: a step in a session whose transcript is not open; only its session ID and time matter here.
+  await mock.push([
+    {
+      id: "evt_busy_step",
+      created: busy.time.updated,
+      type: "session.step.started",
+      durable: { aggregateID: busy.id, seq: 1, version: 1 },
+      location: { directory: busy.directory },
+      data: {
+        sessionID: busy.id,
+        assistantMessageID: "msg_busy_step",
+        agent: "build",
+        model: { providerID: "test", id: "test" },
+        started: busy.time.updated,
+      },
+    } as OpenCodeEvent,
+  ])
+  const home = page.getByRole("region", { name: "Recent sessions" }).getByRole("button", { name: /fixture session/ })
+  await expect(home).toHaveText([/Palette fixture session/, /Fresh fixture session/])
+
+  await page.evaluate(() => {
+    const seen: string[][] = []
+    window.__paletteOrders = seen
+
+    new MutationObserver(() => {
+      const order = [...document.querySelectorAll('[role="dialog"] [role="option"] .command-palette-title')].map(
+        (title) => title.textContent ?? "",
+      )
+
+      if (order.length > 0 && order.join() !== seen.at(-1)?.join()) seen.push(order)
+    }).observe(document.body, { childList: true, subtree: true, characterData: true })
+  })
+
+  const dialog = page.getByRole("dialog")
+
+  const openAndClose = async () => {
+    const listed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/session")
+    await page.getByRole("banner").getByRole("button", { name: "Search sessions", exact: true }).click()
+    await listed
+    await expect(dialog.getByRole("option")).toHaveText([/Palette fixture session/, /Fresh fixture session/])
+    await dialog.getByRole("combobox").press("Escape")
+    await expect(dialog).toHaveCount(0)
+  }
+
+  await openAndClose()
+  await openAndClose()
+
+  expect(await page.evaluate(() => window.__paletteOrders)).toEqual([[paletteSession.title, fresh.title]])
+})
+
+const olderSession = {
+  ...paletteSession,
+  id: "ses_command_palette_older",
+  title: "Older fixture session",
+  time: { created: 1699999999000, updated: 1699999999000 },
+}
+
+test("titlebar search drops a recent session deleted while it is open", async ({ page }) => {
+  const mock = await openPaletteWorkspace(page, true, [paletteSession, olderSession])
+  await page.getByRole("banner").getByRole("button", { name: "Search sessions", exact: true }).click()
+  const options = page.getByRole("dialog").getByRole("option")
+  await expect(options).toHaveText([/Palette fixture session/, /Older fixture session/])
+  await mock.push([
+    {
+      id: "evt_older_deleted",
+      created: 1700000003000,
+      type: "session.deleted",
+      durable: { aggregateID: olderSession.id, seq: 1, version: 2 },
+      location: { directory: olderSession.directory },
+      data: { sessionID: olderSession.id },
+    },
+  ])
+  await expect(options).toHaveText([/Palette fixture session/])
 })
 
 test("reopens from its shortcut as soon as it closes", async ({ page }) => {

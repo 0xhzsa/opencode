@@ -243,6 +243,8 @@ type SessionSearchState = {
 export function createServerSessionEntries(props: {
   server: ServerConnection.Key
   known?: () => SessionInfo[]
+  /** Hides sessions deleted since they were loaded. */
+  apply?: (sessions: SessionInfo[]) => SessionInfo[]
   projects: () => Project[]
   load: (search: string, signal: AbortSignal) => Promise<{ data: SessionInfo[] }>
   get: (sessionID: string, signal: AbortSignal) => Promise<SessionInfo>
@@ -255,15 +257,17 @@ export function createServerSessionEntries(props: {
   const [store, setStore] = createStore<{ loaded: SessionInfo[] }>({ loaded: [] })
 
   // Let the newest metadata win duplicates before ranking the merged sessions newest-first.
-  const known = createMemo(() =>
-    [
+  const known = createMemo(() => {
+    const merged = [
       ...new Map(
         [...(props.known?.() ?? []), ...store.loaded]
           .toSorted((a, b) => a.time.updated - b.time.updated)
           .map((session) => [session.id, session] as const),
       ).values(),
-    ].toSorted((a, b) => b.time.updated - a.time.updated),
-  )
+    ].toSorted((a, b) => b.time.updated - a.time.updated)
+
+    return props.apply?.(merged) ?? merged
+  })
 
   onCleanup(() => abort(state.abort))
 

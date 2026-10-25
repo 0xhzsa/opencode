@@ -224,11 +224,11 @@ test("Home lists the used server projects by recent activity, hides them, and li
   await newSessionLocation(page).click()
   const options = page.getByRole("dialog").getByRole("option")
   await expect(options.locator(".command-palette-title")).toHaveText([
+    "Add project",
     "oldest",
     "fresh",
     "unused",
     "recent",
-    "Add project",
   ])
   await options.filter({ hasText: "C:/OpenCode/recent" }).click()
   await expect(newSessionLocation(page)).toContainText("recent")

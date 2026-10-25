@@ -22,7 +22,6 @@ import type { PreparedMarkdown } from "../components/markdown-prepared"
 import { linkSegments } from "../components/link-segments"
 import { sessionReferenceText, setupSessionLinks } from "../components/markdown-session-links"
 import { useMarkdown } from "../context/markdown"
-import { useMessageMenu } from "../context/message-menu"
 import { useSources } from "../context/sources"
 import { SourcesChip } from "../sources/sources-chip"
 import type { TurnSources } from "../sources/sources"
@@ -53,6 +52,7 @@ import type {
 } from "@opencode/client/promise"
 import type { SessionUserActions, SessionUserAttachmentReference, SessionUserComment } from "../actions"
 import { agentLabel } from "./agent-label"
+import { relativeTime, useNow } from "./relative-time"
 import { attached, typeLabel } from "../components/message-file"
 
 export async function writeClipboard(text: string): Promise<boolean> {
@@ -83,24 +83,49 @@ export async function writeClipboard(text: string): Promise<boolean> {
   )
 }
 
-function modelLabel(
-  data: ReturnType<typeof useData>,
-  i18n: ReturnType<typeof useI18n>,
-  model: SessionMessageAssistant["model"],
-) {
+type MetaItem = { label: string; variant?: boolean }
+
+const RELATIVE_TIME_KEYS = {
+  minute: "ui.message.time.minutesAgo",
+  hour: "ui.message.time.hoursAgo",
+  day: "ui.message.time.daysAgo",
+} as const
+
+// The variant follows the model name without a separator and renders dimmer, so the model leads.
+function modelItems(data: ReturnType<typeof useData>, model: SessionMessageAssistant["model"]): MetaItem[] {
   const name = data.store.provider?.all?.get(model.providerID)?.models?.[model.id]?.name ?? model.id
 
-  if (!model.variant || model.variant === "default") return name
+  if (!model.variant || model.variant === "default") return [{ label: name }]
 
-  return i18n.t("ui.message.modelVariant", {
-    model: name,
-    variant: model.variant[0]?.toUpperCase() + model.variant.slice(1),
-  })
+  return [{ label: name }, { label: model.variant[0]?.toUpperCase() + model.variant.slice(1), variant: true }]
+}
+
+function MetaItems(props: { items: MetaItem[]; slot: "user-message" | "text-part" }) {
+  return (
+    <For each={props.items}>
+      {(item, index) => (
+        <>
+          <Show when={index() > 0 && !item.variant}>
+            <span data-slot={`${props.slot}-meta-separator`} aria-hidden="true">
+              {"\u00B7"}
+            </span>
+          </Show>
+          <span
+            data-slot={`${props.slot}-meta-item`}
+            data-variant={item.variant ? "" : undefined}
+            dir={props.slot === "text-part" ? "auto" : undefined}
+          >
+            {item.label}
+          </span>
+        </>
+      )}
+    </For>
+  )
 }
 
 function MessageActionButton(
   props: Pick<ComponentProps<"button">, "disabled" | "onMouseDown" | "onClick" | "aria-label"> & {
-    icon: "check" | "copy" | "reset" | "arrow-down-to-line" | "outline-trash"
+    icon: "check" | "copy" | "reset" | "fork" | "arrow-down-to-line" | "outline-trash"
     label: JSX.Element
     size?: "small" | "normal"
   },
@@ -119,35 +144,6 @@ function MessageActionButton(
         aria-label={props["aria-label"]}
       />
     </Tooltip>
-  )
-}
-
-function MessageOptions(props: { info: string[]; children: JSX.Element }) {
-  const i18n = useI18n()
-
-  return (
-    <div data-slot="message-options">
-      <Menu gutter={4} modal={false} placement="bottom-end">
-        <Menu.Trigger
-          as={IconButton}
-          icon={<Icon name="outline-dots" size="small" />}
-          size="normal"
-          variant="ghost-muted"
-          aria-label={i18n.t("ui.message.options")}
-        />
-        <Menu.Portal>
-          <Menu.Content>
-            <Show when={props.info.length > 0}>
-              <div data-slot="message-options-info">
-                <For each={props.info}>{(line) => <span dir="auto">{line}</span>}</For>
-              </div>
-              <Menu.Separator />
-            </Show>
-            {props.children}
-          </Menu.Content>
-        </Menu.Portal>
-      </Menu>
-    </div>
   )
 }
 
@@ -337,9 +333,8 @@ export function CurrentUserMessageDisplay(props: {
   const data = useData()
   const dialog = useDialog()
   const i18n = useI18n()
-  const menu = useMessageMenu()
 
-  const [state, setState] = createStore({ copied: false, reverting: false, updating: false })
+  const [state, setState] = createStore({ copied: false, reverting: false, forking: false, updating: false })
 
   const status = createMemo(() => props.actions?.pending?.status(props.message.id))
   const pending = createMemo(() => status() !== undefined && status() !== "queued")
@@ -349,22 +344,32 @@ export function CurrentUserMessageDisplay(props: {
   const inlineFiles = createMemo(() => (props.message.files ?? []).filter((file) => !!file.mention))
   const agents = createMemo(() => props.message.agents ?? [])
   const comments = createMemo(() => props.comments ?? [])
-  const model = createMemo(() => modelLabel(data, i18n, props.model))
-  const timefmt = createMemo(() => new Intl.DateTimeFormat(i18n.locale(), { timeStyle: "short" }))
+  const numfmt = createMemo(() => new Intl.NumberFormat(i18n.locale()))
+  const datefmt = createMemo(() => new Intl.DateTimeFormat(i18n.locale(), { dateStyle: "medium" }))
   const fulltimefmt = createMemo(() => new Intl.DateTimeFormat(i18n.locale(), { dateStyle: "full", timeStyle: "long" }))
+  const now = useNow()
 
   // Mobile shows the current agent and model in the composer and switch notices, so repeating them per message is noise.
   const mobile = createMediaQuery("(max-width: 767px)")
 
-  const metaLabels = createMemo(() => {
-    const agent = props.agent
+  const labels = createMemo<MetaItem[]>(() => {
+    const agent = agentLabel(props.agent, data.agents)
 
-    if (mobile()) return []
-
-    return [agentLabel(agent, data.agents), model()].filter(Boolean)
+    return [...(agent ? [{ label: agent }] : []), ...modelItems(data, props.model)]
   })
 
-  const stamp = createMemo(() => timefmt().format(props.message.time.created))
+  const metaLabels = createMemo(() => (mobile() ? [] : labels()))
+
+  const stamp = createMemo(() => {
+    const created = props.message.time.created
+    const relative = relativeTime(created, now())
+
+    if (relative.unit === "now") return i18n.t("ui.message.time.justNow")
+
+    if (relative.unit === "date") return datefmt().format(created)
+
+    return i18n.t(RELATIVE_TIME_KEYS[relative.unit], { count: numfmt().format(relative.count) })
+  })
 
   const labelled = createMemo(() => waiting() && !props.run?.above)
   const [label, setLabel] = createSignal("")
@@ -372,13 +377,6 @@ export function CurrentUserMessageDisplay(props: {
     if (labelled()) setLabel(i18n.t(status() === "stranded" ? "ui.message.pending" : "ui.message.steering"))
   })
 
-  const info = createMemo(() =>
-    [
-      waiting() ? i18n.t("ui.message.pending") : "",
-      [agentLabel(props.agent, data.agents), model()].filter(Boolean).join(" \u00B7 "),
-      fulltimefmt().format(props.message.time.created),
-    ].filter(Boolean),
-  )
 
   // In a run, only the last message keeps the meta line; the others offer their actions beside the bubble.
   // Bubble corners tighten where two bubbles meet, as in the iOS app's grouped corners.
@@ -451,6 +449,17 @@ export function CurrentUserMessageDisplay(props: {
     }
   }
 
+  const fork = async () => {
+    if (!props.actions?.fork || state.forking) return
+    setState("forking", true)
+
+    try {
+      await props.actions.fork({ sessionID: props.sessionID, messageID: props.message.id })
+    } finally {
+      setState("forking", false)
+    }
+  }
+
   const updatePending = async (action: "queue" | "remove") => {
     const actions = props.actions?.pending
 
@@ -503,6 +512,22 @@ export function CurrentUserMessageDisplay(props: {
               void revert()
             }}
             aria-label={i18n.t("ui.message.revertMessage")}
+          />
+        </UserMessageTransition>
+      </Show>
+      <Show when={props.actions?.fork}>
+        <UserMessageTransition active={!pending()}>
+          <MessageActionButton
+            icon="fork"
+            size="small"
+            label={i18n.t("ui.message.forkMessage")}
+            disabled={state.forking}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={(event) => {
+              event.stopPropagation()
+              void fork()
+            }}
+            aria-label={i18n.t("ui.message.forkMessage")}
           />
         </UserMessageTransition>
       </Show>
@@ -627,29 +652,6 @@ export function CurrentUserMessageDisplay(props: {
       }}
       data-timeline-part-id={props.text ? `${props.message.id}:text:0` : undefined}
     >
-      <Show when={menu() && (props.text || comments().length > 0 || pending())}>
-        <MessageOptions info={info()}>
-          <Show when={props.actions?.pending && pending()}>
-            <Menu.Item disabled={state.updating} onSelect={() => void updatePending("queue")}>
-              {i18n.t("ui.message.moveToQueue")}
-            </Menu.Item>
-            <Menu.Item disabled={state.updating} onSelect={() => void updatePending("remove")}>
-              {i18n.t("ui.message.deletePending")}
-            </Menu.Item>
-          </Show>
-          <Show when={props.actions?.revert && !pending()}>
-            <Menu.Item disabled={state.reverting} onSelect={() => void revert()}>
-              {i18n.t("ui.message.revertMessage")}
-            </Menu.Item>
-          </Show>
-          <Show when={props.text}>
-            <Menu.Item onSelect={() => void copy(props.text)}>{i18n.t("ui.message.copyMessage")}</Menu.Item>
-          </Show>
-          <Show when={props.voice}>
-            <Menu.Item onSelect={() => void copy(props.message.text)}>{i18n.t("ui.message.copyFullMessage")}</Menu.Item>
-          </Show>
-        </MessageOptions>
-      </Show>
       {renderAttachments()}
       <Show when={label()}>
         <div data-slot="user-message-pending-label" class="text-12-regular text-v2-text-text-weak" aria-hidden={!labelled()}>
@@ -681,31 +683,19 @@ export function CurrentUserMessageDisplay(props: {
               <UserMessageComments comments={comments()} bounded />
             </Show>
           </div>
-          <Show when={!menu() && folded()}>
+          <Show when={folded()}>
             <div data-slot="user-message-run-actions">{renderActions()}</div>
           </Show>
         </div>
       </Show>
       {/* Like the TUI, a pending steer of only attachments still offers its actions. */}
-      {/* With the message menu, a pending steer still keeps its Pending label and actions in view. */}
-      <Show when={menu() ? waiting() : props.text || comments().length > 0 || pending()}>
+      <Show when={props.text || comments().length > 0 || pending()}>
         <div data-slot="user-message-copy-wrapper">
           <span data-slot="user-message-meta-wrap">
             <span data-slot="user-message-meta">
               <Show when={metaLabels().length > 0}>
                 <span data-slot="user-message-meta-label">
-                  <For each={metaLabels()}>
-                    {(label, index) => (
-                      <>
-                        <Show when={index() > 0}>
-                          <span data-slot="user-message-meta-separator" aria-hidden="true">
-                            {"\u00B7"}
-                          </span>
-                        </Show>
-                        <span data-slot="user-message-meta-item">{label}</span>
-                      </>
-                    )}
-                  </For>
+                  <MetaItems items={metaLabels()} slot="user-message" />
                 </span>
               </Show>
               {/* A pending steer has not been sent, so Pending stands in for the time instead of reserving its width. */}
@@ -934,7 +924,6 @@ export function AssistantTextContent(props: {
 }) {
   const data = useData()
   const i18n = useI18n()
-  const menu = useMessageMenu()
   const sourcesHost = useSources()
   const numfmt = createMemo(() => new Intl.NumberFormat(i18n.locale()))
   // A footer that arrives after the reply rendered belongs to a turn that just finished, so its chip fades in.
@@ -948,7 +937,11 @@ export function AssistantTextContent(props: {
     return !!type && (type.includes("abort") || type.includes("interrupt"))
   }
 
-  const model = createMemo(() => modelLabel(data, i18n, props.message.model))
+  const labels = createMemo<MetaItem[]>(() => {
+    const agent = agentLabel(props.message.agent, data.agents)
+
+    return [...(agent ? [{ label: agent }] : []), ...modelItems(data, props.message.model)]
+  })
 
   const duration = createMemo(() => {
     const completed = props.message.time.completed
@@ -976,15 +969,12 @@ export function AssistantTextContent(props: {
   // Mobile omits the per-response agent and model; see CurrentUserMessageDisplay.
   const mobile = createMediaQuery("(max-width: 767px)")
 
-  const meta = createMemo(() => {
-    const agent = props.message.agent
-
-    return [
-      ...(mobile() ? [] : [agentLabel(agent, data.agents), model()]),
-      duration(),
-      interrupted() ? i18n.t("ui.message.interrupted") : "",
-    ].filter(Boolean)
-  })
+  const meta = createMemo<MetaItem[]>(() => [
+    ...(mobile() ? [] : labels()),
+    ...[duration(), interrupted() ? i18n.t("ui.message.interrupted") : ""].flatMap((label) =>
+      label ? [{ label }] : [],
+    ),
+  ])
 
   const [copied, setCopied] = createSignal(false)
 
@@ -1005,17 +995,7 @@ export function AssistantTextContent(props: {
             prepared={props.preparedMarkdown}
           />
         </div>
-        <Show when={menu() && props.showCopy}>
-          <MessageOptions
-            info={[
-              [agentLabel(props.message.agent, data.agents), model()].filter(Boolean).join(" \u00B7 "),
-              [duration(), interrupted() ? i18n.t("ui.message.interrupted") : ""].filter(Boolean).join(" \u00B7 "),
-            ].filter(Boolean)}
-          >
-            <Menu.Item onSelect={() => void copy()}>{i18n.t("ui.message.copyResponse")}</Menu.Item>
-          </MessageOptions>
-        </Show>
-        <Show when={sources()} fallback={<Show when={!menu() && props.showCopy}>{copyFooter()}</Show>}>
+        <Show when={sources()} fallback={<Show when={props.showCopy}>{copyFooter()}</Show>}>
           {(value) => (
             <div data-slot="text-part-footer">
               <SourcesChip
@@ -1024,7 +1004,7 @@ export function AssistantTextContent(props: {
                 appear={rendered}
                 onOpen={() => props.onOpenSources?.()}
               />
-              <Show when={!menu()}>{copyFooter()}</Show>
+              {copyFooter()}
             </div>
           )}
         </Show>
@@ -1045,20 +1025,7 @@ export function AssistantTextContent(props: {
         />
         <Show when={meta().length > 0}>
           <span data-slot="text-part-meta">
-            <For each={meta()}>
-              {(label, index) => (
-                <>
-                  <Show when={index() > 0}>
-                    <span data-slot="text-part-meta-separator" aria-hidden="true">
-                      {"\u00B7"}
-                    </span>
-                  </Show>
-                  <span data-slot="text-part-meta-item" dir="auto">
-                    {label}
-                  </span>
-                </>
-              )}
-            </For>
+            <MetaItems items={meta()} slot="text-part" />
           </span>
         </Show>
       </div>

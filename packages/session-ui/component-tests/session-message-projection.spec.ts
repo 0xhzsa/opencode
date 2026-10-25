@@ -6,7 +6,7 @@ story.describe("message timestamp", () => {
   story("shows the full creation date, time, and time zone on hover and focus", async ({ mount, page }) => {
     const timeline = await mount("current-prompt-message--pending")
     const timestamp = timeline.locator('[data-slot="user-message-meta-tail"]')
-    await expect(timestamp.locator("time")).toHaveText("12:00 AM")
+    await expect(timestamp.locator("time")).toHaveText("Jan 1, 2025")
     await timeline.getByLabel("Delivery state").selectOption("delivered")
     const message = timeline.locator('[data-component="user-message"]')
     await message.hover()
@@ -27,12 +27,14 @@ story.describe("message timestamp", () => {
     await expect(tooltip).toBeVisible()
 
     await page.evaluate(() => document.fonts.ready.then(() => undefined))
+
     for (const width of [1000, 390]) {
       await page.setViewportSize({ width, height: 844 })
       const bubble = await timeline.locator('[data-slot="user-message-text"]').boundingBox()
       const time = await timestamp.boundingBox()
       const footer = await timeline.locator('[data-slot="user-message-copy-wrapper"]').boundingBox()
       const message = await timeline.locator('[data-component="user-message"]').boundingBox()
+
       if (!bubble || !time || !footer || !message) throw new Error("Message geometry is unavailable")
       expect(Math.abs(bubble.x + bubble.width - message.x - message.width)).toBeLessThan(1)
       expect(footer.y).toBeGreaterThanOrEqual(bubble.y + bubble.height)
@@ -59,6 +61,7 @@ story("folds the Steering label on delivery while preserving the hovered footer"
   for (const hover of [true, false]) {
     await timeline.getByLabel("Delivery state").selectOption("steering")
     if (hover) await message.hover()
+
     if (!hover) await page.mouse.move(0, 0)
     await expect(footer).toHaveCSS("opacity", hover ? "1" : "0")
     await expect(pending).toHaveCSS("opacity", "1")
@@ -67,6 +70,7 @@ story("folds the Steering label on delivery while preserving the hovered footer"
     await expect(timestamp).toBeHidden()
     const label = await timeline.locator('[data-slot="user-message-meta-item"]').last().boundingBox()
     const actions = await timeline.locator('[data-slot="user-message-actions"]').boundingBox()
+
     if (!label || !actions) throw new Error("Pending footer geometry is unavailable")
     expect(actions.x - label.x - label.width).toBeLessThanOrEqual(9)
     await timeline.getByLabel("Delivery state").selectOption("delivered")
@@ -114,7 +118,9 @@ story("labels waiting prompts without badging delivered, starting, or queued pro
   for (const status of ["steering", "stranded", "starting", "queued", "delivered"]) {
     await timeline.getByLabel("Delivery state").selectOption(status)
     const pending = status === "steering" || status === "stranded"
+
     if (pending) await expect(indicator).toBeVisible()
+
     if (!pending) await expect(indicator).toBeHidden()
 
     const colors = await timeline.evaluate((element, pending) => {
@@ -135,8 +141,10 @@ story("labels waiting prompts without badging delivered, starting, or queued pro
   await timeline.locator('[data-component="user-message"]').hover()
   await expect(timeline.locator('[data-slot="user-message-meta-item"]')).toHaveText([
     "Build",
-    "Claude Sonnet 4 (Balanced)",
+    "Claude Sonnet 4",
+    "Balanced",
   ])
+  await expect(timeline.locator('[data-slot="user-message-meta-item"][data-variant]')).toHaveCSS("opacity", "0.66")
   const separator = timeline.locator('[data-slot="user-message-meta-label"] [data-slot="user-message-meta-separator"]')
   await expect(separator).toHaveText("\u00B7")
   await expect(separator).toHaveCSS("opacity", "0.66")

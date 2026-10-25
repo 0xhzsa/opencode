@@ -26,6 +26,7 @@ export function DialogSessionSearch() {
     const load = createServerSessionEntries({
       server: ServerConnection.key(conn),
       known: createKnownServerSessions(ctx),
+      apply: ctx.data.session.apply,
       projects: ctx.projects.list,
       load: (search, signal) =>
         ctx.sdk.api.session.list({ parentID: null, search, archived: false, limit: 50 }, { signal }),
