@@ -624,8 +624,8 @@ export function createTimelineVirtualizer(input: Input) {
     const layer = following() ? drawnTop - previous.top : 0
 
     // A commit that moves the followed end a whole screen, like a finished reply arriving in one update, leaves
-    // nothing on screen to carry: the rows rest at once and what arrived only fades in.
-    if (!disclosing && Math.abs(layer) >= layoutState.viewport - bottomInset()) {
+    // nothing on screen to carry: the rows rest at once and what arrived only fades in. Rows that only grew keep growing.
+    if (!disclosing && arrivals.size > 0 && Math.abs(layer) >= layoutState.viewport - bottomInset()) {
       motion.cancel()
       return fadeArrivals()
     }
