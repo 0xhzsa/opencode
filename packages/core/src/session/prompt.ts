@@ -6,15 +6,18 @@ import { SessionInbox } from "@opencode/schema/session-inbox"
 import type { Session } from "@opencode/schema/session"
 import type { SessionMessage } from "@opencode/schema/session-message"
 import { FSUtil } from "@opencode/util/fs-util"
-import { Effect } from "effect"
+import { Effect, Option, Schema } from "effect"
 import path from "path"
 import { fileURLToPath } from "url"
+import { Database } from "../database/database.js"
 import { Image } from "../image.js"
 import { Mime } from "../mime.js"
 import { Plugin } from "../plugin/service.js"
 import { PluginHooks } from "../plugin/hooks.js"
 import { Skill } from "../skill.js"
+import { SessionBlob } from "./blob.js"
 import { AttachmentError, SkillNotFoundError } from "./error.js"
+import { SessionStored } from "./stored.js"
 
 export type Input = {
   text: string
@@ -86,6 +89,19 @@ export const prepare = Effect.fn("SessionPrompt.prepare")(function* (request: {
 const materializeAttachment = Effect.fn("SessionPrompt.materializeAttachment")(function* (
   input: PromptInput.FileAttachment,
 ) {
+  // Stored blob bytes were normalized when first admitted, so a `media:` ref re-admits them unchanged.
+  const ref = Schema.decodeUnknownOption(SessionStored.Ref)(input.uri)
+  if (Option.isSome(ref)) {
+    const blob = yield* readBlobAttachment(ref.value)
+    return FileAttachment.create({
+      data: Base64.make(Buffer.from(blob.data).toString("base64")),
+      mime: blob.mime,
+      source: { type: "inline" },
+      name: input.name,
+      description: input.description,
+      mention: input.mention,
+    })
+  }
   const label = attachmentLabel(input)
   const resolved = input.uri.startsWith("data:")
     ? {
@@ -139,6 +155,14 @@ const normalizeImageAttachment = Effect.fn("SessionPrompt.normalizeImageAttachme
     Effect.mapError((error) => new AttachmentError({ uri: label, message: error.message })),
   )
   return { data: Base64.make(normalized.content), mime: normalized.mime }
+})
+
+/** A `media:` ref a client received from an experimental `experimental-media-uri` read, sent back as an attachment. */
+const readBlobAttachment = Effect.fn("SessionPrompt.readBlobAttachment")(function* (uri: SessionStored.Ref) {
+  const { db } = yield* Database.Service
+  const blob = yield* SessionBlob.read(db, SessionStored.refHash(uri))
+  if (!blob) return yield* new AttachmentError({ uri, message: `Attachment is no longer stored: ${uri}` })
+  return blob
 })
 
 const readFileAttachment = Effect.fn("SessionPrompt.readFileAttachment")(function* (uri: string) {
