@@ -35,11 +35,11 @@ export function useMcpToggle(directory?: Accessor<string | undefined>, onSuccess
       const enabled = typeof input === "string" ? server.status.status !== "connected" : input.enabled
 
       if (!enabled) {
-        await serverSDK.api.mcp.disconnect({ server: name, location: ref })
+        await serverSDK.api.experimental.mcp.disconnect({ server: name, location: ref })
       }
 
       if (enabled && server.status.status !== "needs_auth") {
-        await serverSDK.api.mcp.connect({ server: name, location: ref })
+        await serverSDK.api.experimental.mcp.connect({ server: name, location: ref })
       }
 
       data.location.mcp.server.invalidate(ref)

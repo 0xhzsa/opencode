@@ -393,6 +393,79 @@ describe("HttpApiCodegen.generate", () => {
     expect(contract.groups[0]?.endpoints[0]?.operation).toMatchObject({ group: "sessions", name: "get" })
   })
 
+  test("nests namespaced endpoints and merges them with a group of the same name", async () => {
+    const source = HttpApi.make("test")
+      .add(
+        HttpApiGroup.make("server.session")
+          .add(HttpApiEndpoint.get("get", "/session", { success: Schema.String }))
+          .add(HttpApiEndpoint.get("stats", "/experimental/session/stats", { success: Schema.String })),
+      )
+      .add(
+        HttpApiGroup.make("server.experimental").add(
+          HttpApiEndpoint.get("read", "/experimental/terminal", { success: Schema.String }).annotateMerge(
+            OpenApi.annotations({ identifier: "server.experimental.terminal.read" }),
+          ),
+        ),
+      )
+    const contract = compileContract(source, {
+      groupNames: { "server.session": "session", "server.experimental": "experimental" },
+      namespace: (endpoint) => (endpoint.path.startsWith("/experimental/") ? "experimental" : undefined),
+    })
+
+    expect(contract.groups.map((group) => [group.identifier, group.path])).toEqual([
+      ["session", ["session"]],
+      ["experimental.session", ["experimental", "session"]],
+      ["experimental", ["experimental"]],
+    ])
+
+    const paths: Array<string> = []
+    await using emitted = await emittedModule(emitPromise(contract))
+    const client = emitted.module.OpenCode.make({
+      baseUrl: "https://example.com",
+      fetch: async (input: RequestInfo | URL) => {
+        paths.push(new URL(input instanceof Request ? input.url : input).pathname)
+        return Response.json("ok")
+      },
+    })
+    expect(Object.keys(client)).toEqual(["session", "experimental"])
+    expect(Object.keys(client.session)).toEqual(["get"])
+    expect(Object.keys(client.experimental)).toEqual(["session", "terminal"])
+    expect(await client.session.get()).toBe("ok")
+    expect(await client.experimental.session.stats()).toBe("ok")
+    expect(await client.experimental.terminal.read()).toBe("ok")
+    expect(paths).toEqual(["/session", "/experimental/session/stats", "/experimental/terminal"])
+
+    const imported = emitEffectImported(contract, { module: "@example/api", api: "Api" })
+    expect(imported.files.find((file) => file.path === "client.ts")?.content).toContain(
+      '"experimental": { ...adaptGroupExperimental(raw["server.experimental"]), "session": adaptGroupExperimentalSession(raw["server.session"]) }',
+    )
+    const shape = emitEffectShape(contract).files.find((file) => file.path === "api.ts")?.content
+    expect(shape).toContain('readonly "session": SessionApi<E>')
+    expect(shape).toContain(
+      'readonly "experimental": ExperimentalApi<E> & {\nreadonly "session": ExperimentalSessionApi<E>\n}',
+    )
+  })
+
+  test("rejects a namespaced group that collides with a method in the namespace", () => {
+    const source = HttpApi.make("test")
+      .add(
+        HttpApiGroup.make("experimental").add(
+          HttpApiEndpoint.get("read", "/experimental/session", { success: Schema.String }).annotateMerge(
+            OpenApi.annotations({ identifier: "experimental.session.read" }),
+          ),
+        ),
+      )
+      .add(
+        HttpApiGroup.make("session").add(
+          HttpApiEndpoint.get("stats", "/experimental/stats", { success: Schema.String }),
+        ),
+      )
+
+    expect(() => compileContract(source, { namespace: () => "experimental" })).toThrow(
+      "Client name collision: experimental.session",
+    )
+  })
+
   test("derives nested paths from OpenAPI operation IDs", () => {
     const source = HttpApi.make("test").add(
       HttpApiGroup.make("server.session").add(

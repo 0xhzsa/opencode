@@ -67,7 +67,7 @@ export function createSessionRevert(input: {
     // Like the TUI, stop at the first failure instead of waiting on work that was never interrupted.
     if (!(await request(() => server.api.session.interrupt({ sessionID })))) return
 
-    if (!(await request(() => server.api.session.wait({ sessionID })))) return
+    if (!(await request(() => server.api.experimental.session.wait({ sessionID })))) return
 
     if (!(await request(() => server.api.session.revert.stage({ sessionID, messageID: message.id })))) return
     // Like the TUI, pending inputs are left alone: the revert hides them, committing it drops them,

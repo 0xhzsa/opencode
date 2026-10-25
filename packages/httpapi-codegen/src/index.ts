@@ -61,6 +61,7 @@ export class GenerationError extends Schema.TaggedError<GenerationError>()("Gene
 
 export type Endpoint = {
   readonly group: string
+  readonly groupPath: ReadonlyArray<string>
   readonly sourceGroup: string
   readonly topLevel: boolean
   readonly endpoint: HttpApiEndpoint.Top
@@ -79,6 +80,8 @@ export type Endpoint = {
 
 export type Group = {
   readonly identifier: string
+  /** Where the group's methods live on the client; empty for top-level groups outside a namespace. */
+  readonly path: ReadonlyArray<string>
   readonly sourceIdentifier: string
   readonly module: string
   readonly endpoints: ReadonlyArray<Endpoint>
@@ -103,6 +106,11 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Constrain
   options?: {
     readonly groupNames?: Readonly<Record<string, string>>
     readonly omitEndpoints?: ReadonlySet<string>
+    /**
+     * Nests an endpoint's group under a client namespace, so `client.<group>.<method>` becomes
+     * `client.<namespace>.<group>.<method>`. A group whose name equals the namespace is not repeated.
+     */
+    readonly namespace?: (endpoint: HttpApiEndpoint.Top) => string | undefined
   },
 ): Contract {
   const endpoints: Array<Endpoint> = []
@@ -112,7 +120,21 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Constrain
     onGroup() {},
     onEndpoint({ endpoint, errors, group, middleware }) {
       if (options?.omitEndpoints?.has(endpoint.identifier)) return
-      const groupName = options?.groupNames?.[group.identifier] ?? group.identifier
+      const sourceName = options?.groupNames?.[group.identifier] ?? group.identifier
+      const namespace = options?.namespace?.(endpoint)
+      if (namespace === "" || namespace === "__proto__") {
+        throw new GenerationError({ reason: `Invalid client namespace: ${JSON.stringify(namespace)}` })
+      }
+      const groupName =
+        namespace === undefined || namespace === sourceName ? sourceName : `${namespace}.${sourceName}`
+      const groupPath =
+        namespace === undefined
+          ? group.topLevel
+            ? []
+            : [sourceName]
+          : group.topLevel || namespace === sourceName
+            ? [namespace]
+            : [namespace, sourceName]
       const name = `${groupName}.${endpoint.identifier}`
       const required = Array.from(middleware).find((item) => item.requiredForClient)
       if (required !== undefined) {
@@ -182,6 +204,7 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Constrain
       )
       endpoints.push({
         group: groupName,
+        groupPath,
         sourceGroup: group.identifier,
         topLevel: group.topLevel,
         endpoint,
@@ -226,6 +249,10 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Constrain
       if (new Set(endpoints.map((endpoint) => endpoint.sourceGroup)).size > 1) {
         throw new GenerationError({ reason: `Client group name collision: ${identifier}` })
       }
+      const path = endpoints[0].groupPath
+      if (endpoints.some((endpoint) => endpoint.groupPath.join("\0") !== path.join("\0"))) {
+        throw new GenerationError({ reason: `Client group path conflict: ${identifier}` })
+      }
       // Module names derive from the group identifier so unrelated groups never rename.
       const sanitized = identifier.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")
       const reserved = /^(aux|client|client-error|con|index|nul|prn|com[1-9]|lpt[1-9])$/i.test(sanitized)
@@ -234,10 +261,9 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Constrain
         throw new GenerationError({ reason: `Client module name collision: ${module}` })
       }
       modules.add(module.toLowerCase())
-      return { identifier, sourceIdentifier: endpoints[0].sourceGroup, module, endpoints }
+      return { identifier, path, sourceIdentifier: endpoints[0].sourceGroup, module, endpoints }
     },
   )
-  const publicNames = new Set<string>()
   const groupTypeNames = new Set<string>()
   const endpointTypeNames = new Set<string>()
   const operationKeys = new Set<string>()
@@ -272,19 +298,19 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Constrain
       }
       typeNames.add(name)
     }
-    const paths = group.endpoints[0]?.topLevel
-      ? [...new Set(group.endpoints.map((item) => item.clientPath[0]))].map((name) => [name])
-      : [[group.identifier]]
-    for (const path of paths) {
-      const key = path.join("\0")
-      for (const existing of publicNames) {
-        if (existing === key || existing.startsWith(`${key}\0`) || key.startsWith(`${existing}\0`)) {
-          throw new GenerationError({ reason: `Client name collision: ${path.join(".")}` })
-        }
-      }
-      publicNames.add(key)
-    }
   }
+  const visit = (node: GroupNode, path: ReadonlyArray<string>) => {
+    const keys = new Set<string>()
+    for (const entry of node.entries) {
+      const names = typeof entry === "string" ? [entry] : [...new Set(entry.endpoints.map((item) => item.clientPath[0]))]
+      for (const name of names) {
+        if (keys.has(name)) throw new GenerationError({ reason: `Client name collision: ${[...path, name].join(".")}` })
+        keys.add(name)
+      }
+    }
+    for (const [name, child] of node.children) visit(child, [...path, name])
+  }
+  visit(groupTree(groups), [])
   return {
     groups,
   }
@@ -428,17 +454,22 @@ function renderEffectShape(
     )
     return `${endpoints.join("\n\n")}\n\nexport interface ${groupShapeName(group)}<E = never> {\n${methods}\n}`
   })
-  const clientFields = groups.flatMap((group) =>
-    group.endpoints[0]?.topLevel
-      ? [
-          renderClientTree(
-            group.endpoints,
-            (endpoint) => `${groupShapeTypeName(group, endpoint)}<E>`,
-            (name, value) => `readonly ${JSON.stringify(name)}: ${value}`,
-            "\n",
-          ),
-        ]
-      : [`readonly ${JSON.stringify(group.identifier)}: ${groupShapeName(group)}<E>`],
+  const clientFields = renderGroupTree(
+    groups,
+    (group) =>
+      group.endpoints[0]?.topLevel
+        ? {
+            fields: renderClientTree(
+              group.endpoints,
+              (endpoint) => `${groupShapeTypeName(group, endpoint)}<E>`,
+              (name, value) => `readonly ${JSON.stringify(name)}: ${value}`,
+              "\n",
+            ),
+          }
+        : { whole: `${groupShapeName(group)}<E>` },
+    (name, value) => `readonly ${JSON.stringify(name)}: ${value}`,
+    (wholes, fields) => [...wholes, ...(fields.length === 0 ? [] : [`{\n${fields.join("\n")}\n}`])].join(" & "),
+    "\n",
   )
   return `// Generated by @opencode/httpapi-codegen. Do not edit.
 import type { Effect, Stream } from "effect"
@@ -447,7 +478,7 @@ ${[...imports].join("\n")}
 ${endpointTypes.join("\n\n")}
 
 export interface AppApi<E = never> {
-${clientFields.join("\n")}
+${clientFields}
 }
 `
 }
@@ -710,12 +741,15 @@ function renderImportedEffectFiles(
     )
     return `${methods.join("\n\n")}\n\nconst adaptGroup${groupTypeName(group)} = (raw: ${rawGroup}) => ({ ${fields} })`
   })
-  const fields = groups.flatMap((group) =>
-    group.endpoints[0]?.topLevel
-      ? [`...adaptGroup${groupTypeName(group)}(raw)`]
-      : [
-          `${JSON.stringify(group.identifier)}: adaptGroup${groupTypeName(group)}(raw[${JSON.stringify(group.sourceIdentifier)}])`,
-        ],
+  const fields = renderGroupTree(
+    groups,
+    (group) =>
+      group.endpoints[0]?.topLevel
+        ? { fields: `...adaptGroup${groupTypeName(group)}(raw)` }
+        : { whole: `adaptGroup${groupTypeName(group)}(raw[${JSON.stringify(group.sourceIdentifier)}])` },
+    (name, value) => `${JSON.stringify(name)}: ${value}`,
+    spreadObject,
+    ", ",
   )
   const usesStream = groups.some((group) => group.endpoints.some((item) => item.operation.success === "stream"))
   const imported = "api" in options
@@ -753,7 +787,7 @@ function renderImportedEffectFiles(
     options.shapeModule === undefined
       ? ""
       : `const preserveEffect = <A>() => <Actual extends A, E, R>(effect: Effect.Effect<Actual, E, R> & ([A] extends [Actual] ? unknown : { readonly __generatedOutputWiderThanContract: [expected: Actual, generated: A] })): Effect.Effect<A, E, R> => effect\n${usesStream ? "const preserveStream = <A>() => <Actual extends A, E, R>(stream: Stream.Stream<Actual, E, R> & ([A] extends [Actual] ? unknown : { readonly __generatedOutputWiderThanContract: [expected: Actual, generated: A] })): Stream.Stream<A, E, R> => stream\n" : ""}\n`
-  const client = `// Generated by @opencode/httpapi-codegen. Do not edit.\nimport { Effect${usesStream ? ", Stream" : ""}, Schema } from "effect"\nimport { Sse } from "effect/encoding"\nimport { HttpClientError } from "effect/http"\n${httpApiImport}${imports}\n${shapeImport}import { ClientError } from "./client-error.js"\n\n${projection?.source ?? ""}type RawClient = HttpApiClient.ForApi<typeof ${api}>\n\nconst mapClientError = <E>(error: E) => HttpClientError.isHttpClientError(error) || Schema.isSchemaError(error) || Sse.Retry.is(error) ? new ClientError({ cause: error }) : error\n\n${preserve}${adapters.join("\n\n")}\n\nconst adaptClient = (raw: RawClient) => ({ ${fields.join(", ")} })\n\nexport const make = (options?: { readonly baseUrl?: URL | string }) => HttpApiClient.make(${api}, options).pipe(Effect.map(adaptClient))\n`
+  const client = `// Generated by @opencode/httpapi-codegen. Do not edit.\nimport { Effect${usesStream ? ", Stream" : ""}, Schema } from "effect"\nimport { Sse } from "effect/encoding"\nimport { HttpClientError } from "effect/http"\n${httpApiImport}${imports}\n${shapeImport}import { ClientError } from "./client-error.js"\n\n${projection?.source ?? ""}type RawClient = HttpApiClient.ForApi<typeof ${api}>\n\nconst mapClientError = <E>(error: E) => HttpClientError.isHttpClientError(error) || Schema.isSchemaError(error) || Sse.Retry.is(error) ? new ClientError({ cause: error }) : error\n\n${preserve}${adapters.join("\n\n")}\n\nconst adaptClient = (raw: RawClient) => ({ ${fields} })\n\nexport const make = (options?: { readonly baseUrl?: URL | string }) => HttpApiClient.make(${api}, options).pipe(Effect.map(adaptClient))\n`
   return [
     {
       path: "client-error.ts",
@@ -910,7 +944,8 @@ function renderPromiseClient(groups: ReadonlyArray<Group>) {
       return [...(promiseInputMode(endpoint) === "none" ? [] : [`${prefix}Input`]), `${prefix}Output`]
     }),
   )
-  const fields = groups.map((group) => {
+  const groupFields = new Map<Group, string>()
+  for (const group of groups) {
     const methods = group.endpoints.map((endpoint) => {
       const prefix = promiseTypePrefix(group.identifier, endpoint.clientPath)
       const inputMode = promiseInputMode(endpoint)
@@ -949,16 +984,24 @@ function renderPromiseClient(groups: ReadonlyArray<Group>) {
       const unwrap = endpoint.unwrapData ? ".then((value) => value.data)" : ""
       return `(${argument}) => request<${endpoint.unwrapData ? `{ readonly data: ${prefix}Output }` : `${prefix}Output`}>(${descriptor}, requestOptions)${unwrap}`
     })
-    const fields = renderClientTree(
-      group.endpoints,
-      (_endpoint, endpointIndex) => methods[endpointIndex],
-      (name, value) => `${JSON.stringify(name)}: ${value}`,
-      ", ",
+    groupFields.set(
+      group,
+      renderClientTree(
+        group.endpoints,
+        (_endpoint, endpointIndex) => methods[endpointIndex],
+        (name, value) => `${JSON.stringify(name)}: ${value}`,
+        ", ",
+      ),
     )
-    if (group.endpoints[0]?.topLevel) return fields
-    return `${JSON.stringify(group.identifier)}: { ${fields} }`
-  })
-  return `import type { ${imports.join(", ")} } from "./types.js"\nimport { ClientError } from "./client-error.js"\n\nexport interface ClientOptions {\n  readonly baseUrl: string\n  readonly fetch?: typeof globalThis.fetch\n  readonly headers?: RequestInit["headers"]\n}\n\nexport interface RequestOptions {\n  readonly signal?: AbortSignal\n  readonly headers?: RequestInit["headers"]\n  /** Reports every chunk a streaming response receives, including keepalive comments that yield no event. */\n  readonly onActivity?: () => void\n}\n\ninterface RequestDescriptor {\n  readonly method: string\n  readonly path: string\n  readonly query?: Record<string, unknown>\n  readonly headers?: Record<string, unknown>\n  readonly body?: unknown\n  readonly successStatus: number\n  readonly declaredStatuses: ReadonlyArray<number>\n  readonly empty: boolean\n}\n\nconst maxSseEventBytes = 16 * 1024 * 1024\n\nexport function make(options: ClientOptions) {\n  const fetch = options.fetch ?? globalThis.fetch\n\n  const prepare = (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {\n    // A leading slash would replace any path prefix on baseUrl, so join relative to it.\n    const baseUrl = new URL(options.baseUrl)\n    if (!baseUrl.pathname.endsWith("/")) baseUrl.pathname += "/"\n    const url = new URL(descriptor.path.slice(1), baseUrl)\n    for (const [key, value] of Object.entries(descriptor.query ?? {})) appendQuery(url.searchParams, key, value)\n    const headers = new Headers(options.headers)\n    for (const [key, value] of Object.entries(descriptor.headers ?? {})) {\n      if (value !== undefined && value !== null) headers.set(key, String(value))\n    }\n    for (const [key, value] of new Headers(requestOptions?.headers)) headers.set(key, value)\n    if (descriptor.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json")\n    return {\n      url,\n      init: {\n        method: descriptor.method,\n        signal: requestOptions?.signal,\n        headers,\n        body: descriptor.body === undefined ? undefined : JSON.stringify(descriptor.body),\n      } satisfies RequestInit,\n    }\n  }\n\n  const execute = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {\n    try {\n      const prepared = prepare(descriptor, requestOptions)\n      return await fetch(prepared.url, prepared.init)\n    } catch (cause) {\n      throw new ClientError("Transport", { cause })\n    }\n  }\n\n  const responseError = async (response: Response, descriptor: RequestDescriptor): Promise<never> => {\n    if (descriptor.declaredStatuses.includes(response.status)) throw declared(await json(response) as DeclaredErrorBody)\n    try {\n      await response.body?.cancel()\n    } catch {}\n    throw new ClientError("UnexpectedStatus", { cause: { status: response.status }, detail: String(response.status) })\n  }\n\n  const request = async <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<A> => {\n    const response = await execute(descriptor, requestOptions)\n    if (response.status !== descriptor.successStatus) return responseError(response, descriptor)\n    if (descriptor.empty) {\n      try {\n        await response.body?.cancel()\n      } catch {}\n      return undefined as A\n    }\n    return await json(response) as A\n  }\n\n  const sse = <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): AsyncIterable<A> => ({\n    async *[Symbol.asyncIterator]() {\n      const response = await execute(descriptor, requestOptions)\n      if (response.status !== descriptor.successStatus) await responseError(response, descriptor)\n      if (!isContentType(response, "text/event-stream")) {\n        try {\n          await response.body?.cancel()\n        } catch {}\n        throw new ClientError("UnsupportedContentType", { detail: response.headers.get("content-type") })\n      }\n      if (response.body === null) throw new ClientError("MalformedResponse")\n      const reader = response.body.getReader()\n      const decoder = new TextDecoder()\n      let buffer = ""\n      try {\n        while (true) {\n          let next: ReadableStreamReadResult<Uint8Array>\n          try {\n            next = await reader.read()\n          } catch (cause) {\n            throw new ClientError("Transport", { cause })\n          }\n          if (!next.done) requestOptions?.onActivity?.()\n          buffer += decoder.decode(next.value, { stream: !next.done })\n          if (buffer.length > maxSseEventBytes) throw new ClientError("SseEventTooLarge")\n          const trailingCarriageReturn = !next.done && buffer.endsWith("\\r")\n          if (trailingCarriageReturn) buffer = buffer.slice(0, -1)\n          buffer = buffer.replaceAll("\\r\\n", "\\n").replaceAll("\\r", "\\n")\n          if (trailingCarriageReturn) buffer += "\\r"\n          if (next.done && buffer !== "") buffer += "\\n\\n"\n          let boundary = buffer.indexOf("\\n\\n")\n          while (boundary >= 0) {\n            const block = buffer.slice(0, boundary)\n            buffer = buffer.slice(boundary + 2)\n            const data = block.split("\\n").flatMap((line) => line.startsWith("data:") ? [line.slice(5).trimStart()] : []).join("\\n")\n            if (data !== "") {\n              try {\n                yield JSON.parse(data) as A\n              } catch (cause) {\n                throw new ClientError("MalformedResponse", { cause })\n              }\n            }\n            boundary = buffer.indexOf("\\n\\n")\n          }\n          if (next.done) return\n        }\n      } finally {\n        try {\n          await reader.cancel()\n        } catch {}\n        reader.releaseLock()\n      }\n    },\n  })\n\n  return { ${fields.join(", ")} }\n}\n\nfunction appendQuery(params: URLSearchParams, key: string, value: unknown): void {\n  if (value === undefined) return\n  if (value === null) {\n    params.append(key, "null")\n    return\n  }\n  if (Array.isArray(value)) {\n    for (const item of value) appendQuery(params, key, item)\n    return\n  }\n  if (typeof value === "object") {\n    for (const [child, item] of Object.entries(value)) appendQuery(params, \`\${key}[\${child}]\`, item)\n    return\n  }\n  params.append(key, String(value))\n}\n\nasync function json(response: Response): Promise<unknown> {\n  if (!isContentType(response, "application/json") && !response.headers.get("content-type")?.includes("+json")) {\n    try {\n      await response.body?.cancel()\n    } catch {}\n    throw new ClientError("UnsupportedContentType", { detail: response.headers.get("content-type") })\n  }\n  let text: string\n  try {\n    text = await response.text()\n  } catch (cause) {\n    throw new ClientError("Transport", { cause })\n  }\n  if (text === "") throw new ClientError("MalformedResponse")\n  try {\n    return JSON.parse(text)\n  } catch (cause) {\n    throw new ClientError("MalformedResponse", { cause })\n  }\n}\n\ntype DeclaredErrorBody = { readonly _tag?: string; readonly message?: string; readonly data?: { readonly message?: string } }\n\n/** Throw declared error bodies as Errors. The body's fields stay on the error, so narrowing on \`_tag\` or \`name\` still works. */\nfunction declared(body: DeclaredErrorBody) {\n  const error = Object.assign(new Error(body.message ?? body.data?.message), body)\n  if (body._tag) error.name = body._tag\n  return error\n}\n\nfunction isContentType(response: Response, expected: string) {\n  return response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() === expected\n}\n`
+  }
+  const fields = renderGroupTree(
+    groups,
+    (group) => ({ fields: groupFields.get(group)! }),
+    (name, value) => `${JSON.stringify(name)}: ${value}`,
+    spreadObject,
+    ", ",
+  )
+  return `import type { ${imports.join(", ")} } from "./types.js"\nimport { ClientError } from "./client-error.js"\n\nexport interface ClientOptions {\n  readonly baseUrl: string\n  readonly fetch?: typeof globalThis.fetch\n  readonly headers?: RequestInit["headers"]\n}\n\nexport interface RequestOptions {\n  readonly signal?: AbortSignal\n  readonly headers?: RequestInit["headers"]\n  /** Reports every chunk a streaming response receives, including keepalive comments that yield no event. */\n  readonly onActivity?: () => void\n}\n\ninterface RequestDescriptor {\n  readonly method: string\n  readonly path: string\n  readonly query?: Record<string, unknown>\n  readonly headers?: Record<string, unknown>\n  readonly body?: unknown\n  readonly successStatus: number\n  readonly declaredStatuses: ReadonlyArray<number>\n  readonly empty: boolean\n}\n\nconst maxSseEventBytes = 16 * 1024 * 1024\n\nexport function make(options: ClientOptions) {\n  const fetch = options.fetch ?? globalThis.fetch\n\n  const prepare = (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {\n    // A leading slash would replace any path prefix on baseUrl, so join relative to it.\n    const baseUrl = new URL(options.baseUrl)\n    if (!baseUrl.pathname.endsWith("/")) baseUrl.pathname += "/"\n    const url = new URL(descriptor.path.slice(1), baseUrl)\n    for (const [key, value] of Object.entries(descriptor.query ?? {})) appendQuery(url.searchParams, key, value)\n    const headers = new Headers(options.headers)\n    for (const [key, value] of Object.entries(descriptor.headers ?? {})) {\n      if (value !== undefined && value !== null) headers.set(key, String(value))\n    }\n    for (const [key, value] of new Headers(requestOptions?.headers)) headers.set(key, value)\n    if (descriptor.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json")\n    return {\n      url,\n      init: {\n        method: descriptor.method,\n        signal: requestOptions?.signal,\n        headers,\n        body: descriptor.body === undefined ? undefined : JSON.stringify(descriptor.body),\n      } satisfies RequestInit,\n    }\n  }\n\n  const execute = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {\n    try {\n      const prepared = prepare(descriptor, requestOptions)\n      return await fetch(prepared.url, prepared.init)\n    } catch (cause) {\n      throw new ClientError("Transport", { cause })\n    }\n  }\n\n  const responseError = async (response: Response, descriptor: RequestDescriptor): Promise<never> => {\n    if (descriptor.declaredStatuses.includes(response.status)) throw declared(await json(response) as DeclaredErrorBody)\n    try {\n      await response.body?.cancel()\n    } catch {}\n    throw new ClientError("UnexpectedStatus", { cause: { status: response.status }, detail: String(response.status) })\n  }\n\n  const request = async <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<A> => {\n    const response = await execute(descriptor, requestOptions)\n    if (response.status !== descriptor.successStatus) return responseError(response, descriptor)\n    if (descriptor.empty) {\n      try {\n        await response.body?.cancel()\n      } catch {}\n      return undefined as A\n    }\n    return await json(response) as A\n  }\n\n  const sse = <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): AsyncIterable<A> => ({\n    async *[Symbol.asyncIterator]() {\n      const response = await execute(descriptor, requestOptions)\n      if (response.status !== descriptor.successStatus) await responseError(response, descriptor)\n      if (!isContentType(response, "text/event-stream")) {\n        try {\n          await response.body?.cancel()\n        } catch {}\n        throw new ClientError("UnsupportedContentType", { detail: response.headers.get("content-type") })\n      }\n      if (response.body === null) throw new ClientError("MalformedResponse")\n      const reader = response.body.getReader()\n      const decoder = new TextDecoder()\n      let buffer = ""\n      try {\n        while (true) {\n          let next: ReadableStreamReadResult<Uint8Array>\n          try {\n            next = await reader.read()\n          } catch (cause) {\n            throw new ClientError("Transport", { cause })\n          }\n          if (!next.done) requestOptions?.onActivity?.()\n          buffer += decoder.decode(next.value, { stream: !next.done })\n          if (buffer.length > maxSseEventBytes) throw new ClientError("SseEventTooLarge")\n          const trailingCarriageReturn = !next.done && buffer.endsWith("\\r")\n          if (trailingCarriageReturn) buffer = buffer.slice(0, -1)\n          buffer = buffer.replaceAll("\\r\\n", "\\n").replaceAll("\\r", "\\n")\n          if (trailingCarriageReturn) buffer += "\\r"\n          if (next.done && buffer !== "") buffer += "\\n\\n"\n          let boundary = buffer.indexOf("\\n\\n")\n          while (boundary >= 0) {\n            const block = buffer.slice(0, boundary)\n            buffer = buffer.slice(boundary + 2)\n            const data = block.split("\\n").flatMap((line) => line.startsWith("data:") ? [line.slice(5).trimStart()] : []).join("\\n")\n            if (data !== "") {\n              try {\n                yield JSON.parse(data) as A\n              } catch (cause) {\n                throw new ClientError("MalformedResponse", { cause })\n              }\n            }\n            boundary = buffer.indexOf("\\n\\n")\n          }\n          if (next.done) return\n        }\n      } finally {\n        try {\n          await reader.cancel()\n        } catch {}\n        reader.releaseLock()\n      }\n    },\n  })\n\n  return { ${fields} }\n}\n\nfunction appendQuery(params: URLSearchParams, key: string, value: unknown): void {\n  if (value === undefined) return\n  if (value === null) {\n    params.append(key, "null")\n    return\n  }\n  if (Array.isArray(value)) {\n    for (const item of value) appendQuery(params, key, item)\n    return\n  }\n  if (typeof value === "object") {\n    for (const [child, item] of Object.entries(value)) appendQuery(params, \`\${key}[\${child}]\`, item)\n    return\n  }\n  params.append(key, String(value))\n}\n\nasync function json(response: Response): Promise<unknown> {\n  if (!isContentType(response, "application/json") && !response.headers.get("content-type")?.includes("+json")) {\n    try {\n      await response.body?.cancel()\n    } catch {}\n    throw new ClientError("UnsupportedContentType", { detail: response.headers.get("content-type") })\n  }\n  let text: string\n  try {\n    text = await response.text()\n  } catch (cause) {\n    throw new ClientError("Transport", { cause })\n  }\n  if (text === "") throw new ClientError("MalformedResponse")\n  try {\n    return JSON.parse(text)\n  } catch (cause) {\n    throw new ClientError("MalformedResponse", { cause })\n  }\n}\n\ntype DeclaredErrorBody = { readonly _tag?: string; readonly message?: string; readonly data?: { readonly message?: string } }\n\n/** Throw declared error bodies as Errors. The body's fields stay on the error, so narrowing on \`_tag\` or \`name\` still works. */\nfunction declared(body: DeclaredErrorBody) {\n  const error = Object.assign(new Error(body.message ?? body.data?.message), body)\n  if (body._tag) error.name = body._tag\n  return error\n}\n\nfunction isContentType(response: Response, expected: string) {\n  return response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() === expected\n}\n`
 }
 
 function promiseTypePrefix(group: string, path: ReadonlyArray<string>) {
@@ -1023,6 +1066,68 @@ function renderClientTree(
       ),
     ).join(separator)
   return render(root)
+}
+
+// A node of the public client object: groups whose methods sit at this path, and nested
+// namespaces, kept in declaration order so adding a group never reorders unrelated output.
+type GroupNode = {
+  readonly entries: Array<Group | string>
+  readonly children: Map<string, GroupNode>
+}
+
+function groupTree(groups: ReadonlyArray<Group>) {
+  const root: GroupNode = { entries: [], children: new Map() }
+  for (const group of groups) {
+    const node = group.path.reduce((parent, name) => {
+      const existing = parent.children.get(name)
+      if (existing !== undefined) return existing
+      const child: GroupNode = { entries: [], children: new Map() }
+      parent.children.set(name, child)
+      parent.entries.push(name)
+      return child
+    }, root)
+    node.entries.push(group)
+  }
+  return root
+}
+
+/**
+ * Renders the client object from its groups. A group either renders as one whole value (a
+ * reference or call) or as fields; a node holding exactly one whole and nothing else collapses
+ * to that whole, anything else goes through `combine`.
+ */
+function renderGroupTree(
+  groups: ReadonlyArray<Group>,
+  member: (group: Group) => { readonly whole: string } | { readonly fields: string },
+  field: (name: string, value: string) => string,
+  combine: (wholes: ReadonlyArray<string>, fields: ReadonlyArray<string>) => string,
+  separator: string,
+) {
+  const parts = (node: GroupNode) => {
+    const wholes: Array<string> = []
+    const fields: Array<string> = []
+    for (const entry of node.entries) {
+      if (typeof entry === "string") {
+        fields.push(field(entry, value(node.children.get(entry)!)))
+        continue
+      }
+      const rendered = member(entry)
+      if ("whole" in rendered) wholes.push(rendered.whole)
+      else if (rendered.fields !== "") fields.push(rendered.fields)
+    }
+    return { wholes, fields }
+  }
+  const value = (node: GroupNode): string => {
+    const { wholes, fields } = parts(node)
+    return wholes.length === 1 && fields.length === 0 ? wholes[0] : combine(wholes, fields)
+  }
+  const root = parts(groupTree(groups))
+  if (root.wholes.length > 0) throw new GenerationError({ reason: "Client root cannot hold a nested group" })
+  return root.fields.join(separator)
+}
+
+function spreadObject(wholes: ReadonlyArray<string>, fields: ReadonlyArray<string>) {
+  return `{ ${[...wholes.map((whole) => `...${whole}`), ...fields].join(", ")} }`
 }
 
 function identifierPart(value: string) {
@@ -1948,14 +2053,18 @@ function renderClient(groups: ReadonlyArray<Group>) {
     )
     .join("\n")
   const api = `HttpApi.make("generated")${groups.map((group) => `.add(Group${groupTypeName(group)})`).join("")}`
-  const fields = groups.flatMap((group) => {
-    if (!group.endpoints[0]?.topLevel) {
-      return [
-        `${JSON.stringify(group.identifier)}: adaptGroup${groupTypeName(group)}(raw[${JSON.stringify(group.identifier)}])`,
-      ]
-    }
-    const raw = `{ ${group.endpoints.map((item) => `${JSON.stringify(item.endpoint.identifier)}: raw[${JSON.stringify(item.endpoint.identifier)}]`).join(", ")} }`
-    return [`...adaptGroup${groupTypeName(group)}(${raw})`]
-  })
-  return `// Generated by @opencode/httpapi-codegen. Do not edit.\nimport { Effect } from "effect"\nimport { HttpApi, HttpApiClient } from "effect/http-api"\n${imports}\n\nconst Api = ${api}\nconst adaptClient = (raw: HttpApiClient.ForApi<typeof Api>) => ({ ${fields.join(", ")} })\n\nexport const make = (options?: { readonly baseUrl?: URL | string }) =>\n  HttpApiClient.make(Api, options).pipe(Effect.map(adaptClient))\n`
+  const fields = renderGroupTree(
+    groups,
+    (group) => {
+      if (!group.endpoints[0]?.topLevel) {
+        return { whole: `adaptGroup${groupTypeName(group)}(raw[${JSON.stringify(group.identifier)}])` }
+      }
+      const raw = `{ ${group.endpoints.map((item) => `${JSON.stringify(item.endpoint.identifier)}: raw[${JSON.stringify(item.endpoint.identifier)}]`).join(", ")} }`
+      return { fields: `...adaptGroup${groupTypeName(group)}(${raw})` }
+    },
+    (name, value) => `${JSON.stringify(name)}: ${value}`,
+    spreadObject,
+    ", ",
+  )
+  return `// Generated by @opencode/httpapi-codegen. Do not edit.\nimport { Effect } from "effect"\nimport { HttpApi, HttpApiClient } from "effect/http-api"\n${imports}\n\nconst Api = ${api}\nconst adaptClient = (raw: HttpApiClient.ForApi<typeof Api>) => ({ ${fields} })\n\nexport const make = (options?: { readonly baseUrl?: URL | string }) =>\n  HttpApiClient.make(Api, options).pipe(Effect.map(adaptClient))\n`
 }

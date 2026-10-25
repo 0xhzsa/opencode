@@ -185,11 +185,11 @@ function McpMenu(props: ServiceMenuProps) {
       if (!server) return
 
       if (!input.enabled) {
-        await client.mcp.disconnect({ server: input.name, location: ref })
+        await client.experimental.mcp.disconnect({ server: input.name, location: ref })
       }
 
       if (input.enabled && server.status.status !== "needs_auth") {
-        await client.mcp.connect({ server: input.name, location: ref })
+        await client.experimental.mcp.connect({ server: input.name, location: ref })
       }
 
       source.location.mcp.server.invalidate(ref)
