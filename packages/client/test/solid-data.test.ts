@@ -1016,6 +1016,94 @@ test("loads bounded message pages", async () => {
   }
 })
 
+function resyncFixture(length: number) {
+  const sessionID = "ses_resync"
+  const history = Array.from({ length }, (_, index) => ({
+    id: `msg_${String(index).padStart(4, "0")}`,
+    type: "user",
+    text: `Message ${index}`,
+    time: { created: index },
+  }))
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      // Like the server, a cursor names the oldest message read, and any non-empty page has a next cursor.
+      const cursor = url.searchParams.get("cursor")
+      const end = cursor ? Math.max(0, history.findIndex((item) => item.id === cursor)) : history.length
+      const data = history.slice(Math.max(0, end - Number(url.searchParams.get("limit"))), end).toReversed()
+      return Response.json({ data: structuredClone(data), cursor: data.length > 0 ? { next: data.at(-1)!.id } : {} })
+    },
+  })
+  return createRoot((dispose) => {
+    const data = createData({
+      api: () => api,
+      directory: "/project",
+      event: { on: () => () => {}, listen: () => () => {} },
+    })
+    return {
+      data,
+      history,
+      dispose,
+      ids: () => data.session.message.list(sessionID).map((message) => message.id),
+      sync: () => data.session.message.sync(sessionID),
+      loadMore: () => data.session.message.loadMore(sessionID),
+      resync() {
+        data.session.message.invalidate(sessionID)
+        return data.session.message.sync(sessionID)
+      },
+    }
+  })
+}
+
+test("a resync keeps loaded history and takes new and changed rows from the server", async () => {
+  const setup = resyncFixture(100)
+  try {
+    await setup.sync()
+    await setup.loadMore()
+    await setup.loadMore()
+    expect(setup.ids()).toEqual(setup.history.slice(40).map((item) => item.id))
+
+    setup.history[50] = { ...setup.history[50]!, text: "Edited" }
+    setup.history.push(...[100, 101].map((index) => ({ ...setup.history[0]!, id: `msg_0${index}` })))
+    await setup.resync()
+    expect(setup.ids()).toEqual(setup.history.slice(22).map((item) => item.id))
+    const edited = setup.data.session.message.get("ses_resync", "msg_0050")
+    expect(edited?.type === "user" ? edited.text : undefined).toBe("Edited")
+
+    await setup.loadMore()
+    expect(setup.ids()).toEqual(setup.history.slice(2).map((item) => item.id))
+  } finally {
+    setup.dispose()
+  }
+})
+
+test("a resync takes history reverted past the oldest loaded row from the server", async () => {
+  const setup = resyncFixture(100)
+  try {
+    await setup.sync()
+    await setup.loadMore()
+    setup.history.splice(30)
+    await setup.resync()
+    expect(setup.ids()).toEqual(setup.history.map((item) => item.id))
+  } finally {
+    setup.dispose()
+  }
+})
+
+test("a resync of history deeper than one server page keeps the newest page", async () => {
+  const setup = resyncFixture(500)
+  try {
+    await setup.sync()
+    while (setup.ids().length < 300) await setup.loadMore()
+    await setup.resync()
+    expect(setup.ids()).toEqual(setup.history.slice(300).map((item) => item.id))
+    expect(setup.data.session.message.more("ses_resync")).toBe(true)
+  } finally {
+    setup.dispose()
+  }
+})
+
 test.each(["success", "failure", "cancel", "cancel-retry", "cancel-page", "join-cancel", "join-failure"])(
   "bulk history (%s)",
   async (mode) => {

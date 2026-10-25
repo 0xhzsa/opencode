@@ -82,6 +82,8 @@ export type CreateDataInput = {
 }
 
 const messagePageLimit = 20
+// The server's largest message page.
+const resyncMessageLimit = 200
 // Trailing window for event bursts that each ask for the same refetch.
 export const settleMs = 150
 
@@ -1709,9 +1711,13 @@ export function createData(config: CreateDataInput) {
         },
         sync(sessionID: string) {
           return sync.run(`session.message:${sessionID}`, async () => {
+            const limit = config.initialMessageLimit?.() ?? messagePageLimit
+            // A re-read covers the history already loaded, plus room for rows that arrived meanwhile, so a reconnect
+            // keeps the transcript's place. Deeper history collapses to the newest page the server allows.
+            const loaded = store.session.message[sessionID]?.length ?? 0
             const response = await api().message.list({
               sessionID,
-              limit: config.initialMessageLimit?.() ?? messagePageLimit,
+              limit: loaded === 0 ? limit : Math.min(resyncMessageLimit, loaded + limit),
               order: "desc",
             })
             const fetched = response.data.toReversed()
