@@ -435,6 +435,9 @@ describe("HttpApiCodegen.generate", () => {
     expect(await client.experimental.terminal.read()).toBe("ok")
     expect(paths).toEqual(["/session", "/experimental/session/stats", "/experimental/terminal"])
 
+    expect(emitEffect(contract).files.find((file) => file.path === "client.ts")?.content).toContain(
+      '"experimental": { ...adaptGroupExperimental(raw["experimental"]), "session": adaptGroupExperimentalSession(raw["experimental.session"]) }',
+    )
     const imported = emitEffectImported(contract, { module: "@example/api", api: "Api" })
     expect(imported.files.find((file) => file.path === "client.ts")?.content).toContain(
       '"experimental": { ...adaptGroupExperimental(raw["server.experimental"]), "session": adaptGroupExperimentalSession(raw["server.session"]) }',
