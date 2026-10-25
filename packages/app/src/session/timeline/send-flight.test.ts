@@ -132,19 +132,26 @@ test("lands in local CSS pixels when its viewport is zoomed", async () => {
 
 test("flies on its own spring, not the rows' growth spring", () => {
   const { editor, bubble, restore } = setup()
+
   const knob = (id: string) => {
     const found = motionTuning.list().find((item) => item.id === id)
+
     if (found?.kind !== "spring") throw new Error(`no spring ${id}`)
+
     return found
   }
+
   const flight = knob("timeline.sendFlight")
   const growth = knob("timeline.growth")
+
   const land = (id: string) => {
     played = []
     prepareSendFlight(id, editor)
     landSendFlight(id, bubble(300))
+
     return hosts()[0]!.duration
   }
+
   try {
     expect(sendFlightSpring()).toEqual(growthSpring())
     const shipped = land("shipped")
