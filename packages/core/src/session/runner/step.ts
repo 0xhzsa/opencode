@@ -19,7 +19,6 @@ import { Tool } from "../../tool.js"
 import { ToolOutput } from "../../tool-output.js"
 import { QuestionTool } from "../../tool/plugin/question.js"
 import { StepFailedError } from "../error.js"
-import { SessionEvent } from "../event.js"
 import { SessionMessage } from "../message.js"
 import { SessionModelRequest } from "../model-request.js"
 import { SessionSchema } from "../schema.js"
@@ -82,6 +81,7 @@ export const make = Effect.gen(function* () {
       providerMetadataKey: input.model.model.route.providerMetadataKey ?? input.model.model.provider,
       pendingSnapshot: Fiber.join(pendingStartSnapshot),
       started: yield* Clock.currentTimeMillis,
+      scope: yield* Effect.scope,
     })
     const toolRuns: Array<{
       readonly call: ToolCall
@@ -246,9 +246,7 @@ export const make = Effect.gen(function* () {
           const usage = record.finish ? SessionUsage.record(record.finish.usage, input.model.cost) : undefined
           if (record.failure) yield* publisher.publishStepFailure({ ...usage, snapshot, files })
           if (record.finish && usage && !record.failure)
-            yield* bus.publish(SessionEvent.Step.Ended, {
-              sessionID: input.sessionID,
-              assistantMessageID: yield* publisher.startAssistant(),
+            yield* publisher.endStep({
               finish: record.finish.finish,
               rawFinish: record.finish.rawFinish,
               native: record.finish.native,
@@ -279,7 +277,7 @@ export const make = Effect.gen(function* () {
         const needsContinuation = input.prepared.request.toolChoice?.type !== "none" && record.needsContinuation
         if (record.finish?.finish === "length") return Outcome.OutputLimit({ needsContinuation })
         return Outcome.Completed({ needsContinuation })
-      }),
+      }).pipe(Effect.ensuring(publisher.commit)),
     )
   }, Effect.scoped)
 
