@@ -754,7 +754,7 @@ describe("SessionPrompt preparation", () => {
         input,
       }
       const items = yield* Effect.forEach([0, 1], () => SessionPrompt.prepare(request)).pipe(
-        Effect.provideService(Instance.Service, fixture.instances),
+        fixture.instances.provide(request.session),
         Effect.satisfiesServicesType<FSUtil.Service>(),
       )
 

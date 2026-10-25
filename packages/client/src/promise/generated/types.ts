@@ -3,6 +3,7 @@ export type JsonValue = null | boolean | number | string | Array<JsonValue> | { 
 export type ServerInfo = {
   version: string
   pid: number
+  hostname?: string | undefined
   urls: Array<string>
   paths: { tmp: string }
   capabilities?: { persistentPty?: boolean | undefined } | undefined
@@ -717,6 +718,7 @@ export type IntegrationCommandAttempt = { attemptID: IntegrationAttemptID; time:
 export type McpServer = {
   name: string
   status: McpStatusConnected | McpStatusPending | McpStatusDisabled | McpStatusFailed | McpStatusNeedsAuth
+  title?: string
   integrationID?: IntegrationID
 }
 
@@ -2365,6 +2367,7 @@ export type ConfigEntry =
           todo?: boolean
           background_compaction?: boolean
           preconnect?: boolean
+          media_blob?: boolean
           subagent_depth?: number
           location_idle_timeout?: string | false
           policies?: Array<{
@@ -5610,6 +5613,20 @@ export type FileWriteInput = {
 }
 
 export type FileWriteOutput = { location: LocationPublicRef; data: FileSystemWrite }
+
+export type FileWatchInput = {
+  readonly location?: { readonly location?: { readonly directory?: string | undefined } | undefined }["location"]
+  readonly path: { readonly path: string }["path"]
+}
+
+export type FileWatchOutput = void
+
+export type FileUnwatchInput = {
+  readonly location?: { readonly location?: { readonly directory?: string | undefined } | undefined }["location"]
+  readonly path: { readonly path: string }["path"]
+}
+
+export type FileUnwatchOutput = void
 
 export type CommandListInput = {
   readonly location?: { readonly location?: { readonly directory?: string | undefined } | undefined }["location"]
