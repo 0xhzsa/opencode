@@ -1,6 +1,6 @@
 export * as SessionRestart from "./restart.js"
 
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Fiber, Layer, Semaphore, Stream } from "effect"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { Bus } from "../../bus.js"
 import { Job } from "../../job.js"
@@ -28,9 +28,17 @@ export interface Options {
    * never accumulate: the budget is per-turn, not per-session.
    */
   readonly maxAttempts?: number
+  /**
+   * Resumes that may be starting at once. A slot frees when the resumed turn
+   * settles its first step, ends, or has held the slot for 60 seconds, so a
+   * burst of interrupted turns cannot all issue their first request together.
+   */
+  readonly maxConcurrentResumes?: number
 }
 
 const DEFAULT_MAX_ATTEMPTS = 10
+const DEFAULT_MAX_CONCURRENT_RESUMES = 3
+const RESUME_SLOT_TIMEOUT = "60 seconds"
 
 export interface Interface {
   /**
@@ -39,6 +47,10 @@ export interface Interface {
    * shutdown (which preserves the claim on purpose). The claim is never
    * cleared here: only a terminal event releases it, so a death anywhere in
    * the resume path leaves the same orphaned claim for the next boot.
+   *
+   * Resumes start through a bounded gate, recovered subagents first, then
+   * Sessions most recently updated first. Completes once every resume has
+   * started, which can take minutes after a large restart; callers fork it.
    */
   readonly resumeSuspendedSessions: Effect.Effect<void>
 }
@@ -73,6 +85,33 @@ export const layer = (options?: Options) =>
       const sessions = yield* Session.Service
       const scope = yield* Effect.scope
       const maxAttempts = options?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
+      const gate = yield* Semaphore.make(options?.maxConcurrentResumes ?? DEFAULT_MAX_CONCURRENT_RESUMES)
+
+      const firstStep = (sessionID: SessionSchema.ID) =>
+        bus.subscribe([SessionEvent.Step.Ended, SessionEvent.Step.Failed]).pipe(
+          Stream.filter((event) => event.data.sessionID === sessionID),
+          Stream.runHead,
+        )
+
+      // Waits for a slot, then runs `start`, which accounts for the resume and returns the
+      // started turn (or undefined when nothing started). The slot is held until that turn
+      // settles its first step, ends, or times out; returns once `start` has run.
+      const admit = (sessionID: SessionSchema.ID, start: Effect.Effect<Effect.Effect<unknown> | undefined>) =>
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            yield* restore(gate.take(1))
+            // Listen before the turn starts so its first step cannot settle unobserved.
+            const stepped = yield* firstStep(sessionID).pipe(Effect.forkIn(scope, { startImmediately: true }))
+            const release = Fiber.interrupt(stepped).pipe(Effect.andThen(gate.release(1)), Effect.asVoid)
+            const turn = yield* restore(start).pipe(Effect.onError(() => release))
+            if (turn === undefined) return yield* release
+            yield* Effect.raceAll([turn, Fiber.join(stepped), Effect.sleep(RESUME_SLOT_TIMEOUT)]).pipe(
+              Effect.ignore,
+              Effect.ensuring(release),
+              Effect.forkIn(scope, { startImmediately: true }),
+            )
+          }),
+        )
 
       const prepareResume = Effect.fnUntraced(function* (sessionID: SessionSchema.ID) {
         // Durable before the resume runs, so a crash inside the resumed turn is
@@ -138,13 +177,15 @@ export const layer = (options?: Options) =>
       const recoverSubagent = Effect.fnUntraced(function* (
         background: Job.Background,
         recovery: Extract<Job.Recovery, { kind: "subagent" }>,
-        suspended: ReadonlySet<SessionSchema.ID>,
+        suspended: Set<SessionSchema.ID>,
       ) {
-        const child = yield* store.get(recovery.childSessionID)
-        if (!child || child.parentID !== recovery.parentSessionID || !(yield* store.get(recovery.parentSessionID))) {
+        const orphaned = Effect.gen(function* () {
+          const child = yield* store.get(recovery.childSessionID)
+          if (child?.parentID === recovery.parentSessionID && (yield* store.get(recovery.parentSessionID))) return false
           yield* jobs.completeBackground(background.notificationID)
-          return
-        }
+          return true
+        })
+        if (yield* orphaned) return
 
         const notify = Effect.fnUntraced(function* (result: Pick<Job.Background, "status" | "output" | "error">) {
           yield* SubagentCompletion.deliver(sessions, jobs, {
@@ -159,33 +200,44 @@ export const layer = (options?: Options) =>
           yield* notify(background)
           return
         }
-        if (yield* execution.isActive(recovery.childSessionID)) return
-        if (!(yield* prepareResume(recovery.childSessionID))) {
-          yield* notify({ status: "error", error: RESUME_EXHAUSTED.message })
-          return
-        }
+        yield* admit(
+          recovery.childSessionID,
+          Effect.gen(function* () {
+            // The slot can take minutes to free, so check again what may have changed meanwhile.
+            if ((yield* jobs.get(background.id))?.status === "running") return undefined
+            if (yield* orphaned) return undefined
+            if (yield* execution.isActive(recovery.childSessionID)) return undefined
+            if (!(yield* prepareResume(recovery.childSessionID))) {
+              yield* notify({ status: "error", error: RESUME_EXHAUSTED.message })
+              return undefined
+            }
 
-        yield* jobs.start({
-          id: background.id,
-          type: "subagent",
-          title: recovery.description,
-          notificationID: background.notificationID,
-          recovery,
-          run: execution.resume(recovery.childSessionID).pipe(
-            Effect.andThen(store.context(recovery.childSessionID)),
-            Effect.map((messages) => {
-              const assistant = messages.findLast(
-                (message) =>
-                  message.type === "assistant" && message.time.completed !== undefined && message.error === undefined,
-              )
-              return SubagentCompletion.text(assistant)
-            }),
-          ),
-        })
-        yield* jobs.background(background.id)
-        yield* jobs.wait({ id: background.id }).pipe(
-          Effect.flatMap((result) => (result.info ? notify(result.info) : Effect.void)),
-          Effect.forkIn(scope),
+            yield* jobs.start({
+              id: background.id,
+              type: "subagent",
+              title: recovery.description,
+              notificationID: background.notificationID,
+              recovery,
+              run: execution.resume(recovery.childSessionID).pipe(
+                Effect.andThen(store.context(recovery.childSessionID)),
+                Effect.map((messages) => {
+                  const assistant = messages.findLast(
+                    (message) =>
+                      message.type === "assistant" &&
+                      message.time.completed !== undefined &&
+                      message.error === undefined,
+                  )
+                  return SubagentCompletion.text(assistant)
+                }),
+              ),
+            })
+            yield* jobs.background(background.id)
+            yield* jobs.wait({ id: background.id }).pipe(
+              Effect.flatMap((result) => (result.info ? notify(result.info) : Effect.void)),
+              Effect.forkIn(scope),
+            )
+            return jobs.wait({ id: background.id })
+          }).pipe(Effect.ensuring(Effect.sync(() => suspended.delete(recovery.childSessionID)))),
         )
       })
 
@@ -204,8 +256,9 @@ export const layer = (options?: Options) =>
           )
           yield* store.releaseChildClaims(children)
           yield* Effect.forEach(
-            // Admit shell outcomes before a recovered child can start its first model request.
-            pending.toSorted((a, b) => Number(a.recovery.kind === "subagent") - Number(b.recovery.kind === "subagent")),
+            // Admit shell outcomes before a recovered child can start its first model request, and
+            // deliver settled subagent results before running children wait for resume slots.
+            pending.toSorted((a, b) => recoveryRank(a) - recoveryRank(b)),
             Effect.fnUntraced(function* (background) {
               if ((yield* jobs.get(background.id))?.status === "running") return
               const recovery = background.recovery
@@ -221,17 +274,32 @@ export const layer = (options?: Options) =>
           yield* Effect.forEach(
             (yield* store.listSuspended()).filter((sessionID) => !resumed.has(sessionID)),
             (sessionID) =>
-              execution
-                .resume(sessionID)
-                .pipe(Effect.ignore, Effect.forkIn(scope), Effect.when(prepareResume(sessionID))),
-            { concurrency: "unbounded", discard: true },
+              admit(
+                sessionID,
+                Effect.gen(function* () {
+                  // A queued Session may have been prompted, or finished, while it waited for a slot.
+                  if (yield* execution.isActive(sessionID)) return undefined
+                  if (!(yield* store.listSuspended()).includes(sessionID)) return undefined
+                  if (!(yield* prepareResume(sessionID))) return undefined
+                  return Fiber.await(
+                    yield* execution
+                      .resume(sessionID)
+                      .pipe(Effect.ignore, Effect.forkIn(scope, { startImmediately: true })),
+                  )
+                }).pipe(Effect.ensuring(Effect.sync(() => suspended.delete(sessionID)))),
+              ),
+            { discard: true },
           )
-          // Async observers consult this set at delivery; later completions wake parents normally.
+          // Async observers consult this set at delivery. Each Session leaves it once its own resume
+          // is accounted for; later completions wake parents normally.
           suspended.clear()
         }),
       })
     }),
   )
+
+const recoveryRank = (background: Job.Background) =>
+  background.recovery.kind === "shell" ? 0 : background.status === "running" ? 2 : 1
 
 export const node = makeGlobalNode({
   service: Service,

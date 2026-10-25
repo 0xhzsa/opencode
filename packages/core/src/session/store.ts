@@ -60,8 +60,9 @@ export interface Interface {
     messageID: SessionMessage.ID,
   ) => Effect.Effect<{ readonly sessionID: Session.ID; readonly message: SessionMessage.Info } | undefined>
   /**
-   * Top-level Sessions holding an execution claim. Recoverable background
-   * children are resumed separately through their durable Job records.
+   * Top-level Sessions holding an execution claim, most recently updated first.
+   * Recoverable background children are resumed separately through their
+   * durable Job records.
    */
   readonly listSuspended: () => Effect.Effect<ReadonlyArray<Session.ID>>
   /**
@@ -199,6 +200,7 @@ const layer = Layer.effect(
           .select({ sessionID: SessionTable.id })
           .from(SessionTable)
           .where(and(isNotNull(SessionTable.time_suspended), isNull(SessionTable.parent_id)))
+          .orderBy(desc(SessionTable.time_updated), desc(SessionTable.id))
           .all()
           .pipe(
             Effect.orDie,

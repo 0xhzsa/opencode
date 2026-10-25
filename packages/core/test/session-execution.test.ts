@@ -1,6 +1,7 @@
 import type { FileSystem } from "@opencode/core/filesystem"
 import { describe, expect, test } from "bun:test"
 import { AIError, TransportError } from "@opencode/ai/effect"
+import { Agent } from "@opencode/core/agent"
 import { Database } from "@opencode/core/database/database"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -10,7 +11,10 @@ import { Job } from "@opencode/core/job"
 import { KV } from "@opencode/core/kv"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import type { LocationServices } from "@opencode/core/location-services"
+import { Model } from "@opencode/core/model"
+import { Money } from "@opencode/schema/money"
 import { Project } from "@opencode/core/project"
+import { Provider } from "@opencode/core/provider"
 import { ProjectTable } from "@opencode/core/project/sql"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
@@ -23,6 +27,7 @@ import { SessionRunner } from "@opencode/core/session/runner/index"
 import { SessionInboxTable, SessionTable } from "@opencode/core/session/sql"
 import { SessionStore } from "@opencode/core/session/store"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, LayerMap, Scope } from "effect"
+import { TestClock } from "effect/testing"
 import { eq } from "drizzle-orm"
 import { testEffect } from "./lib/effect"
 
@@ -216,28 +221,111 @@ describe("SessionExecution lifecycle", () => {
     }),
   )
 
-  it.effect("starts every claimed execution without waiting for earlier drains to finish", () =>
+  it.effect("gates resumes newest first and charges a queued Session only when it starts", () =>
     Effect.gen(function* () {
       const database = yield* Database.Service
-      const sessionIDs = Array.from({ length: 5 }, (_, index) => Session.ID.make(`ses_resume_concurrent_${index}`))
-      yield* seedSessions(database, sessionIDs, { time_suspended: Date.now() })
+      const sessionIDs = Array.from({ length: 5 }, (_, index) => Session.ID.make(`ses_resume_gate_${index}`))
+      yield* Effect.forEach(
+        sessionIDs,
+        (sessionID, index) => seedSessions(database, [sessionID], { time_suspended: 1, time_updated: index + 1 }),
+        { discard: true },
+      )
+      const [oldest, older, middle, newer, newest] = sessionIDs
 
-      const fourStarted = yield* Deferred.make<void>()
+      const turns = sessionIDs.map(() => ({ begun: Deferred.makeUnsafe<void>(), finish: Deferred.makeUnsafe<void>() }))
+      const turn = (sessionID: Session.ID) => turns[sessionIDs.indexOf(sessionID)]
       const started: Session.ID[] = []
+      const running = { now: 0, peak: 0 }
       const scope = yield* Scope.make()
       yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
-      const context = yield* buildExecution(scope, ({ sessionID }) =>
-        Effect.sync(() => {
-          started.push(sessionID)
-          if (started.length === 4) Deferred.doneUnsafe(fourStarted, Effect.void)
-        }).pipe(Effect.andThen(Effect.never)),
+      const context = yield* buildExecution(
+        scope,
+        ({ sessionID }) =>
+          Effect.gen(function* () {
+            started.push(sessionID)
+            running.now++
+            running.peak = Math.max(running.peak, running.now)
+            yield* Deferred.succeed(turn(sessionID).begun, undefined)
+            yield* Deferred.await(turn(sessionID).finish)
+            running.now--
+          }),
+        { maxConcurrentResumes: 2 },
       )
-      const execution = Context.get(context, SessionExecution.Service)
-      const restart = Context.get(context, SessionRestart.Service)
-      yield* restart.resumeSuspendedSessions.pipe(Effect.forkIn(scope))
-      yield* Deferred.await(fourStarted)
+      const sweep = yield* Context.get(context, SessionRestart.Service).resumeSuspendedSessions.pipe(
+        Effect.forkIn(scope),
+      )
+      const queuedAttempts = (queued: ReadonlyArray<Session.ID>) =>
+        Effect.forEach(queued, (sessionID) => attempts(database, sessionID))
 
-      expect([...(yield* execution.active)].toSorted()).toEqual(sessionIDs.toSorted())
+      yield* Deferred.await(turn(newest).begun)
+      yield* Deferred.await(turn(newer).begun)
+      // Just short of the slot timeout, nothing else may start or be charged.
+      yield* TestClock.adjust("59 seconds")
+      expect(started).toEqual([newest, newer])
+      expect(yield* queuedAttempts([middle, older, oldest])).toEqual([0, 0, 0])
+
+      // A finished turn frees its slot for the next queued Session.
+      yield* Deferred.succeed(turn(newest).finish, undefined)
+      yield* Deferred.await(turn(middle).begun)
+      expect(started).toEqual([newest, newer, middle])
+      expect(running.peak).toBe(2)
+      expect(yield* queuedAttempts([middle, older, oldest])).toEqual([1, 0, 0])
+
+      // A turn still running after 60 seconds gives its slot up without being interrupted.
+      yield* TestClock.adjust("1 second")
+      yield* Deferred.await(turn(older).begun)
+      expect(started).toEqual([newest, newer, middle, older])
+      expect(yield* queuedAttempts([oldest])).toEqual([0])
+
+      yield* Effect.forEach(turns, (item) => Deferred.succeed(item.finish, undefined), { discard: true })
+      yield* Fiber.join(sweep)
+      yield* Deferred.await(turn(oldest).begun)
+      expect(started).toEqual([newest, newer, middle, older, oldest])
+    }),
+  )
+
+  it.effect("frees a resume slot when the resumed turn settles its first step", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const bus = yield* Bus.Service
+      const first = Session.ID.make("ses_resume_step_first")
+      const second = Session.ID.make("ses_resume_step_second")
+      yield* seedSessions(database, [first], { time_suspended: 1, time_updated: 2 })
+      yield* seedSessions(database, [second], { time_suspended: 1, time_updated: 1 })
+      const assistantMessageID = SessionMessage.ID.make("msg_resume_step_first")
+
+      const secondStarted = yield* Deferred.make<void>()
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(
+        scope,
+        ({ sessionID }) =>
+          sessionID === second
+            ? Deferred.succeed(secondStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.gen(function* () {
+                yield* bus.publish(SessionEvent.Step.Started, {
+                  sessionID,
+                  assistantMessageID,
+                  agent: Agent.defaultID,
+                  model: { id: Model.ID.make("model"), providerID: Provider.ID.make("provider") },
+                  started: 0,
+                })
+                yield* bus.publish(SessionEvent.Step.Ended, {
+                  sessionID,
+                  assistantMessageID,
+                  finish: "stop",
+                  cost: Money.USD.make(0),
+                  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                })
+                return yield* Effect.never
+              }),
+        { maxConcurrentResumes: 1 },
+      )
+      yield* Context.get(context, SessionRestart.Service).resumeSuspendedSessions.pipe(Effect.forkIn(scope))
+
+      // No clock advance and the first turn never ends: only its step can have freed the slot.
+      yield* Deferred.await(secondStarted)
+      expect(yield* Context.get(context, SessionExecution.Service).isActive(first)).toBe(true)
     }),
   )
 
@@ -866,6 +954,71 @@ describe("SessionRestart background recovery", () => {
     }),
   )
 
+  it.effect("wakes a resumed parent for its child's result while older Sessions still wait for slots", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const jobs = yield* Job.Service
+      const parent = Session.ID.make("ses_gate_wake_parent")
+      const child = Session.ID.make("ses_gate_wake_child")
+      const blocking = Session.ID.make("ses_gate_wake_blocking")
+      const queued = Session.ID.make("ses_gate_wake_queued")
+      yield* seedSessions(database, [parent], { time_suspended: 1, time_updated: 3 })
+      yield* seedSessions(database, [blocking], { time_suspended: 1, time_updated: 2 })
+      yield* seedSessions(database, [queued], { time_suspended: 1, time_updated: 1 })
+      yield* seedSessions(database, [child], { parent_id: parent, time_suspended: 1 })
+      yield* jobs.start({
+        id: child,
+        type: "subagent",
+        recovery: {
+          kind: "subagent",
+          parentSessionID: parent,
+          childSessionID: child,
+          agent: "explore",
+          description: "Inspect gated recovery",
+        },
+        run: Effect.never,
+      })
+      yield* jobs.background(child)
+
+      const childRunning = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const blockingStarted = yield* Deferred.make<void>()
+      const parentWoken = yield* Deferred.make<void>()
+      const drained: Session.ID[] = []
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const restarted = yield* Job.make.pipe(Effect.provideService(Scope.Scope, scope))
+      const context = yield* buildExecution(
+        scope,
+        ({ sessionID }) =>
+          Effect.gen(function* () {
+            drained.push(sessionID)
+            if (sessionID === child)
+              return yield* Deferred.succeed(childRunning, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            if (sessionID !== parent)
+              return yield* Deferred.succeed(blockingStarted, undefined).pipe(Effect.andThen(Effect.never))
+            if (drained.filter((id) => id === parent).length === 2) yield* Deferred.succeed(parentWoken, undefined)
+          }),
+        { maxConcurrentResumes: 2 },
+        restarted,
+      )
+      const restart = Context.get(context, SessionRestart.Service)
+      yield* restart.resumeSuspendedSessions.pipe(Effect.forkIn(scope))
+
+      // The child and `blocking` hold both slots, so `queued` keeps the sweep open after the parent's turn ends.
+      yield* Deferred.await(childRunning)
+      yield* Deferred.await(blockingStarted)
+      yield* Context.get(context, SessionExecution.Service).awaitIdle(parent)
+      expect(drained).not.toContain(queued)
+
+      yield* Deferred.succeed(release, undefined)
+      yield* Deferred.await(parentWoken)
+      expect(yield* SessionInbox.list(database.db, parent)).toMatchObject([
+        { payload: { metadata: { source: "subagent", childID: child, state: "completed" } } },
+      ])
+    }),
+  )
+
   it.effect("delivers a subagent result persisted before restart without rerunning the child", () =>
     Effect.gen(function* () {
       const database = yield* Database.Service
@@ -1284,7 +1437,9 @@ function seedInbox(
 function seedSessions(
   database: Database.Service["Service"],
   sessionIDs: ReadonlyArray<Session.ID>,
-  values: Partial<Pick<typeof SessionTable.$inferInsert, "time_suspended" | "resume_attempts" | "parent_id">> = {},
+  values: Partial<
+    Pick<typeof SessionTable.$inferInsert, "time_suspended" | "time_updated" | "resume_attempts" | "parent_id">
+  > = {},
 ) {
   return Effect.gen(function* () {
     yield* database.db
