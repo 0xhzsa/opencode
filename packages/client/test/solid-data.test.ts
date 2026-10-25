@@ -1024,10 +1024,15 @@ function resyncFixture(length: number) {
     text: `Message ${index}`,
     time: { created: index },
   }))
+  const reads: URL[] = []
+  const gate = { sync: Promise.resolve() }
+  const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
   const api = OpenCode.make({
     baseUrl: "http://opencode.local",
     fetch: async (input, init) => {
       const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      reads.push(url)
+      if (url.searchParams.has("order")) await gate.sync
       // Like the server, a cursor names the oldest message read, and any non-empty page has a next cursor.
       const cursor = url.searchParams.get("cursor")
       const end = cursor ? Math.max(0, history.findIndex((item) => item.id === cursor)) : history.length
@@ -1039,12 +1044,36 @@ function resyncFixture(length: number) {
     const data = createData({
       api: () => api,
       directory: "/project",
-      event: { on: () => () => {}, listen: () => () => {} },
+      event: {
+        on: () => () => {},
+        listen(handler) {
+          listeners.add(handler)
+          return () => listeners.delete(handler)
+        },
+      },
     })
     return {
       data,
       history,
+      gate,
       dispose,
+      lastLimit: () => reads.at(-1)?.searchParams.get("limit"),
+      append(index: number) {
+        const id = `msg_${String(index).padStart(4, "0")}`
+        history.push({ id, type: "synthetic", text: id, time: { created: index } })
+        listeners.forEach((listener) =>
+          listener({
+            name: "session.synthetic",
+            details: {
+              id: id.replace(/^msg_/, "evt_"),
+              type: "session.synthetic",
+              created: index,
+              durable: { aggregateID: sessionID, seq: index, version: 1 },
+              data: { sessionID, text: id },
+            } as OpenCodeEvent,
+          }),
+        )
+      },
       ids: () => data.session.message.list(sessionID).map((message) => message.id),
       sync: () => data.session.message.sync(sessionID),
       loadMore: () => data.session.message.loadMore(sessionID),
@@ -1073,6 +1102,40 @@ test("a resync keeps loaded history and takes new and changed rows from the serv
 
     await setup.loadMore()
     expect(setup.ids()).toEqual(setup.history.slice(2).map((item) => item.id))
+  } finally {
+    setup.dispose()
+  }
+})
+
+test("a resync at the bottom of a session re-reads only the newest window", async () => {
+  const setup = resyncFixture(100)
+  try {
+    await setup.sync()
+    for (let index = 100; index < 150; index++) setup.append(index)
+    expect(setup.ids()).toHaveLength(70)
+    await setup.resync()
+    expect(setup.lastLimit()).toBe("20")
+    expect(setup.ids()).toEqual(setup.history.slice(130).map((item) => item.id))
+  } finally {
+    setup.dispose()
+  }
+})
+
+test("a resync stops keeping older pages once a sync collapses to the newest window", async () => {
+  const setup = resyncFixture(100)
+  try {
+    await setup.sync()
+    const release = Promise.withResolvers<void>()
+    setup.gate.sync = release.promise
+    setup.data.session.message.invalidate("ses_resync")
+    const collapse = setup.sync()
+    await setup.loadMore()
+    release.resolve()
+    await collapse
+    expect(setup.ids()).toEqual(setup.history.slice(80).map((item) => item.id))
+
+    await setup.resync()
+    expect(setup.lastLimit()).toBe("20")
   } finally {
     setup.dispose()
   }
