@@ -4,6 +4,7 @@ import { Effect } from "effect"
 import type { Job } from "../job.js"
 import type { Session } from "../session.js"
 import type { SessionMessage } from "./message.js"
+import type { SessionSchema } from "./schema.js"
 
 export const NO_TEXT = "Subagent completed without a text response."
 
@@ -17,6 +18,21 @@ export function text(message: SessionMessage.Info | undefined) {
       .join("\n\n") || NO_TEXT
   )
 }
+
+/** Live and recovered subagent jobs read the child's result the same way. */
+export const output = (sessions: Pick<Session.Interface, "messages">, sessionID: SessionSchema.ID) =>
+  sessions
+    .messages({ sessionID, order: "desc", limit: 20 })
+    .pipe(
+      Effect.map((messages) =>
+        text(
+          messages.find(
+            (message) =>
+              message.type === "assistant" && message.time.completed !== undefined && message.error === undefined,
+          ),
+        ),
+      ),
+    )
 
 export const deliver = Effect.fnUntraced(function* (
   sessions: Pick<Session.Interface, "synthetic">,
