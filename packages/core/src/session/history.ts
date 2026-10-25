@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lt, or, sql } from "drizzle-orm"
+import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm"
 import { Message } from "@opencode/ai/effect"
 import { Effect, Option, Schema } from "effect"
 import type { Model } from "@opencode/schema/model"
@@ -10,12 +10,15 @@ import type { SessionSchema } from "./schema.js"
 import { Instructions } from "../instructions/index.js"
 import { InstructionState } from "./instruction-state.js"
 import { SessionRecentText } from "./recent-text.js"
-import { SessionMessageTable } from "./sql.js"
+import { SessionMessageTable, SessionPartTable } from "./sql.js"
 
 type DatabaseService = Database.Interface["db"]
 
 const decode = Schema.decodeUnknownEffect(SessionMessage.Info)
 const decodeSync = Schema.decodeUnknownSync(SessionMessage.Info)
+const decodePartSync = Schema.decodeUnknownSync(SessionMessage.AssistantContent)
+export const encodePart = Schema.encodeSync(SessionMessage.AssistantContent)
+const PartQueryBatchSize = 500
 
 /**
  * Which completed compactions bound a history read. Local summaries always do. Native
@@ -80,17 +83,35 @@ const latestCompaction = Effect.fnUntraced(function* (
     .pipe(Effect.orDie)
 })
 
+export const hasInlineContent = (data: typeof SessionMessageTable.$inferSelect.data): boolean =>
+  "content" in data && Array.isArray(data.content) && data.content.length > 0
+
 // Every stored message row decodes through here, so rows written in older shapes are upgraded in one place.
-const rowInput = (row: typeof SessionMessageTable.$inferSelect) => ({
-  ...SessionLegacy.message(row.type, row.data),
+// Assistant parts live in `session_part` when present, falling back to inline `data.content` for legacy rows.
+const rowInput = (
+  row: typeof SessionMessageTable.$inferSelect,
+  parts?: ReadonlyArray<typeof SessionPartTable.$inferSelect>,
+) => ({
+  ...SessionLegacy.message(
+    row.type,
+    row.type === "assistant" && parts && parts.length > 0
+      ? { ...row.data, content: parts.map((item) => item.data) }
+      : row.data,
+  ),
   id: row.id,
   type: row.type,
 })
 
+export const decodePartRowSync = (row: typeof SessionPartTable.$inferSelect) =>
+  decodePartSync(SessionLegacy.part({ ...row.data, type: row.type }))
+
 export const decodeMessageRowSync = (row: typeof SessionMessageTable.$inferSelect) => decodeSync(rowInput(row))
 
-export const decodeMessageRow = (row: typeof SessionMessageTable.$inferSelect) =>
-  decode(rowInput(row)).pipe(
+const decodeMessageRowWithParts = (
+  row: typeof SessionMessageTable.$inferSelect,
+  parts?: ReadonlyArray<typeof SessionPartTable.$inferSelect>,
+) =>
+  decode(rowInput(row, parts)).pipe(
     Effect.mapError(
       () =>
         new MessageDecodeError({
@@ -99,6 +120,41 @@ export const decodeMessageRow = (row: typeof SessionMessageTable.$inferSelect) =
         }),
     ),
   )
+
+export const decodeMessageRow = (row: typeof SessionMessageTable.$inferSelect) => decodeMessageRowWithParts(row)
+
+export const decodeMessageRows = Effect.fnUntraced(function* (
+  db: DatabaseService,
+  rows: ReadonlyArray<typeof SessionMessageTable.$inferSelect>,
+): Effect.fn.Return<SessionMessage.Info[], MessageDecodeError> {
+  if (rows.length === 0) return []
+  const assistantIDs = rows.flatMap((row) => (row.type === "assistant" ? [row.id] : []))
+  const partsByMessage = new Map<SessionMessage.ID, Array<typeof SessionPartTable.$inferSelect>>()
+  for (let index = 0; index < assistantIDs.length; index += PartQueryBatchSize) {
+    const batch = assistantIDs.slice(index + 0, index + PartQueryBatchSize)
+    const partRows = yield* db
+      .select()
+      .from(SessionPartTable)
+      .where(inArray(SessionPartTable.message_id, batch))
+      .orderBy(asc(SessionPartTable.message_id), asc(SessionPartTable.ordinal))
+      .all()
+      .pipe(Effect.orDie)
+    for (const part of partRows) {
+      const list = partsByMessage.get(part.message_id)
+      if (list) list.push(part)
+      else partsByMessage.set(part.message_id, [part])
+    }
+  }
+  return yield* Effect.forEach(rows, (row) => decodeMessageRowWithParts(row, partsByMessage.get(row.id)))
+})
+
+export const loadMessageRow = Effect.fnUntraced(function* (
+  db: DatabaseService,
+  row: typeof SessionMessageTable.$inferSelect,
+): Effect.fn.Return<SessionMessage.Info, MessageDecodeError> {
+  const messages = yield* decodeMessageRows(db, [row])
+  return messages[0]!
+})
 
 const messageEntries = Effect.fnUntraced(function* (
   db: DatabaseService,
@@ -122,9 +178,8 @@ const messageEntries = Effect.fnUntraced(function* (
     .orderBy(asc(SessionMessageTable.seq))
     .all()
     .pipe(Effect.orDie)
-  const decoded = yield* Effect.forEach(rows, (row) =>
-    decodeMessageRow(row).pipe(Effect.map((message) => ({ seq: row.seq, message }))),
-  )
+  const messages = yield* decodeMessageRows(db, rows)
+  const decoded = rows.map((row, index) => ({ seq: row.seq, message: messages[index]! }))
   // A window that cannot replay leaves nothing to start from, so read from the compaction before it.
   const start = decoded[0]
   if (compaction && start && !replayable(start.message, boundary))
@@ -176,7 +231,7 @@ const withRecentText = Effect.fnUntraced(function* (
     .orderBy(asc(SessionMessageTable.seq))
     .all()
     .pipe(Effect.orDie)
-  const kept = yield* Effect.forEach(rows, decodeMessageRow)
+  const kept = yield* decodeMessageRows(db, rows)
   const recent = kept.map(SessionRecentText.messageToText).filter(Boolean).join("\n\n")
   return [{ ...first, message: { ...compaction, metadata: { ...compaction.metadata, recent } } }, ...entries.slice(1)]
 })
