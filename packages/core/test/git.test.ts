@@ -526,6 +526,8 @@ describe("Git capture", () => {
 describe("Git capture spawns", () => {
   // Git is a global node, so a counting spawner needs a test without the shared Git layer.
   const isolated = testEffect(Layer.empty)
+  // Reusing `check-ignore` needs the in-process reader to resolve the excludes file, and it is POSIX-only.
+  const posix = process.platform === "win32" ? isolated.live.skip : isolated.live
   const counted = <A, E>(body: (input: { project: string; spawned: string[] }) => Effect.Effect<A, E, Git.Service>) =>
     Effect.gen(function* () {
       const root = yield* Effect.acquireRelease(
@@ -540,7 +542,7 @@ describe("Git capture spawns", () => {
       })
       const spawned: string[] = []
       const counter = countingSpawner((args) => {
-        spawned.push(args.find((arg) => !arg.startsWith("-") && !arg.startsWith("/")) ?? "")
+        spawned.push(args.find((arg) => /^[a-z][a-z-]*$/.test(arg)) ?? "")
         return false
       })
       return yield* body({ project, spawned }).pipe(Effect.provide(AppNodeBuilder.build(Git.node, [counter.node])))
@@ -557,7 +559,7 @@ describe("Git capture spawns", () => {
     return () => git.tree.capture({ repository, scopes: [RelativePath.make(".")], ignores: source })
   })
 
-  isolated.live("asks Git about paths only the source ignores once while its exclude rules stay the same", () =>
+  posix("asks Git about paths only the source ignores once while its exclude rules stay the same", () =>
     counted(({ project, spawned }) =>
       Effect.gen(function* () {
         const capture = yield* store(project)
@@ -575,7 +577,7 @@ describe("Git capture spawns", () => {
     ),
   )
 
-  isolated.live("asks Git again when the excludes file named by per-worktree config changes", () =>
+  posix("asks Git again when the excludes file named by per-worktree config changes", () =>
     counted(({ project, spawned }) =>
       Effect.gen(function* () {
         const excludes = path.join(path.dirname(project), "excludes")
