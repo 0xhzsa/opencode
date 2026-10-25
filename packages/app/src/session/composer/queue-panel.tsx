@@ -1,16 +1,11 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show, untrack } from "solid-js"
-import { DragDropProvider, PointerSensor } from "@dnd-kit/solid"
-import { isSortable, useSortable } from "@dnd-kit/solid/sortable"
-import { AutoScroller, Feedback, PointerActivationConstraints } from "@dnd-kit/dom"
-import { RestrictToVerticalAxis } from "@dnd-kit/abstract/modifiers"
-import { RestrictToElement } from "@dnd-kit/dom/modifiers"
-import { arrayMove } from "@/runtime/array-move"
 import { Button } from "@opencode/ui/button"
 import { Icon } from "@opencode/ui/icon"
 import { IconButton } from "@opencode/ui/icon-button"
 import { Loader } from "@opencode/ui/loader"
 import { Tooltip } from "@opencode/ui/tooltip"
 import { prefersReducedMotion } from "@opencode/ui/motion"
+import { arrayMove, createSortable, type Sortable } from "@opencode/ui/sortable"
 import { useLanguage } from "@/runtime/i18n/language"
 import type { SessionQueueView } from "./queue"
 import { cascade, Grow, queueStagger } from "./spring-height"
@@ -32,22 +27,33 @@ export function SessionQueuePanel(props: { queue: SessionQueueView; hidden?: boo
   const count = () => (open() ? live().length : shown().length)
   let listRef!: HTMLDivElement
 
+  const sortable = createSortable({
+    axis: () => "y",
+    ids: live,
+    container: () => listRef,
+    onReorder: (from, to) => void props.queue.reorder(arrayMove(live(), from, to)),
+  })
+
   createEffect(
     on(
       () => props.queue.rows(),
       (next) => {
         const prevLive = lastLive
         lastLive = next
+
         if (next.length === 0) return
 
         // An in-place edit or reorder keeps the row count: a row whose ID it replaced swaps in place rather than closing,
         // while a row that was already closing keeps closing until its exit completes.
         const swap = next.length === prevLive.length && prevLive.length > 0
+
         if (!swap && prevLive.length > 0 && !props.hidden)
           next.forEach((row) => !prevLive.some((item) => item.id === row.id) && appearing.add(row.id))
+
         const kept = untrack(shown).filter(
           (row) => !swap || next.some((item) => item.id === row.id) || !prevLive.some((item) => item.id === row.id),
         )
+
         setShown(keepLeaving(kept, next))
       },
       { defer: true },
@@ -63,10 +69,14 @@ export function SessionQueuePanel(props: { queue: SessionQueueView; hidden?: boo
         stopCascade?.()
         stopCascade = undefined
         const step = queueStagger()
+
         if (!now || was !== false || step <= 0 || prefersReducedMotion()) return
         queueMicrotask(() => {
           if (!open()) return
-          stopCascade = cascade([...listRef.querySelectorAll<HTMLElement>('[data-component="session-queue-row"]')], step)
+          stopCascade = cascade(
+            [...listRef.querySelectorAll<HTMLElement>('[data-component="session-queue-row"]')],
+            step,
+          )
         })
       },
       { defer: true },
@@ -88,76 +98,50 @@ export function SessionQueuePanel(props: { queue: SessionQueueView; hidden?: boo
             {language.plural("session.queue.count", count())}
           </div>
         </Grow>
-        <DragDropProvider
-          sensors={(defaults) => [
-            ...defaults.filter((sensor) => sensor !== PointerSensor),
-            PointerSensor.configure({
-              activationConstraints: [new PointerActivationConstraints.Distance({ value: 4 })],
-            }),
-          ]}
-          modifiers={[RestrictToVerticalAxis, RestrictToElement.configure({ element: () => listRef })]}
-          plugins={(defaults) => [
-            ...defaults.filter((plugin) => plugin !== AutoScroller && plugin !== Feedback),
-            AutoScroller.configure({ acceleration: 8, threshold: { x: 0, y: 0.05 } }),
-            Feedback.configure({ dropAnimation: null }),
-          ]}
-          onDragEnd={(event) => {
-            const source = event.operation.source
-
-            if (event.canceled || !isSortable(source)) return
-
-            if (source.initialIndex === source.index) return
-            void props.queue.reorder(arrayMove(live(), source.initialIndex, source.index))
+        {/* Keyed on row IDs so store updates move row elements instead of remounting them. */}
+        {/* Four 32px rows, four 1px gaps, and half a row hint at more queued prompts. */}
+        <div
+          ref={listRef}
+          data-slot="session-queue-list"
+          class="flex flex-col"
+          classList={{ "max-h-[148px] overflow-y-auto": count() > 4 }}
+          style={{
+            "mask-image":
+              count() > 4
+                ? "linear-gradient(to bottom, transparent, black 8px, black calc(100% - 12px), transparent)"
+                : undefined,
           }}
         >
-          {/* Keyed on row IDs so store updates move row elements instead of
-              remounting them, which would kill an in-flight drag. */}
-          {/* Four 32px rows, four 1px gaps, and half a row hint at more queued prompts. */}
-          <div
-            ref={listRef}
-            data-slot="session-queue-list"
-            class="flex flex-col"
-            classList={{ "max-h-[148px] overflow-y-auto": count() > 4 }}
-            style={{
-              "mask-image":
-                count() > 4
-                  ? "linear-gradient(to bottom, transparent, black 8px, black calc(100% - 12px), transparent)"
-                  : undefined,
-            }}
-          >
-            <For each={shown().map((row) => row.id)}>
-              {(id) => (
-                <Grow
-                  when={!open() || live().includes(id)}
-                  appear={appearing.delete(id)}
-                  fade
-                  onClosed={() => setShown((rows) => rows.filter((row) => row.id !== id))}
-                >
-                  <SessionQueueRow queue={props.queue} id={id} index={live().indexOf(id)} />
-                </Grow>
-              )}
-            </For>
-          </div>
-        </DragDropProvider>
+          <For each={shown().map((row) => row.id)}>
+            {(id) => (
+              <Grow
+                when={!open() || live().includes(id)}
+                appear={appearing.delete(id)}
+                fade
+                onClosed={() => setShown((rows) => rows.filter((row) => row.id !== id))}
+              >
+                <SessionQueueRow queue={props.queue} id={id} index={live().indexOf(id)} sortable={sortable} />
+              </Grow>
+            )}
+          </For>
+        </div>
       </div>
     </Grow>
   )
 }
 
 function keepLeaving<T extends { id: string }>(previous: T[], next: T[]) {
-  return previous.reduce(
-    (rows, row, index) => {
-      if (rows.some((item) => item.id === row.id)) return rows
-      const before = previous.slice(0, index).findLast((item) => rows.some((entry) => entry.id === item.id))
-      const at = before ? rows.findIndex((item) => item.id === before.id) + 1 : 0
+  const rows = [...next]
+  previous.forEach((row, index) => {
+    if (rows.some((item) => item.id === row.id)) return
+    const before = previous.slice(0, index).findLast((item) => rows.some((entry) => entry.id === item.id))
+    rows.splice(before ? rows.findIndex((item) => item.id === before.id) + 1 : 0, 0, row)
+  })
 
-      return [...rows.slice(0, at), row, ...rows.slice(at)]
-    },
-    [...next],
-  )
+  return rows
 }
 
-function SessionQueueRow(props: { queue: SessionQueueView; id: string; index: number }) {
+function SessionQueueRow(props: { queue: SessionQueueView; id: string; index: number; sortable: Sortable }) {
   const language = useLanguage()
   const row = createMemo((last?: QueueRow) => props.queue.rows().find((entry) => entry.id === props.id) ?? last)
   const leaving = () => props.index < 0
@@ -167,17 +151,7 @@ function SessionQueueRow(props: { queue: SessionQueueView; id: string; index: nu
   // parked queue resumes.
   const active = () => !props.queue.working() && props.index === 0
 
-  const sortable = useSortable({
-    get id() {
-      return props.id
-    },
-    get index() {
-      return props.index
-    },
-    get disabled() {
-      return props.queue.busy() || leaving()
-    },
-  })
+  const sortable = props.sortable.item(() => props.id, { disabled: () => props.queue.busy() || leaving() })
 
   return (
     <Show when={row()} keyed>
@@ -190,12 +164,13 @@ function SessionQueueRow(props: { queue: SessionQueueView; id: string; index: nu
           class="group/queue-row mb-px flex h-8 shrink-0 items-center justify-between gap-2 rounded-md py-1 ps-0.5 pe-2"
           classList={{
             "bg-v2-overlay-simple-overlay-hover": editing(),
-            "opacity-60": sortable.isDragSource(),
+            "opacity-60": sortable.dragging(),
           }}
         >
           <div class="flex min-w-0 flex-1 items-center gap-2">
             <button
-              ref={sortable.handleRef}
+              ref={sortable.handle}
+              aria-keyshortcuts="ArrowUp ArrowDown"
               type="button"
               class="grid shrink-0 cursor-grab touch-none grid-cols-2 gap-x-[2px] gap-y-[2.25px] p-1"
               aria-label={language.t("session.queue.reorder")}
