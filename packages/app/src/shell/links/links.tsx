@@ -72,9 +72,15 @@ export function SessionLinks() {
 
     // A subagent opens in its root session's tab, routed to the subagent.
     const root = ctx
-      ? await rootSession(found.session, (sessionID) => ctx.sdk.api.session.get({ sessionID })).catch(
-          () => found.session,
-        )
+      ? await rootSession(found.session, async (sessionID) => {
+          const cached = ctx.data.session.get(sessionID)
+
+          if (cached) return cached
+          const ancestor = await ctx.sdk.api.session.get({ sessionID })
+          ctx.data.session.remember(ancestor)
+
+          return ancestor
+        }).catch(() => found.session)
       : found.session
 
     openNotificationSession(tabs, found.key, root.id, found.session)

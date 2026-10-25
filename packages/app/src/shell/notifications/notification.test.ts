@@ -9,8 +9,8 @@ test("opens notification sessions through the tab router, leaving a subagent the
   const calls: string[] = []
 
   const tabs = {
-    addSessionTab: (input: { sessionId: string }) => {
-      calls.push(`add:${input.sessionId}`)
+    addSessionTab: (input: { sessionId: string; routeSessionId?: string }) => {
+      calls.push(`add:${input.sessionId}>${input.routeSessionId}`)
 
       return tab
     },
@@ -24,17 +24,17 @@ test("opens notification sessions through the tab router, leaving a subagent the
 
   openNotificationSession(tabs, server, "session-1")
 
-  expect(calls).toEqual(["add:session-1", "route:session-1", "select:session-1>undefined"])
+  expect(calls).toEqual(["add:session-1>undefined", "route:session-1", "select:session-1>undefined"])
 })
 
-test("opens a child session inside its root session's tab", () => {
+test("opens a child session inside its root session's tab, routed from the moment the tab is added", () => {
   const server = ServerConnection.Key.make("sidecar")
   const tab = { type: "session" as const, server, sessionId: "root" }
   const calls: string[] = []
 
   const tabs = {
-    addSessionTab: (input: Omit<typeof tab, "type">) => {
-      calls.push(`add:${input.sessionId}`)
+    addSessionTab: (input: { sessionId: string; routeSessionId?: string }) => {
+      calls.push(`add:${input.sessionId}>${input.routeSessionId}`)
 
       return tab
     },
@@ -48,5 +48,5 @@ test("opens a child session inside its root session's tab", () => {
 
   openNotificationSession(tabs, server, "root", { id: "child", parentID: "root" })
 
-  expect(calls).toEqual(["add:root", "route:child:root", "select:root>child"])
+  expect(calls).toEqual(["add:root>child", "route:child:root", "select:root>child"])
 })
