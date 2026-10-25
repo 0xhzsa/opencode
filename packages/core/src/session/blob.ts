@@ -28,7 +28,10 @@ const toolItems = (part: Part): ReadonlyArray<Tool.Content> =>
     ? (part.state.content ?? [])
     : []
 
-function collect(data: MessageRow["data"] | InboxRow["payload"], hashes: Set<string>) {
+/** A stored row, or the `session_part` rows of one assistant message. */
+type Refs = MessageRow["data"] | InboxRow["payload"] | { readonly content: ReadonlyArray<Part> }
+
+function collect(data: Refs, hashes: Set<string>) {
   if ("files" in data)
     for (const file of data.files ?? []) if (isFileRef(file)) hashes.add(SessionStored.refHash(file.uri))
   if ("content" in data)
@@ -324,7 +327,17 @@ export const externalize = Effect.fnUntraced(function* (
   return { ...message, content }
 })
 
-const hashesOf = (data: MessageRow["data"] | InboxRow["payload"]) => {
+/** {@link externalize} for one assistant part. Returns the same part when nothing moved. */
+export const externalizePart = Effect.fnUntraced(function* (db: DatabaseService, part: AssistantPart) {
+  if (!(yield* enabled)) return part
+  const pending: Pending = new Map()
+  const stored = toolPartRefs(pending, part)
+  if (pending.size === 0) return part
+  yield* save(db, pending)
+  return stored
+})
+
+const hashesOf = (data: Refs) => {
   const hashes = new Set<string>()
   collect(data, hashes)
   return hashes
@@ -354,11 +367,7 @@ export function split(data: MessageRow["data"] | InboxRow["payload"]) {
 }
 
 /** Records that `owner` references each blob its stored row names, so release keeps them until it lets go. */
-export const recordRefs = Effect.fnUntraced(function* (
-  db: DatabaseService,
-  owner: Owner,
-  data: MessageRow["data"] | InboxRow["payload"],
-) {
+export const recordRefs = Effect.fnUntraced(function* (db: DatabaseService, owner: Owner, data: Refs) {
   const hashes = hashesOf(data)
   if (hashes.size === 0) return
   // A ref whose blob is already gone keeps nothing alive; reads render it as unavailable.
@@ -383,7 +392,7 @@ export const recordRefs = Effect.fnUntraced(function* (
 })
 
 /** Records the refs a rewritten message names and releases the ones it no longer does. */
-export const syncRefs = Effect.fnUntraced(function* (db: DatabaseService, owner: Owner, data: MessageRow["data"]) {
+export const syncRefs = Effect.fnUntraced(function* (db: DatabaseService, owner: Owner, data: Refs) {
   yield* recordRefs(db, owner, data)
   const present = [...hashesOf(data)]
   const own = [eq(BlobRefTable.session_id, owner.sessionID), eq(BlobRefTable.message_id, owner.messageID)] as const
