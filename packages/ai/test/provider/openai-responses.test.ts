@@ -31,6 +31,7 @@ import * as Azure from "../../src/providers/azure.js"
 import * as OpenAI from "../../src/providers/openai.js"
 import * as XAI from "../../src/providers/xai.js"
 import { Meta } from "../../src/providers/meta.js"
+import { Alibaba } from "../../src/providers/alibaba.js"
 import { OpenAICompatibleResponses } from "../../src/protocols/openai-compatible-responses.js"
 import * as OpenAIResponses from "../../src/protocols/openai-responses.js"
 import { OpenResponses } from "../../src/protocols/open-responses.js"
@@ -1876,6 +1877,58 @@ describe("OpenAI Responses route", () => {
         { type: "input_image", image_url: "https://example.com/image.png" },
         { type: "input_file", filename: "report.pdf", file_url: "https://example.com/report.pdf" },
       ])
+    }),
+  )
+
+  it.effect("lowers Meta and Alibaba user/tool audio using their native formats", () =>
+    Effect.gen(function* () {
+      for (const [audioModel, audio] of [
+        [
+          Meta.configure({ apiKey: "test" }).responses("audio-model"),
+          { type: "input_audio", input_audio: { data: "AAECAw==", format: "mp3" } },
+        ],
+        [
+          Alibaba.configure({ apiKey: "test", region: "ap-southeast-1" }).responses("audio-model"),
+          { type: "input_audio", data: "data:audio/mpeg;base64,AAECAw==", format: "mp3" },
+        ],
+      ] as const) {
+        const prepared = yield* compileRequest(
+          LLM.request({
+            model: audioModel,
+            messages: [
+              Message.user(Message.media(Media.base64("AAECAw==", "audio/mpeg"))),
+              Message.assistant([
+                ToolCallPart.make({ id: "audio", name: "read", input: {} }),
+                ToolCallPart.make({ id: "text", name: "read", input: {} }),
+              ]),
+              Message.tool({
+                id: "audio",
+                name: "read",
+                resultType: "content",
+                result: [
+                  { type: "text", text: "Recording follows." },
+                  { type: "file", uri: "data:audio/mpeg;base64,AAECAw==", mime: "audio/mpeg" },
+                ],
+              }),
+              Message.tool({ id: "text", name: "read", resultType: "text", result: "Plain result." }),
+              Message.user("Continue."),
+            ],
+          }),
+        )
+        expect(prepared.body.input).toEqual([
+          { type: "message", role: "user", content: [audio] },
+          { type: "function_call", call_id: "audio", name: "read", arguments: "{}" },
+          { type: "function_call", call_id: "text", name: "read", arguments: "{}" },
+          {
+            type: "function_call_output",
+            call_id: "audio",
+            output: [{ type: "input_text", text: "Recording follows." }],
+          },
+          { type: "function_call_output", call_id: "text", output: "Plain result." },
+          { type: "message", role: "user", content: [audio] },
+          { type: "message", role: "user", content: [{ type: "input_text", text: "Continue." }] },
+        ])
+      }
     }),
   )
 
