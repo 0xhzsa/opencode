@@ -28,16 +28,12 @@ export function openNotificationSession(
 
   if (tab.type !== "session") return
 
-  if (!route || route.id === sessionID) {
-    tabs.rememberSessionRoute(tab, sessionID)
-    tabs.select(tab)
+  const child = route && route.id !== sessionID ? route : undefined
 
-    return
-  }
-
-  tabs.rememberSessionRoute(tab, route.id, route.parentID)
-  // A tab added just now joins the store in a transition, so the route is set on the value selected too.
-  tabs.select({ ...tab, routeSessionId: route.id, routeParentId: route.parentID })
+  tabs.rememberSessionRoute(tab, child?.id ?? sessionID, child?.parentID)
+  // The tab value can be stale (an existing tab keeps its old route; a new one joins the store in a
+  // transition), so the route just remembered is set on the value selected too.
+  tabs.select({ ...tab, routeSessionId: child?.id, routeParentId: child?.parentID })
 }
 
 /** A session is unread when its latest terminal execution is newer than the last one any client viewed. */
