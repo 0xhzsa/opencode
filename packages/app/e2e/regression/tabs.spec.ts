@@ -392,11 +392,11 @@ for (const navigation of ["horizontal", "vertical", "keyboard"] as const) {
 }
 
 for (const row of [
-  { tabLayout: "horizontal", width: 360, hasTouch: false, direction: "ltr" },
-  { tabLayout: "vertical", width: 390, hasTouch: true, direction: "rtl" },
+  { tabLayout: "horizontal", width: 360, direction: "ltr" },
+  { tabLayout: "vertical", width: 390, direction: "rtl" },
 ]) {
   test.describe(`mobile drawer (${row.tabLayout})`, () => {
-    test.use({ hasTouch: row.hasTouch })
+    test.use({ hasTouch: true, isMobile: true })
     test(`mobile drawer exposes close controls and navigates between tabs (${row.tabLayout})`, async ({ page }) => {
       await page.setViewportSize({ width: row.width, height: 720 })
       await mockWorkspace(page, {
@@ -617,6 +617,48 @@ for (const [screen, href] of [
     )
   })
 }
+
+test("a narrow window keeps the desktop layout: the sidebar floats when called and the side panel becomes a sheet", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 700, height: 720 })
+  await openSession(page, {
+    name: "Narrow",
+    sessions: [a, b],
+    seed: { settings: { appearance: { tabLayout: "vertical", sidebarOpen: true } } },
+  })
+
+  const sidebar = page.locator('[data-slot="vertical-tabs-sidebar"]')
+  const toggle = page.locator('[data-slot="collapsed-sidebar-toggle"] button')
+  const tabB = sidebar.locator(`[data-titlebar-tab-link][href="${sessionHref(b.id)}"]`)
+  await expect(page.getByRole("tablist", { name: "Session view", exact: true })).toHaveCount(0)
+  await expect(sidebar).toHaveAttribute("data-state", "closed")
+  await expect(sidebar).toHaveCSS("width", "0px")
+
+  // The toggle floats the sidebar until Escape or a press outside it, without changing the saved preference.
+  await toggle.click()
+  await expect(sidebar).toHaveAttribute("data-peek", "")
+  await expect(tabB).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(sidebar).not.toHaveAttribute("data-peek")
+  await toggle.click()
+  await expect(sidebar).toHaveAttribute("data-peek", "")
+  await page.locator('[data-slot="session-chat-panel"]').click({ position: { x: 400, y: 300 } })
+  await expect(sidebar).not.toHaveAttribute("data-peek")
+
+  // The side panel floats over the chat, which keeps the row's width, and Escape closes it.
+  const chat = page.locator('[data-slot="session-chat-panel"]')
+  const review = page.locator("#review-panel")
+  await page.getByRole("button", { name: "Toggle review", exact: true }).click()
+  await expect(review).toHaveAttribute("aria-hidden", "false")
+  await expect.poll(() => chat.evaluate((element) => element.parentElement!.clientWidth - element.clientWidth)).toBe(0)
+  await page.keyboard.press("Escape")
+  await expect(review).toHaveAttribute("aria-hidden", "true")
+
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await expect(sidebar).toHaveAttribute("data-state", "open")
+  await expect(sidebar).toHaveCSS("width", "260px")
+})
 
 test("vertical tab gaps hover and select the nearest row", async ({ page }) => {
   await mockWorkspace(page, {
