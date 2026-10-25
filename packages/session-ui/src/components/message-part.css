@@ -1154,6 +1154,13 @@
     --tool-content-gap: 8px;
     gap: 0px;
 
+    > [data-slot="collapsible-trigger"]:focus-visible {
+      background-color: transparent;
+      outline: 2px solid var(--v2-border-border-focus);
+      outline-offset: 2px;
+      border-radius: var(--radius-md);
+    }
+
     > [data-slot="collapsible-trigger"][aria-expanded="true"] {
       position: sticky;
       top: var(--context-group-sticky-top);

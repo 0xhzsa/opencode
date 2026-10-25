@@ -6,6 +6,7 @@ type Played = {
   element: Element
   frames: Keyframe[]
   easing?: string
+  duration?: KeyframeAnimationOptions["duration"]
   animation: {
     startTime: number | null
     currentTime: number
@@ -33,7 +34,7 @@ beforeEach(() => {
         cancel: () => (animation.cancelled = true),
         finished: new Promise(() => {}),
       }
-      played.push({ element: this, frames, easing: options?.easing, animation })
+      played.push({ element: this, frames, easing: options?.easing, duration: options?.duration, animation })
       return animation
     },
   })
@@ -104,6 +105,21 @@ test("bends a running move toward a second jump instead of restarting it", () =>
   expect(first.animation.cancelled).toBe(true)
   const [drawn] = springAt(40, 0, omega, 1, 0.1)
   expect(offsets(on(layer)!)[0]).toBeCloseTo(drawn + 40, 2)
+})
+
+test("disclosure starts promptly and retains its deadline when content changes mid-open", () => {
+  const { layer, motion } = setup()
+  motion.kick(40, [], 0.18)
+  const first = on(layer)!
+  expect(first.duration).toBe(180)
+  const moves = offsets(first)
+  expect(moves[1]).toBeLessThan(32)
+  first.animation.currentTime = 90
+  const drawn = motion.offset("a").x
+  motion.kick(20, [])
+  expect(on(layer)!.duration).toBeCloseTo(90)
+  expect(offsets(on(layer)!)[0]).toBeCloseTo(drawn + 20, 2)
+  expect(offsets(on(layer)!).at(-1)).toBe(0)
 })
 
 test("reveals a grown row's new part under its box with the soft edge riding the box's lower edge", () => {

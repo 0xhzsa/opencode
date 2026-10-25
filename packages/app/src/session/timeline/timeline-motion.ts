@@ -60,7 +60,9 @@ export function createTimelineMotion(input: {
   const rows = new Map<string, Row>()
   const followers = new Set<Follower>()
   let animations: Animation[] = []
-  let epoch: { omega: number; zeta: number; clock?: Animation; at: number } | undefined
+  let epoch:
+    | { pose: (track: Track, t: number) => readonly [number, number]; duration?: number; clock?: Animation; at: number }
+    | undefined
 
   function elapsed() {
     if (!epoch) return 0
@@ -71,10 +73,7 @@ export function createTimelineMotion(input: {
 
   function hidden(row: Row, t: number) {
     if (!epoch) return row.content.x - row.box.x
-    return (
-      springAt(row.content.x, row.content.v, epoch.omega, epoch.zeta, t)[0] -
-      springAt(row.box.x, row.box.v, epoch.omega, epoch.zeta, t)[0]
-    )
+    return epoch.pose(row.content, t)[0] - epoch.pose(row.box, t)[0]
   }
 
   function opacity(row: Row, t: number) {
@@ -97,7 +96,7 @@ export function createTimelineMotion(input: {
     const current = epoch
     if (!current || t === 0) return
     const step = (track: Track) => {
-      const [x, v] = springAt(track.x, track.v, current.omega, current.zeta, t)
+      const [x, v] = current.pose(track, t)
       track.x = x
       track.v = v
     }
@@ -131,7 +130,9 @@ export function createTimelineMotion(input: {
     input.onSettle?.()
   }
 
-  function bake() {
+  function bake(duration?: number) {
+    // A stream arriving during a disclosure must not restart it on the slower growth spring.
+    const remaining = duration ?? (epoch?.duration === undefined ? 0 : Math.max(0, epoch.duration - elapsed()))
     stop()
     rows.forEach((row, key) => {
       if (rest(row.box) && rest(row.content) && (!row.enter || row.enter.floor >= 0.995)) release(key, row)
@@ -146,13 +147,23 @@ export function createTimelineMotion(input: {
     const spring = input.spring()
     const omega = (2 * Math.PI) / spring.duration
     const zeta = 1 - spring.bounce
-    const settleTime = Math.max(...tracks.map((track) => springSettle(track.x, track.v, omega, zeta, 0.02)))
+    const settleTime =
+      remaining || Math.max(...tracks.map((track) => springSettle(track.x, track.v, omega, zeta, 0.02)))
+    const pose = (track: Track, t: number): readonly [number, number] => {
+      if (!remaining) return springAt(track.x, track.v, omega, zeta, t)
+      const rest = Math.max(0, 1 - t / remaining)
+      return [track.x * rest ** 3, (-3 * track.x * rest ** 2) / remaining]
+    }
     const count = Math.max(2, Math.ceil(settleTime * 60))
     const times = Array.from({ length: count + 1 }, (_, index) => (settleTime * index) / count)
     const timing: KeyframeAnimationOptions = { duration: settleTime * 1000 * input.timeScale() }
-    const at = (track: Track, t: number, index: number) =>
-      index === count ? 0 : springAt(track.x, track.v, omega, zeta, t)[0]
-    const next = { omega, zeta, at: performance.now(), clock: undefined as Animation | undefined }
+    const at = (track: Track, t: number, index: number) => (index === count ? 0 : pose(track, t)[0])
+    const next = {
+      pose,
+      duration: remaining || undefined,
+      at: performance.now(),
+      clock: undefined as Animation | undefined,
+    }
     const start = document.timeline.currentTime
     epoch = next
     const animate = (element: Element, frames: Keyframe[], easing = "linear") => {
@@ -241,8 +252,7 @@ export function createTimelineMotion(input: {
   function offset(key: string) {
     const t = elapsed()
     const row = rows.get(key)
-    const sum = (track: Track) =>
-      epoch ? springAt(track.x, track.v, epoch.omega, epoch.zeta, t) : ([track.x, track.v] as const)
+    const sum = (track: Track) => (epoch ? epoch.pose(track, t) : ([track.x, track.v] as const))
     const [lx, lv] = sum(layer)
     const [cx, cv] = row ? sum(row.content) : [0, 0]
     return { x: lx + cx, v: lv + cv }
@@ -254,7 +264,7 @@ export function createTimelineMotion(input: {
      * A content change moved the layer's rows `layer` px on screen from where they were drawn, and `jumps` moved by
      * different amounts. Each `jump` is relative to the layer's.
      */
-    kick(layerJump: number, jumps: RowJump[]) {
+    kick(layerJump: number, jumps: RowJump[], duration?: number) {
       advance()
       layer.x += layerJump
       jumps.forEach((jump) => {
@@ -288,7 +298,7 @@ export function createTimelineMotion(input: {
         follower.track.x += jump
         follower.base -= jump
       })
-      bake()
+      bake(duration)
     },
     /** Where row `key`'s content is drawn relative to its resting slot, now. */
     offset,

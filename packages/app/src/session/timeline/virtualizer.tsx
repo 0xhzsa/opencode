@@ -522,6 +522,7 @@ export function createTimelineVirtualizer(input: Input) {
   // Where every mounted row rested on screen before the content changed, so the change can be drawn as a move from there.
   let before: { top: number; rows: Map<string, { top: number; bottom: number }> } | undefined
   let commitQueued = false
+  let disclosing = false
   // The row Working hands its place to as it leaves; its new footer shows at once for the copy button to sharpen into.
   let handoffRow: string | undefined
 
@@ -653,7 +654,10 @@ export function createTimelineVirtualizer(input: Input) {
 
     settleArrivals()
     if (handoff) handOff(handoff)
-    if (Math.abs(layer) >= 1 / 64 || jumps.length) motion.kick(layer, jumps)
+    if (Math.abs(layer) >= 1 / 64 || jumps.length) {
+      motion.kick(layer, jumps, disclosing ? 0.18 : undefined)
+      disclosing = false
+    }
   }
 
   // Measured arrivals that were not drawn arriving have arrived out of view.
@@ -1808,7 +1812,14 @@ export function createTimelineVirtualizer(input: Input) {
     disclosure: {
       patchGroupKeys,
       value: (key: string) => toolOpen[key],
-      set: (key: string, open: boolean) => setToolOpen(key, open),
+      set: (key: string, open: boolean) => {
+        // Direct disclosure should respond at control speed, independently of streamed row growth.
+        capture()
+        disclosing = true
+        setToolOpen(key, open)
+        // Measure this user action now instead of waiting for the next ResizeObserver delivery.
+        measureMountedRows()
+      },
     },
     revealPart,
     View,

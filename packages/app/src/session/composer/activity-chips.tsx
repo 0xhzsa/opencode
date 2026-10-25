@@ -192,7 +192,7 @@ export function SessionActivityChips(props: {
     ref: () => capsule()?.querySelector<HTMLElement>('[data-slot="session-activity-chip"]') ?? undefined,
     content: () => capsule()?.querySelector<HTMLElement>(".session-activity-content") ?? undefined,
     watch: counts,
-    spring: () => ({ duration: 0.25, bounce: 0 }),
+    spring: () => ({ duration: 0.15, bounce: 0 }),
     // The trailing 8px of padding lives inside the masked content.
     inset: 6.5,
   })
