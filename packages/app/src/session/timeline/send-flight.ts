@@ -1,6 +1,17 @@
 import { prefersReducedMotion, springAt, springSettle } from "@opencode/ui/motion"
 import { motionTuning } from "@opencode/ui/motion-tuning"
-import { growthSpring } from "./row-growth"
+
+// The composer's copy flies onto its bubble on this spring; the flight runs it at half its duration.
+export const sendFlightSpring = motionTuning.spring("timeline.sendFlight", {
+  label: "Send flight",
+  group: "Timeline",
+  subsection: "Send flight",
+  presets: {
+    snappy: { duration: 0.32, bounce: 0 },
+    smooth: { duration: 0.42, bounce: 0 },
+    calm: { duration: 0.55, bounce: 0 },
+  },
+})
 
 type Rect = { x: number; y: number; w: number; h: number }
 
@@ -210,7 +221,7 @@ export function landSendFlight(
   copy.style.borderRadius = "0"
   // A prompt that wraps differently in its bubble crosses over quickly, so the two wraps barely overlap.
   const rewraps = Math.abs(rect.height - top - bottom - flight.textHeight / zoom) > 2
-  const spring = growthSpring()
+  const spring = sendFlightSpring()
   const omega = (2 * Math.PI) / (spring.duration / 2)
   const zeta = 1 - spring.bounce
   const settle = springSettle(1, 0, omega, zeta, 0.001)

@@ -2,7 +2,7 @@ import { motionTuning } from "@opencode/ui/motion-tuning"
 
 // Like the iOS transcript: rows that move or grow spring to their new places on this spring.
 export const growthSpring = motionTuning.spring("timeline.growth", {
-  label: "Row growth, return & send flight",
+  label: "Row growth & return",
   group: "Timeline",
   presets: {
     snappy: { duration: 0.32, bounce: 0 },

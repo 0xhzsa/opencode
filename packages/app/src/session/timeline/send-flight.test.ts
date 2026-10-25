@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
-import { landSendFlight, prepareSendFlight } from "./send-flight"
+import { motionTuning } from "@opencode/ui/motion-tuning"
+import { growthSpring } from "./row-growth"
+import { landSendFlight, prepareSendFlight, sendFlightSpring } from "./send-flight"
 
 type Played = {
   element: Element
   frames: Keyframe[]
+  duration: number
   animation: { currentTime: number; cancel: () => void; finished: Promise<unknown> }
   finish: () => void
 }
@@ -16,14 +19,14 @@ beforeEach(() => {
   played = []
   Object.defineProperty(Element.prototype, "animate", {
     configurable: true,
-    value(this: Element, frames: Keyframe[]) {
+    value(this: Element, frames: Keyframe[], options?: KeyframeAnimationOptions) {
       const finished = Promise.withResolvers<unknown>()
       const animation = {
         currentTime: 0,
         cancel: () => finished.reject(new Error("cancelled")),
         finished: finished.promise,
       }
-      played.push({ element: this, frames, animation, finish: () => finished.resolve(animation) })
+      played.push({ element: this, frames, duration: Number(options?.duration), animation, finish: () => finished.resolve(animation) })
       return animation
     },
   })
@@ -123,6 +126,35 @@ test("lands in local CSS pixels when its viewport is zoomed", async () => {
     await Promise.resolve()
     expect(element.style.opacity).toBe("")
   } finally {
+    restore()
+  }
+})
+
+test("flies on its own spring, not the rows' growth spring", () => {
+  const { editor, bubble, restore } = setup()
+  const knob = (id: string) => {
+    const found = motionTuning.list().find((item) => item.id === id)
+    if (found?.kind !== "spring") throw new Error(`no spring ${id}`)
+    return found
+  }
+  const flight = knob("timeline.sendFlight")
+  const growth = knob("timeline.growth")
+  const land = (id: string) => {
+    played = []
+    prepareSendFlight(id, editor)
+    landSendFlight(id, bubble(300))
+    return hosts()[0]!.duration
+  }
+  try {
+    expect(sendFlightSpring()).toEqual(growthSpring())
+    const shipped = land("shipped")
+    motionTuning.set(growth, { duration: 0.9, bounce: 0 })
+    expect(land("growth-tuned")).toBe(shipped)
+    motionTuning.set(flight, { duration: 0.64, bounce: 0 })
+    expect(land("flight-tuned")).toBeCloseTo(shipped * 2, -2)
+  } finally {
+    motionTuning.set(growth, { ...growth.initial })
+    motionTuning.set(flight, { ...flight.initial })
     restore()
   }
 })
