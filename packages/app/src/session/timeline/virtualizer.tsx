@@ -1619,7 +1619,9 @@ export function createTimelineVirtualizer(input: Input) {
             left: "calc((100% - var(--panel-hold-width, 100%)) / 2)",
             width: "var(--panel-hold-width, 100%)",
             height: `${edges().bottom - edges().top + (edge() ?? 0)}px`,
-            overflow: "clip",
+            // A delivered user's label can still be collapsing after its modeled slot has shrunk. Only its reveal
+            // owns a clip; otherwise the bubble and footer must remain visible as the surrounding rows close up.
+            overflow: Predicate.isTagged(row(), "UserMessage") && !edge() ? "visible" : "clip",
             "overflow-clip-margin": Predicate.isTagged(row(), "TurnGap") ? undefined : "0.5px",
             // The soft edge a revealing row's content passes under; the box's motion moves it, not style writes.
             "mask-image": edge()

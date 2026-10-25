@@ -11,6 +11,9 @@ type Row = {
   content: Track
   /** A soft edge this tall rides the box's lower edge while content is still hidden below it. */
   edge: number
+  /** The feather already drawn, and the hidden span when this bake started. */
+  feather: number
+  hidden: number
   extended: boolean
   enter?: { span: number; size: number; floor: number }
 }
@@ -82,6 +85,12 @@ export function createTimelineMotion(input: {
     )
   }
 
+  function feather(row: Row, remaining: number) {
+    // Spend only newly revealed space on widening the fade. Re-expanding it from the hidden span on every text
+    // update would dim the preceding line again, especially when the last reveal was almost settled.
+    return Math.min(row.edge, Math.max(0, remaining), Math.max(0, row.feather + (row.hidden - remaining) / 2))
+  }
+
   // Brings every track to where its running animation has drawn it.
   function advance() {
     const t = elapsed()
@@ -95,6 +104,7 @@ export function createTimelineMotion(input: {
     step(layer)
     rows.forEach((row) => {
       if (row.enter) row.enter.floor = opacity(row, t)
+      row.feather = feather(row, hidden(row, t))
       step(row.box)
       step(row.content)
     })
@@ -172,10 +182,11 @@ export function createTimelineMotion(input: {
     }
 
     rows.forEach((row, key) => {
+      row.hidden = row.content.x - row.box.x
       const reveal = (index: number, t: number) => {
         const box = at(row.box, t, index)
         const content = at(row.content, t, index)
-        const edge = row.edge > 0 ? Math.min(row.edge, Math.max(0, content - box)) : 0
+        const edge = feather(row, content - box)
         return { box: box - edge, inner: content - box + edge, edge }
       }
       const poses = times.map((t, index) => reveal(index, t))
@@ -253,6 +264,8 @@ export function createTimelineMotion(input: {
           box: { x: 0, v: 0 },
           content: { x: 0, v: 0 },
           edge: 0,
+          feather: 0,
+          hidden: 0,
           extended: false,
         }
         row.wrapper = jump.wrapper

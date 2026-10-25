@@ -114,7 +114,7 @@ test("reveals a grown row's new part under its box with the soft edge riding the
   expect(live().map((item) => item.animation.startTime)).toEqual([1000, 1000, 1000])
   const box = offsets(on(wrapper)!)
   const content = offsets(on(inner)!)
-  expect([box[0], content[0]]).toEqual([-58, 58])
+  expect([box[0], content[0]]).toEqual([-30, 30])
   // The content itself never moves; only how much of it shows.
   expect(box.every((y, index) => Math.abs(y + content[index]!) < 0.01)).toBe(true)
   expect([box.at(-1), content.at(-1)]).toEqual([0, 0])
@@ -123,7 +123,7 @@ test("reveals a grown row's new part under its box with the soft edge riding the
   const tails = on(wrapper, "clipPath")!.frames.map((frame) =>
     Number(String(frame.clipPath).split(" ")[2]!.replace("px", "")),
   )
-  expect([tails[0], tails.at(-1)]).toEqual([0, 28])
+  expect([tails[0], tails.at(-1)]).toEqual([28, 28])
   expect(box.every((y, index) => y + 28 - tails[index]! <= 0.01)).toBe(true)
   expect(edges).toEqual([["a", 28]])
   motion.cancel()
@@ -133,13 +133,13 @@ test("reveals a grown row's new part under its box with the soft edge riding the
   ])
 })
 
-test("keeps a revealing row's soft edge when a later growth asks for another, so its revealed bottom never recedes", () => {
+test.each([100, 300])("keeps the soft edge continuous when more text arrives after %ims", (elapsed) => {
   const { motion, edges, row } = setup()
   const { wrapper, inner } = row()
   motion.kick(0, [{ key: "a", wrapper, inner, box: -60, content: 0, edge: 12 }])
-  played[0]!.animation.currentTime = 100
-  const [box] = springAt(-60, 0, omega, 1, 0.1)
-  const drawn = box - 12
+  played[0]!.animation.currentTime = elapsed
+  motion.kick(0, [])
+  const drawn = offsets(on(wrapper)!)[0]!
   // The text completes mid-reveal and grows another 24px; a completed row would otherwise take the 28px edge.
   motion.kick(0, [{ key: "a", wrapper, inner, box: -24, content: 0, edge: 28 }])
   expect(offsets(on(wrapper)!)[0]).toBeCloseTo(drawn - 24, 2)

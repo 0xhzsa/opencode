@@ -211,7 +211,7 @@ export function landSendFlight(
   // A prompt that wraps differently in its bubble crosses over quickly, so the two wraps barely overlap.
   const rewraps = Math.abs(rect.height - top - bottom - flight.textHeight / zoom) > 2
   const spring = growthSpring()
-  const omega = (2 * Math.PI) / spring.duration
+  const omega = (2 * Math.PI) / (spring.duration / 2)
   const zeta = 1 - spring.bounce
   const settle = springSettle(1, 0, omega, zeta, 0.001)
   const count = Math.max(2, Math.ceil(settle * 60))
