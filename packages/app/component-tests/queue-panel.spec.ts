@@ -1,4 +1,7 @@
-import { expect, story } from "../../stories/playwright/story"
+import { expect, sourceURL, story } from "../../stories/playwright/story"
+import type { mountSortable } from "./sortable.fixture"
+
+const fixture = sourceURL(new URL("./sortable.fixture.tsx", import.meta.url))
 
 story("arrow keys on a reorder handle move its prompt and keep focus", async ({ mount }) => {
   const component = await mount("session-queue-panel--short")
@@ -101,4 +104,27 @@ story("dragging to the edge of a scrolling queue scrolls it", async ({ mount, pa
   await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(40)
   await page.mouse.up()
   await expect(texts.last()).toHaveText("Compare the Alpha and Beta fixtures")
+})
+
+story("a list rebuilt with the same IDs mid-drag keeps the drag", async ({ mount, page }) => {
+  await mount("session-queue-panel--short")
+
+  const control = await page.evaluateHandle(async (fixture): Promise<ReturnType<typeof mountSortable>> => {
+    const module = await import(fixture)
+
+    return module.mountSortable()
+  }, fixture)
+
+  const root = page.getByTestId("sortable-fixture")
+  const box = await root.getByText("a", { exact: true }).boundingBox()
+
+  if (!box) throw new Error("The sortable fixture is not visible")
+
+  await page.mouse.move(box.x + 20, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 20, box.y + box.height / 2 + 20, { steps: 4 })
+  await control.evaluate((sortable) => sortable.recompute())
+  await page.mouse.move(box.x + 20, box.y + box.height / 2 + 40, { steps: 4 })
+  await page.mouse.up()
+  await expect(root.locator("[data-id]")).toHaveText(["b", "a", "c"])
 })

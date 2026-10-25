@@ -407,7 +407,18 @@ export function createSortable(options: SortableOptions) {
     item.handle?.focus()
   }
 
-  createEffect(on(options.ids, () => drag && finish(true), { defer: true }))
+  // Callers often rebuild the array on unrelated updates, so only a different order or set of IDs cancels.
+  createEffect(
+    on(
+      options.ids,
+      (ids) => {
+        const started = drag?.ids
+
+        if (started && (ids.length !== started.length || ids.some((id, index) => id !== started[index]))) finish(true)
+      },
+      { defer: true },
+    ),
+  )
 
   onCleanup(() => {
     release()
