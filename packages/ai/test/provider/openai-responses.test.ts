@@ -1937,7 +1937,7 @@ describe("OpenAI Responses route", () => {
         {
           type: "function_call_output",
           call_id: "call_video",
-          output: "Video attached in the following user message.",
+          output: "Media attached in the following user message.",
         },
         { type: "function_call_output", call_id: "call_text", output: "plain result" },
         {
