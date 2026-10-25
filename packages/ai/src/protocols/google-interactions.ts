@@ -245,7 +245,7 @@ const signature = (metadata: ProviderMetadata | undefined, key: string) => {
 
 const lowerMessages = Effect.fnUntraced(function* (request: LLMRequest) {
   const steps: InputStep[] = []
-  const attachments: typeof MediaContent.Type[] = []
+  const attachments: typeof Content.Type[] = []
   const flushAttachments = () => {
     if (attachments.length > 0) steps.push({ type: "user_input", content: attachments.splice(0) })
   }
@@ -316,7 +316,7 @@ const lowerMessages = Effect.fnUntraced(function* (request: LLMRequest) {
   return steps
 })
 
-const lowerToolResult = Effect.fnUntraced(function* (part: ToolResultPart, attachments: typeof MediaContent.Type[]) {
+const lowerToolResult = Effect.fnUntraced(function* (part: ToolResultPart, attachments: typeof Content.Type[]) {
   if (part.result.type === "json" && ProviderShared.isRecord(part.result.value)) return part.result.value
   if (part.result.type !== "content") return ProviderShared.toolResultText(part)
 
@@ -325,14 +325,11 @@ const lowerToolResult = Effect.fnUntraced(function* (part: ToolResultPart, attac
     return mediaContent(GeminiGenerateContent.toolMedia(item))
   })
   // URI audio can produce no output when nested in a function result; inline audio remains nested.
-  const result = content.filter((item) => {
-    if (item.type !== "audio" || item.uri === undefined) return true
-    attachments.push(item)
-    return false
+  return content.map((item) => {
+    if (item.type !== "audio" || item.uri === undefined) return item
+    attachments.push({ type: "text", text: `Audio from tool ${part.name} (${part.id}):` }, item)
+    return { type: "text" as const, text: "Audio attached in the following user message." }
   })
-  return result.length === 0 && content.length > 0
-    ? [{ type: "text" as const, text: "Audio attached in the following user message." }]
-    : result
 })
 
 const fromRequest = Effect.fn("GoogleInteractions.fromRequest")(function* (request: LLMRequest) {
