@@ -48,7 +48,9 @@ const easeOut = (t: number) => 1 - (1 - t) * (1 - t)
  */
 export function createTimelineMotion(input: {
   layer: () => HTMLElement | undefined
+  /** Already stretched by the global speed and slow motion. */
   spring: () => DurationOptions
+  /** Stretches a fixed duration by the global speed and slow motion. */
   timeScale: () => number
   /** The furthest the content is drawn from its slots, so the rows around the viewport can stay mounted. */
   onReach: (px: number) => void
@@ -68,7 +70,7 @@ export function createTimelineMotion(input: {
     if (!epoch) return 0
     const time = epoch.clock?.currentTime
     const ms = typeof time === "number" ? time : performance.now() - epoch.at
-    return Math.max(0, ms / 1000 / input.timeScale())
+    return Math.max(0, ms / 1000)
   }
 
   function hidden(row: Row, t: number) {
@@ -132,7 +134,8 @@ export function createTimelineMotion(input: {
 
   function bake(duration?: number) {
     // A stream arriving during a disclosure must not restart it on the slower growth spring.
-    const remaining = duration ?? (epoch?.duration === undefined ? 0 : Math.max(0, epoch.duration - elapsed()))
+    const left = epoch?.duration === undefined ? 0 : Math.max(0, epoch.duration - elapsed())
+    const remaining = duration === undefined ? left : duration * input.timeScale()
     stop()
     rows.forEach((row, key) => {
       if (rest(row.box) && rest(row.content) && (!row.enter || row.enter.floor >= 0.995)) release(key, row)
@@ -156,7 +159,7 @@ export function createTimelineMotion(input: {
     }
     const count = Math.max(2, Math.ceil(settleTime * 60))
     const times = Array.from({ length: count + 1 }, (_, index) => (settleTime * index) / count)
-    const timing: KeyframeAnimationOptions = { duration: settleTime * 1000 * input.timeScale() }
+    const timing: KeyframeAnimationOptions = { duration: settleTime * 1000 }
     const at = (track: Track, t: number, index: number) => (index === count ? 0 : pose(track, t)[0])
     const next = {
       pose,

@@ -96,6 +96,27 @@ test("draws a jump back out on the row layer and springs it to rest without pass
   expect(live()).toHaveLength(1)
 })
 
+test("stretches moves and disclosures by slow motion once", () => {
+  const normal = setup()
+  normal.motion.kick(40, [])
+  const base = Number(on(normal.layer)!.duration)
+  const layer = document.createElement("div")
+  document.body.replaceChildren(layer)
+  // The growth spring arrives already stretched, as motion tuning hands it over.
+  const motion = createTimelineMotion({
+    layer: () => layer,
+    spring: () => ({ duration: spring.duration * 4, bounce: 0 }),
+    timeScale: () => 4,
+    onReach: () => {},
+    onEdge: () => {},
+  })
+  motion.kick(40, [])
+  expect(Number(on(layer)!.duration) / base).toBeCloseTo(4, 1)
+  motion.cancel()
+  motion.kick(40, [], 0.18)
+  expect(on(layer)!.duration).toBe(720)
+})
+
 test("bends a running move toward a second jump instead of restarting it", () => {
   const { layer, motion } = setup()
   motion.kick(40, [])
