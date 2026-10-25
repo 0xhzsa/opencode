@@ -1,8 +1,8 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "125c9ce6-dbf3-470f-8b89-2c9d707b4554",
-  "prevIds": ["76109fbf-f324-4af0-934c-3ae695275099"],
+  "id": "e6d3482a-845e-4c3c-8a71-a8f659955be4",
+  "prevIds": ["125c9ce6-dbf3-470f-8b89-2c9d707b4554"],
   "ddl": [
     {
       "name": "account_state",
@@ -74,6 +74,10 @@
     },
     {
       "name": "session_v2",
+      "entityType": "tables"
+    },
+    {
+      "name": "session_tombstone",
       "entityType": "tables"
     },
     {
@@ -938,6 +942,16 @@
       "type": "integer",
       "notNull": true,
       "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "change_seq",
+      "entityType": "columns",
+      "table": "session_inbox"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
       "default": null,
       "generated": null,
       "name": "time_created",
@@ -981,6 +995,16 @@
       "default": null,
       "generated": null,
       "name": "seq",
+      "entityType": "columns",
+      "table": "session_message"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "change_seq",
       "entityType": "columns",
       "table": "session_message"
     },
@@ -1061,6 +1085,16 @@
       "default": null,
       "generated": null,
       "name": "call_id",
+      "entityType": "columns",
+      "table": "session_part"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "change_seq",
       "entityType": "columns",
       "table": "session_part"
     },
@@ -1525,6 +1559,66 @@
       "table": "session_v2"
     },
     {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "change_seq",
+      "entityType": "columns",
+      "table": "session_v2"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "session_id",
+      "entityType": "columns",
+      "table": "session_tombstone"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "kind",
+      "entityType": "columns",
+      "table": "session_tombstone"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "row_id",
+      "entityType": "columns",
+      "table": "session_tombstone"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "ordinal",
+      "entityType": "columns",
+      "table": "session_tombstone"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "change_seq",
+      "entityType": "columns",
+      "table": "session_tombstone"
+    },
+    {
       "type": "text",
       "notNull": false,
       "autoincrement": false,
@@ -1747,6 +1841,17 @@
       "table": "session_v2"
     },
     {
+      "columns": ["session_id"],
+      "tableTo": "session_v2",
+      "columnsTo": ["id"],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_session_tombstone_session_id_session_v2_id_fk",
+      "entityType": "fks",
+      "table": "session_tombstone"
+    },
+    {
       "columns": ["project_id"],
       "tableTo": "project",
       "columnsTo": ["id"],
@@ -1784,6 +1889,13 @@
       "name": "session_part_pk",
       "entityType": "pks",
       "table": "session_part"
+    },
+    {
+      "columns": ["session_id", "kind", "row_id", "ordinal"],
+      "nameExplicit": false,
+      "name": "session_tombstone_pk",
+      "entityType": "pks",
+      "table": "session_tombstone"
     },
     {
       "columns": ["project_id", "directory"],
@@ -2024,6 +2136,24 @@
           "isExpression": false
         },
         {
+          "value": "change_seq",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "session_message_session_change_seq_idx",
+      "entityType": "indexes",
+      "table": "session_message"
+    },
+    {
+      "columns": [
+        {
+          "value": "session_id",
+          "isExpression": false
+        },
+        {
           "value": "type",
           "isExpression": false
         },
@@ -2094,6 +2224,24 @@
       "where": null,
       "origin": "manual",
       "name": "session_part_session_message_idx",
+      "entityType": "indexes",
+      "table": "session_part"
+    },
+    {
+      "columns": [
+        {
+          "value": "session_id",
+          "isExpression": false
+        },
+        {
+          "value": "change_seq",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "session_part_session_change_seq_idx",
       "entityType": "indexes",
       "table": "session_part"
     },
@@ -2206,6 +2354,24 @@
       "name": "session_v2_time_suspended_idx",
       "entityType": "indexes",
       "table": "session_v2"
+    },
+    {
+      "columns": [
+        {
+          "value": "session_id",
+          "isExpression": false
+        },
+        {
+          "value": "change_seq",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "session_tombstone_session_change_seq_idx",
+      "entityType": "indexes",
+      "table": "session_tombstone"
     }
   ],
   "renames": []

@@ -1240,6 +1240,38 @@ export type SessionLogOutput =
   | EventLog.Synced
 export type SessionLogOperation<E = never> = (input: SessionLogInput) => Stream.Stream<SessionLogOutput, E>
 
+export type SessionChangesInput = {
+  readonly sessionID: Session.ID
+  readonly since?: number | undefined
+  readonly limit?: number | undefined
+}
+export type SessionChangesOutput = {
+  readonly sessionID: Session.ID
+  readonly head: number
+  readonly through: number
+  readonly more: boolean
+  readonly changes: ReadonlyArray<
+    | { readonly type: "session"; readonly seq: number; readonly session: Session.Info }
+    | { readonly type: "message"; readonly seq: number; readonly message: SessionMessage.Info }
+    | {
+        readonly type: "part"
+        readonly seq: number
+        readonly messageID: SessionMessage.ID
+        readonly ordinal: number
+        readonly part: SessionMessage.AssistantText | SessionMessage.AssistantReasoning | SessionMessage.AssistantTool
+      }
+    | { readonly type: "inbox"; readonly seq: number; readonly item: SessionInbox.Info }
+    | {
+        readonly type: "removed"
+        readonly seq: number
+        readonly kind: "message" | "part" | "inbox"
+        readonly id: SessionMessage.ID
+        readonly ordinal?: number | undefined
+      }
+  >
+}
+export type SessionChangesOperation<E = never> = (input: SessionChangesInput) => Effect.Effect<SessionChangesOutput, E>
+
 export type SessionInterruptInput = { readonly sessionID: Session.ID; readonly resume?: boolean | undefined }
 export type SessionInterruptOutput = { readonly interrupted: boolean }
 export type SessionInterruptOperation<E = never> = (
@@ -1355,6 +1387,7 @@ export interface SessionApi<E = never> {
   }
   readonly generate: SessionGenerateOperation<E>
   readonly log: SessionLogOperation<E>
+  readonly changes: SessionChangesOperation<E>
   readonly interrupt: SessionInterruptOperation<E>
   readonly background: SessionBackgroundOperation<E>
   readonly message: { readonly get: SessionMessageGetOperation<E> }

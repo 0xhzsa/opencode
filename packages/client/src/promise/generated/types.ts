@@ -2537,6 +2537,19 @@ export type FormCreated = {
 
 export type SessionTransferData = { info: SessionInfo; messages: Array<SessionMessageInfo> }
 
+export type SessionChange =
+  | { type: "session"; seq: number; session: SessionInfo }
+  | { type: "message"; seq: number; message: SessionMessageInfo }
+  | {
+      type: "part"
+      seq: number
+      messageID: SessionMessageID
+      ordinal: number
+      part: SessionMessageAssistantText | SessionMessageAssistantReasoning | SessionMessageAssistantTool
+    }
+  | { type: "inbox"; seq: number; item: SessionInboxInfo }
+  | { type: "removed"; seq: number; kind: "message" | "part" | "inbox"; id: SessionMessageID; ordinal?: number | null }
+
 export type SessionMessagesResponse = {
   data: Array<SessionMessageInfo>
   cursor: { previous?: string | null; next?: string | null }
@@ -2696,6 +2709,14 @@ export type V2Event =
   | McpResourcesChanged
   | V2EventRpc
   | V2EventServerConnected
+
+export type SessionChanges = {
+  sessionID: SessionID
+  head: number
+  through: number
+  more: boolean
+  changes: Array<SessionChange>
+}
 
 export type SessionLogItem = SessionEventDurable | EventLogSynced
 
@@ -3985,6 +4006,14 @@ export type SessionLogInput = {
 }
 
 export type SessionLogOutput = SessionLogItem
+
+export type SessionChangesInput = {
+  readonly sessionID: { readonly sessionID: string }["sessionID"]
+  readonly since?: { readonly since?: number | undefined; readonly limit?: number | undefined }["since"]
+  readonly limit?: { readonly since?: number | undefined; readonly limit?: number | undefined }["limit"]
+}
+
+export type SessionChangesOutput = { data: SessionChanges }["data"]
 
 export type SessionInterruptInput = {
   readonly sessionID: { readonly sessionID: string }["sessionID"]

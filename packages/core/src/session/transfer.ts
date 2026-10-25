@@ -128,11 +128,17 @@ const layer = Layer.effect(
               commit: (seq) =>
                 Effect.gen(function* () {
                   if (messages.length > 0) {
-                    yield* db.insert(SessionMessageTable).values(messages).run().pipe(Effect.orDie)
+                    for (let index = 0; index < messages.length; index += 500) {
+                      yield* db
+                        .insert(SessionMessageTable)
+                        .values(messages.slice(index, index + 500).map((message) => ({ ...message, change_seq: seq })))
+                        .run()
+                        .pipe(Effect.orDie)
+                    }
                     for (let index = 0; index < parts.length; index += 500) {
                       yield* db
                         .insert(SessionPartTable)
-                        .values(parts.slice(index, index + 500))
+                        .values(parts.slice(index, index + 500).map((part) => ({ ...part, change_seq: seq })))
                         .run()
                         .pipe(Effect.orDie)
                     }
@@ -141,6 +147,7 @@ const layer = Layer.effect(
                   yield* db
                     .update(SessionTable)
                     .set({
+                      change_seq: seq,
                       cost: input.data.info.cost,
                       tokens_input: input.data.info.tokens.input,
                       tokens_output: input.data.info.tokens.output,

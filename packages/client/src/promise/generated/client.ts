@@ -81,6 +81,8 @@ import type {
   SessionGenerateOutput,
   SessionLogInput,
   SessionLogOutput,
+  SessionChangesInput,
+  SessionChangesOutput,
   SessionInterruptInput,
   SessionInterruptOutput,
   SessionBackgroundInput,
@@ -993,6 +995,18 @@ export function make(options: ClientOptions) {
           },
           requestOptions,
         ),
+      changes: (input: SessionChangesInput, requestOptions?: RequestOptions) =>
+        request<{ readonly data: SessionChangesOutput }>(
+          {
+            method: "GET",
+            path: `/api/experimental/session/${encodeURIComponent(input.sessionID)}/changes`,
+            query: { since: input["since"], limit: input["limit"] },
+            successStatus: 200,
+            declaredStatuses: [400, 401, 404, 500, 503],
+            empty: false,
+          },
+          requestOptions,
+        ).then((value) => value.data),
       interrupt: (input: SessionInterruptInput, requestOptions?: RequestOptions) =>
         request<SessionInterruptOutput>(
           {

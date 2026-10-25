@@ -67,6 +67,8 @@ export const SessionTable = sqliteTable(
     /** The execution claim timestamp (historical column name; see SessionStore.claim). */
     time_suspended: integer(),
     resume_attempts: integer().notNull().default(0),
+    /** The session's durable event sequence of the last write to this row; see SessionChanges. */
+    change_seq: integer().notNull().default(0),
   },
   (table) => [
     index("session_v2_project_idx").on(table.project_id),
@@ -88,11 +90,13 @@ export const SessionMessageTable = sqliteTable(
       .references(() => SessionTable.id, { onDelete: "cascade" }),
     type: text().$type<SessionMessage.Type>().notNull(),
     seq: integer().notNull(),
+    change_seq: integer().notNull().default(0),
     ...Timestamps,
     data: text({ mode: "json" }).notNull().$type<SessionMessageData>(),
   },
   (table) => [
     uniqueIndex("session_message_session_seq_idx").on(table.session_id, table.seq),
+    index("session_message_session_change_seq_idx").on(table.session_id, table.change_seq),
     index("session_message_session_type_seq_idx").on(table.session_id, table.type, table.seq),
     index("session_message_session_time_created_id_idx").on(table.session_id, table.time_created, table.id),
     index("session_message_time_created_idx").on(table.time_created),
@@ -113,12 +117,37 @@ export const SessionPartTable = sqliteTable(
     ordinal: integer().notNull(),
     type: text().$type<SessionMessage.AssistantContent["type"]>().notNull(),
     call_id: text(),
+    change_seq: integer().notNull().default(0),
     ...Timestamps,
     data: text({ mode: "json" }).notNull().$type<SessionPartData>(),
   },
   (table) => [
     primaryKey({ columns: [table.message_id, table.ordinal] }),
     index("session_part_session_message_idx").on(table.session_id, table.message_id, table.ordinal),
+    index("session_part_session_change_seq_idx").on(table.session_id, table.change_seq),
+  ],
+)
+
+/**
+ * One row per session-state row removed since it was written, so a catch-up by change sequence can remove it.
+ * Removing a message also removes its parts; those parts get no tombstone of their own.
+ */
+export const SessionTombstoneTable = sqliteTable(
+  "session_tombstone",
+  {
+    session_id: text()
+      .$type<SessionSchema.ID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    kind: text().$type<"message" | "part" | "inbox">().notNull(),
+    row_id: text().$type<SessionMessage.ID>().notNull(),
+    /** Part ordinal; 0 for messages and inbox items. */
+    ordinal: integer().notNull().default(0),
+    change_seq: integer().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.session_id, table.kind, table.row_id, table.ordinal] }),
+    index("session_tombstone_session_change_seq_idx").on(table.session_id, table.change_seq),
   ],
 )
 
@@ -159,6 +188,7 @@ export const SessionInboxTable = sqliteTable(
     payload: text({ mode: "json" }).$type<UserPayload | SyntheticPayload | CompactionPayload | MovePayload>().notNull(),
     delivery: text().$type<SessionInbox.Delivery>().notNull(),
     enqueued_seq: integer().notNull(),
+    change_seq: integer().notNull().default(0),
     time_created: integer()
       .notNull()
       .$default(() => Date.now()),

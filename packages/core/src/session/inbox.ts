@@ -73,7 +73,7 @@ function matches<Type extends Item["type"]>(
   return stored.sessionID === request.sessionID && stored.type === request.type
 }
 
-const fromRow = (row: typeof SessionInboxTable.$inferSelect): Info => {
+export const fromRow = (row: typeof SessionInboxTable.$inferSelect): Info => {
   const base = {
     id: row.id,
     sessionID: row.session_id,
@@ -316,6 +316,7 @@ export const projectAdmitted = Effect.fn("SessionInbox.projectAdmitted")(functio
               : encodeMove(request.item.payload),
       delivery: request.item.delivery,
       enqueued_seq: request.enqueuedSeq,
+      change_seq: request.enqueuedSeq,
       time_created: request.timeCreated,
     })
     .onConflictDoNothing()
@@ -365,11 +366,11 @@ export const projectCancelled = Effect.fn("SessionInbox.projectCancelled")(funct
 
 const projectDelivery = Effect.fn("SessionInbox.projectDelivery")(function* (
   db: DatabaseService,
-  input: PendingRef & { readonly from: Delivery; readonly to: Delivery },
+  input: PendingRef & { readonly from: Delivery; readonly to: Delivery; readonly changeSeq: number },
 ) {
   const updated = yield* db
     .update(SessionInboxTable)
-    .set({ delivery: input.to })
+    .set({ delivery: input.to, change_seq: input.changeSeq })
     .where(
       and(
         eq(SessionInboxTable.id, input.id),
@@ -384,7 +385,7 @@ const projectDelivery = Effect.fn("SessionInbox.projectDelivery")(function* (
 })
 
 export const projectDeliveryChanged = Effect.fn("SessionInbox.projectDeliveryChanged")(
-  (db: DatabaseService, input: PendingRef & { readonly delivery: Delivery }) =>
+  (db: DatabaseService, input: PendingRef & { readonly delivery: Delivery; readonly changeSeq: number }) =>
     projectDelivery(db, {
       ...input,
       from: input.delivery === "steer" ? "queue" : "steer",

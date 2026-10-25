@@ -152,6 +152,7 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
           \`payload\` text NOT NULL,
           \`delivery\` text NOT NULL,
           \`enqueued_seq\` integer NOT NULL,
+          \`change_seq\` integer DEFAULT 0 NOT NULL,
           \`time_created\` integer NOT NULL,
           CONSTRAINT \`fk_session_inbox_session_id_session_v2_id_fk\` FOREIGN KEY (\`session_id\`) REFERENCES \`session_v2\`(\`id\`) ON DELETE CASCADE
         );
@@ -162,6 +163,7 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
           \`session_id\` text NOT NULL,
           \`type\` text NOT NULL,
           \`seq\` integer NOT NULL,
+          \`change_seq\` integer DEFAULT 0 NOT NULL,
           \`time_created\` integer NOT NULL,
           \`time_updated\` integer NOT NULL,
           \`data\` text NOT NULL,
@@ -175,6 +177,7 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
           \`ordinal\` integer NOT NULL,
           \`type\` text NOT NULL,
           \`call_id\` text,
+          \`change_seq\` integer DEFAULT 0 NOT NULL,
           \`time_created\` integer NOT NULL,
           \`time_updated\` integer NOT NULL,
           \`data\` text NOT NULL,
@@ -233,7 +236,19 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
           \`time_archived\` integer,
           \`time_suspended\` integer,
           \`resume_attempts\` integer DEFAULT 0 NOT NULL,
+          \`change_seq\` integer DEFAULT 0 NOT NULL,
           CONSTRAINT \`fk_session_v2_project_id_project_id_fk\` FOREIGN KEY (\`project_id\`) REFERENCES \`project\`(\`id\`) ON DELETE CASCADE
+        );
+      `)
+      yield* tx.run(`
+        CREATE TABLE \`session_tombstone\` (
+          \`session_id\` text NOT NULL,
+          \`kind\` text NOT NULL,
+          \`row_id\` text NOT NULL,
+          \`ordinal\` integer DEFAULT 0 NOT NULL,
+          \`change_seq\` integer NOT NULL,
+          CONSTRAINT \`session_tombstone_pk\` PRIMARY KEY(\`session_id\`, \`kind\`, \`row_id\`, \`ordinal\`),
+          CONSTRAINT \`fk_session_tombstone_session_id_session_v2_id_fk\` FOREIGN KEY (\`session_id\`) REFERENCES \`session_v2\`(\`id\`) ON DELETE CASCADE
         );
       `)
       yield* tx.run(`
@@ -270,6 +285,9 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
         `CREATE UNIQUE INDEX \`session_message_session_seq_idx\` ON \`session_message\` (\`session_id\`,\`seq\`);`,
       )
       yield* tx.run(
+        `CREATE INDEX \`session_message_session_change_seq_idx\` ON \`session_message\` (\`session_id\`,\`change_seq\`);`,
+      )
+      yield* tx.run(
         `CREATE INDEX \`session_message_session_type_seq_idx\` ON \`session_message\` (\`session_id\`,\`type\`,\`seq\`);`,
       )
       yield* tx.run(
@@ -278,6 +296,9 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
       yield* tx.run(`CREATE INDEX \`session_message_time_created_idx\` ON \`session_message\` (\`time_created\`);`)
       yield* tx.run(
         `CREATE INDEX \`session_part_session_message_idx\` ON \`session_part\` (\`session_id\`,\`message_id\`,\`ordinal\`);`,
+      )
+      yield* tx.run(
+        `CREATE INDEX \`session_part_session_change_seq_idx\` ON \`session_part\` (\`session_id\`,\`change_seq\`);`,
       )
       yield* tx.run(
         `CREATE INDEX \`session_pending_session_delivery_seq_idx\` ON \`session_pending\` (\`session_id\`,\`delivery\`,\`admitted_seq\`);`,
@@ -293,6 +314,9 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
       yield* tx.run(`CREATE INDEX \`session_v2_parent_idx\` ON \`session_v2\` (\`parent_id\`);`)
       yield* tx.run(
         `CREATE INDEX \`session_v2_time_suspended_idx\` ON \`session_v2\` (\`time_suspended\`) WHERE "session_v2"."time_suspended" is not null;`,
+      )
+      yield* tx.run(
+        `CREATE INDEX \`session_tombstone_session_change_seq_idx\` ON \`session_tombstone\` (\`session_id\`,\`change_seq\`);`,
       )
     })
   },

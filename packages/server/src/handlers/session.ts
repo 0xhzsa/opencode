@@ -2,6 +2,7 @@ import { Session } from "@opencode/core/session"
 import { SessionStats } from "@opencode/core/session/stats"
 import { SessionTitle } from "@opencode/core/session/title"
 import { SessionTransfer } from "@opencode/core/session/transfer"
+import { SessionChanges } from "@opencode/core/session/changes"
 import { InstructionEntry } from "@opencode/core/session/instruction-entry"
 import { Form } from "@opencode/core/form"
 import { DateTime, Effect, Stream } from "effect"
@@ -33,6 +34,7 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
   Effect.gen(function* () {
     const session = yield* Session.Service
     const transfer = yield* SessionTransfer.Service
+    const changes = yield* SessionChanges.Service
     const requireOwnedForm = Effect.fnUntraced(function* (sessionID: Form.Info["sessionID"], formID: Form.ID) {
       const form = yield* Form.Service
       const info = yield* form.get(formID).pipe(Effect.catchTag("Form.NotFoundError", () => missingForm(formID)))
@@ -585,6 +587,23 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
           return session
             .log({ sessionID: ctx.params.sessionID, after: ctx.query.after, follow: ctx.query.follow })
             .pipe(Stream.orDie)
+        }),
+      )
+      .handle(
+        "session.changes",
+        Effect.fn(function* (ctx) {
+          return {
+            data: yield* changes
+              .read({ sessionID: ctx.params.sessionID, since: ctx.query.since, limit: ctx.query.limit })
+              .pipe(
+                Effect.catchTag(
+                  "SessionChanges.DisabledError",
+                  (error) => new ServiceUnavailableError({ message: error.message, service: "session changes" }),
+                ),
+                Effect.catchTag("Session.NotFoundError", missingSession),
+                Effect.catchTag("Session.MessageDecodeError", failedMessageDecode),
+              ),
+          }
         }),
       )
       .handle(

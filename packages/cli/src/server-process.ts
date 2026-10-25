@@ -110,6 +110,7 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           password,
           pty: { handoff },
           simulation: truthy(process.env.OPENCODE_SIMULATE),
+          sync: { enabled: truthy(process.env.OPENCODE_EXPERIMENTAL_SYNC) },
           database: {
             path: databasePath(global.data),
           },

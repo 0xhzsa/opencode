@@ -23,6 +23,11 @@ export const ServerOptions = Schema.Struct({
       persist: Schema.optional(Schema.Boolean),
     }),
   ),
+  sync: Schema.optional(
+    Schema.Struct({
+      enabled: Schema.optional(Schema.Boolean),
+    }),
+  ),
   models: Schema.optional(ModelsDev.Options),
   config: Schema.optional(
     Schema.Struct({

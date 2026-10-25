@@ -4097,6 +4097,126 @@
         "summary": "Read the session log"
       }
     },
+    "/api/experimental/session/{sessionID}/changes": {
+      "get": {
+        "tags": ["session"],
+        "operationId": "experimental.session.changes",
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "schema": {
+              "$ref": "#/components/schemas/Session.ID"
+            },
+            "required": true
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exclusive change number. Omit to read the whole session."
+            },
+            "required": false
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Approximate number of rows per page. A page never splits a change number, so it can run over."
+            },
+            "required": false
+          }
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Session.Changes"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SessionNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "UnknownError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnknownErrorEncoded"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ServiceUnavailableError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceUnavailableErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Experimental change feed. Returns the session, message, part and inbox rows written after a change number, at their latest version, plus removals. Requires OPENCODE_EXPERIMENTAL_SYNC.",
+        "summary": "Read session changes"
+      }
+    },
     "/api/session/{sessionID}/interrupt": {
       "post": {
         "tags": ["session"],
@@ -19084,6 +19204,166 @@
           }
         },
         "required": ["_tag", "message"],
+        "additionalProperties": false
+      },
+      "Session.Change": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["session"]
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Per-session change number. Every row written by one transaction shares it."
+              },
+              "session": {
+                "$ref": "#/components/schemas/Session.Info"
+              }
+            },
+            "required": ["type", "seq", "session"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["message"]
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Per-session change number. Every row written by one transaction shares it."
+              },
+              "message": {
+                "$ref": "#/components/schemas/Session.Message.Info"
+              }
+            },
+            "required": ["type", "seq", "message"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["part"]
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Per-session change number. Every row written by one transaction shares it."
+              },
+              "messageID": {
+                "$ref": "#/components/schemas/Session.Message.ID"
+              },
+              "ordinal": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "part": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Session.Message.Assistant.Text"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Session.Message.Assistant.Reasoning"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Session.Message.Assistant.Tool"
+                  }
+                ]
+              }
+            },
+            "required": ["type", "seq", "messageID", "ordinal", "part"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["inbox"]
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Per-session change number. Every row written by one transaction shares it."
+              },
+              "item": {
+                "$ref": "#/components/schemas/Session.Inbox.Info"
+              }
+            },
+            "required": ["type", "seq", "item"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["removed"]
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Per-session change number. Every row written by one transaction shares it."
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["message", "part", "inbox"]
+              },
+              "id": {
+                "$ref": "#/components/schemas/Session.Message.ID"
+              },
+              "ordinal": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": ["type", "seq", "kind", "id"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "Session.Changes": {
+        "type": "object",
+        "properties": {
+          "sessionID": {
+            "$ref": "#/components/schemas/Session.ID"
+          },
+          "head": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Per-session change number. Every row written by one transaction shares it."
+          },
+          "through": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Every change after since through this number is in the page. Pass it as since for the next page."
+          },
+          "more": {
+            "type": "boolean"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Session.Change"
+            }
+          }
+        },
+        "required": ["sessionID", "head", "through", "more", "changes"],
         "additionalProperties": false
       },
       "Session.ForkBoundary": {

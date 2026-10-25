@@ -87,6 +87,8 @@ import type {
   SessionGenerateOutput,
   SessionLogInput,
   SessionLogOutput,
+  SessionChangesInput,
+  SessionChangesOutput,
   SessionInterruptInput,
   SessionInterruptOutput,
   SessionBackgroundInput,
@@ -711,6 +713,17 @@ const EndpointSessionLog = (raw: RawClient["server.session"]) => (input: Session
     ),
   )
 
+const EndpointSessionChanges = (raw: RawClient["server.session"]) => (input: SessionChangesInput) =>
+  preserveEffect<SessionChangesOutput>()(
+    raw["session.changes"]({
+      params: { sessionID: input["sessionID"] },
+      query: { since: input["since"], limit: input["limit"] },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
 const EndpointSessionInterrupt = (raw: RawClient["server.session"]) => (input: SessionInterruptInput) =>
   preserveEffect<SessionInterruptOutput>()(
     raw["session.interrupt"]({ params: { sessionID: input["sessionID"] }, query: { resume: input["resume"] } }).pipe(
@@ -831,6 +844,7 @@ const adaptGroupSession = (raw: RawClient["server.session"]) => ({
   },
   generate: EndpointSessionGenerate(raw),
   log: EndpointSessionLog(raw),
+  changes: EndpointSessionChanges(raw),
   interrupt: EndpointSessionInterrupt(raw),
   background: EndpointSessionBackground(raw),
   message: { get: EndpointSessionMessageGet(raw) },

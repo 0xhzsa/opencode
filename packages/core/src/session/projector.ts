@@ -14,6 +14,7 @@ import { SessionMessageUpdater } from "./message-updater.js"
 import { SessionInbox } from "./inbox.js"
 import { InstructionState } from "./instruction-state.js"
 import { SessionInboxTable, SessionMessageTable, SessionPartTable, SessionTable } from "./sql.js"
+import { SessionChanges } from "./changes.js"
 import { InstructionEntry } from "./instruction-entry.js"
 import { Slug } from "../util/slug.js"
 import { FSUtil } from "@opencode/util/fs-util"
@@ -50,10 +51,17 @@ const forkTitle = (value?: string) => {
   return `${value} (fork #1)`
 }
 
-function applyUsage(db: DatabaseService, sessionID: SessionSchema.ID, value: Usage, timeUpdated?: number) {
+function applyUsage(
+  db: DatabaseService,
+  sessionID: SessionSchema.ID,
+  changeSeq: number,
+  value: Usage,
+  timeUpdated?: number,
+) {
   return db
     .update(SessionTable)
     .set({
+      change_seq: changeSeq,
       cost: sql`${SessionTable.cost} + ${value.cost}`,
       tokens_input: sql`${SessionTable.tokens_input} + ${value.tokens.input}`,
       tokens_output: sql`${SessionTable.tokens_output} + ${value.tokens.output}`,
@@ -70,7 +78,7 @@ function applyUsage(db: DatabaseService, sessionID: SessionSchema.ID, value: Usa
 function touch(db: DatabaseService, event: MessageEvent) {
   return db
     .update(SessionTable)
-    .set({ time_updated: event.created })
+    .set({ time_updated: event.created, change_seq: event.durable.seq })
     .where(eq(SessionTable.id, event.data.sessionID))
     .run()
     .pipe(Effect.orDie)
@@ -174,6 +182,7 @@ const projectFork = Effect.fn("SessionProjector.projectFork")(function* (
       tokens_cache_write: 0,
       time_created: event.created,
       time_updated: event.created,
+      change_seq: event.durable.seq,
     })
     .onConflictDoNothing()
     .returning({ sessionID: SessionTable.id })
@@ -214,6 +223,7 @@ const projectFork = Effect.fn("SessionProjector.projectFork")(function* (
           session_id: event.data.sessionID,
           type: row.type,
           seq: row.seq,
+          change_seq: event.durable.seq,
           time_created: row.time_created,
           time_updated: row.time_updated,
           data:
@@ -264,6 +274,7 @@ const projectFork = Effect.fn("SessionProjector.projectFork")(function* (
         ordinal: part.ordinal,
         type: part.type,
         call_id: part.call_id,
+        change_seq: event.durable.seq,
         time_created: part.time_created,
         time_updated: part.time_updated,
         data: part.data,
@@ -279,6 +290,7 @@ const projectFork = Effect.fn("SessionProjector.projectFork")(function* (
             ordinal,
             type: part.type,
             call_id: part.type === "tool" ? part.id : null,
+            change_seq: event.durable.seq,
             time_created: row.time_created,
             time_updated: row.time_updated,
             data: SessionHistory.encodePart(part),
@@ -303,6 +315,24 @@ const projectFork = Effect.fn("SessionProjector.projectFork")(function* (
 
 function run(db: DatabaseService, event: MessageEvent) {
   return Effect.gen(function* () {
+    const changeSeq = event.durable.seq
+    // Part keys at or past `from` that a rewrite of the message's parts no longer holds.
+    const deleteParts = Effect.fnUntraced(function* (messageID: SessionMessage.ID, from: number) {
+      const deleted = yield* db
+        .delete(SessionPartTable)
+        .where(eq(SessionPartTable.message_id, messageID))
+        .returning({ ordinal: SessionPartTable.ordinal })
+        .all()
+        .pipe(Effect.orDie)
+      yield* SessionChanges.tombstone(
+        db,
+        event.data.sessionID,
+        changeSeq,
+        deleted.flatMap((row) =>
+          row.ordinal >= from ? [{ kind: "part" as const, rowID: messageID, ordinal: row.ordinal }] : [],
+        ),
+      )
+    })
     const splitLegacyAssistantRow = Effect.fnUntraced(function* (row: typeof SessionMessageTable.$inferSelect) {
       const message = SessionHistory.decodeMessageRowSync(row)
       if (message.type !== "assistant") return undefined
@@ -313,11 +343,12 @@ function run(db: DatabaseService, event: MessageEvent) {
         ordinal,
         type: part.type,
         call_id: part.type === "tool" ? part.id : null,
+        change_seq: changeSeq,
         time_created: row.time_created,
         time_updated: event.created,
         data: SessionHistory.encodePart(part),
       }))
-      yield* db.delete(SessionPartTable).where(eq(SessionPartTable.message_id, message.id)).run().pipe(Effect.orDie)
+      yield* deleteParts(message.id, partRows.length)
       for (let index = 0; index < partRows.length; index += ForkBatchSize) {
         yield* db
           .insert(SessionPartTable)
@@ -329,7 +360,7 @@ function run(db: DatabaseService, event: MessageEvent) {
       const { id: _, type: __, ...data } = encodeMessage(envelope)
       yield* db
         .update(SessionMessageTable)
-        .set({ data })
+        .set({ data, change_seq: changeSeq })
         .where(and(eq(SessionMessageTable.id, message.id), eq(SessionMessageTable.session_id, row.session_id)))
         .run()
         .pipe(Effect.orDie)
@@ -375,13 +406,9 @@ function run(db: DatabaseService, event: MessageEvent) {
             ? { time_created: DateTime.toEpochMillis(message.time.created) }
             : {}),
           data,
+          change_seq: changeSeq,
         })
-        .where(
-          and(
-            eq(SessionMessageTable.id, message.id),
-            eq(SessionMessageTable.session_id, event.data.sessionID),
-          ),
-        )
+        .where(and(eq(SessionMessageTable.id, message.id), eq(SessionMessageTable.session_id, event.data.sessionID)))
         .run()
         .pipe(Effect.orDie)
     }
@@ -489,6 +516,7 @@ function run(db: DatabaseService, event: MessageEvent) {
               ordinal: next?.ordinal ?? 0,
               type: part.type,
               call_id: part.type === "tool" ? part.id : null,
+              change_seq: changeSeq,
               time_created: event.created,
               time_updated: event.created,
               data: SessionHistory.encodePart(part),
@@ -528,13 +556,8 @@ function run(db: DatabaseService, event: MessageEvent) {
           if (updated === current) return
           yield* db
             .update(SessionPartTable)
-            .set({ data: SessionHistory.encodePart(updated), time_updated: event.created })
-            .where(
-              and(
-                eq(SessionPartTable.message_id, messageID),
-                eq(SessionPartTable.ordinal, row.ordinal),
-              ),
-            )
+            .set({ data: SessionHistory.encodePart(updated), time_updated: event.created, change_seq: changeSeq })
+            .where(and(eq(SessionPartTable.message_id, messageID), eq(SessionPartTable.ordinal, row.ordinal)))
             .run()
             .pipe(Effect.orDie)
         })
@@ -560,19 +583,20 @@ function run(db: DatabaseService, event: MessageEvent) {
               const { id: _, type: __, ...data } = encodeMessage({ ...message, content: [] })
               yield* db
                 .update(SessionMessageTable)
-                .set({ data })
+                .set({ data, change_seq: changeSeq })
                 .where(eq(SessionMessageTable.id, messageID))
                 .run()
                 .pipe(Effect.orDie)
             }
           }
-          yield* db.delete(SessionPartTable).where(eq(SessionPartTable.message_id, messageID)).run().pipe(Effect.orDie)
+          yield* deleteParts(messageID, parts.length)
           const partRows = parts.map((part, ordinal) => ({
             message_id: messageID,
             session_id: event.data.sessionID,
             ordinal,
             type: part.type,
             call_id: part.type === "tool" ? part.id : null,
+            change_seq: changeSeq,
             time_created: event.created,
             time_updated: event.created,
             data: SessionHistory.encodePart(part),
@@ -651,6 +675,7 @@ function insertMessage(db: DatabaseService, event: SessionEvent.DurableEvent, me
         session_id: event.data.sessionID,
         type,
         seq: event.durable.seq,
+        change_seq: event.durable.seq,
         time_created: timeCreated,
         data,
       })
@@ -663,6 +688,7 @@ function insertMessage(db: DatabaseService, event: SessionEvent.DurableEvent, me
         ordinal,
         type: part.type,
         call_id: part.type === "tool" ? part.id : null,
+        change_seq: event.durable.seq,
         time_created: timeCreated,
         time_updated: event.created,
         data: SessionHistory.encodePart(part),
@@ -702,6 +728,7 @@ function projectIdle(
         time_idle: sql`max(${time}, coalesce(${SessionTable.time_idle} + 1, ${time}))`,
         idle_outcome: outcome,
         time_updated: sql`${SessionTable.time_updated}`,
+        change_seq: event.durable.seq,
       })
       .where(eq(SessionTable.id, event.data.sessionID))
       .run()
@@ -733,6 +760,7 @@ const layer = Layer.effectDiscard(
             version: event.data.version,
             time_created: event.created,
             time_updated: event.created,
+            change_seq: event.durable.seq,
           })
           .onConflictDoNothing()
           .returning({ sessionID: SessionTable.id })
@@ -747,6 +775,7 @@ const layer = Layer.effectDiscard(
         yield* db
           .update(SessionTable)
           .set({
+            change_seq: event.durable.seq,
             directory: event.data.location.directory,
             path: event.data.subpath,
             ...(event.data.projectID ? { project_id: event.data.projectID } : {}),
@@ -802,17 +831,22 @@ const layer = Layer.effectDiscard(
               ? row.canonical
               : AbsolutePath.make(path.resolve(row.directory))
             if (!FSUtil.contains(event.data.directory, directory)) return Effect.void
-            return db
-              .update(SessionTable)
-              .set({
-                project_id: event.data.projectID,
-                path: RelativePath.make(path.relative(event.data.directory, directory).replaceAll("\\", "/")),
-                // Self-assignment suppresses the column's $onUpdate: adoption is not activity.
-                time_updated: sql`${SessionTable.time_updated}`,
-              })
-              .where(eq(SessionTable.id, row.id))
-              .run()
-              .pipe(Effect.orDie)
+            return Effect.gen(function* () {
+              // Another aggregate's event changes this session's row, so it takes the session's next change number.
+              const changeSeq = yield* SessionChanges.reserve(db, row.id)
+              yield* db
+                .update(SessionTable)
+                .set({
+                  change_seq: changeSeq,
+                  project_id: event.data.projectID,
+                  path: RelativePath.make(path.relative(event.data.directory, directory).replaceAll("\\", "/")),
+                  // Self-assignment suppresses the column's $onUpdate: adoption is not activity.
+                  time_updated: sql`${SessionTable.time_updated}`,
+                })
+                .where(eq(SessionTable.id, row.id))
+                .run()
+                .pipe(Effect.orDie)
+            })
           },
           { discard: true },
         )
@@ -826,7 +860,7 @@ const layer = Layer.effectDiscard(
         yield* run(db, event)
         yield* db
           .update(SessionTable)
-          .set({ agent: event.data.agent, time_updated: event.created })
+          .set({ agent: event.data.agent, time_updated: event.created, change_seq: event.durable.seq })
           .where(eq(SessionTable.id, event.data.sessionID))
           .run()
           .pipe(Effect.orDie)
@@ -837,7 +871,7 @@ const layer = Layer.effectDiscard(
         yield* run(db, event)
         yield* db
           .update(SessionTable)
-          .set({ model: event.data.model, time_updated: event.created })
+          .set({ model: event.data.model, time_updated: event.created, change_seq: event.durable.seq })
           .where(eq(SessionTable.id, event.data.sessionID))
           .run()
           .pipe(Effect.orDie)
@@ -846,7 +880,7 @@ const layer = Layer.effectDiscard(
     yield* bus.project(SessionEvent.Renamed, (event) =>
       db
         .update(SessionTable)
-        .set({ title: event.data.title, time_updated: event.created })
+        .set({ title: event.data.title, time_updated: event.created, change_seq: event.durable.seq })
         .where(eq(SessionTable.id, event.data.sessionID))
         .run()
         .pipe(Effect.orDie),
@@ -854,7 +888,7 @@ const layer = Layer.effectDiscard(
     yield* bus.project(SessionEvent.MetadataUpdated, (event) =>
       db
         .update(SessionTable)
-        .set({ metadata: event.data.metadata, time_updated: event.created })
+        .set({ metadata: event.data.metadata, time_updated: event.created, change_seq: event.durable.seq })
         .where(eq(SessionTable.id, event.data.sessionID))
         .run()
         .pipe(Effect.orDie),
@@ -862,7 +896,7 @@ const layer = Layer.effectDiscard(
     yield* bus.project(SessionEvent.Permissions, (event) =>
       db
         .update(SessionTable)
-        .set({ permission: event.data.permissions, time_updated: event.created })
+        .set({ permission: event.data.permissions, time_updated: event.created, change_seq: event.durable.seq })
         .where(eq(SessionTable.id, event.data.sessionID))
         .run()
         .pipe(Effect.orDie),
@@ -872,6 +906,7 @@ const layer = Layer.effectDiscard(
       return db
         .update(SessionTable)
         .set({
+          change_seq: event.durable.seq,
           // Monotone watermark: a duplicate or stale view never regresses, and a terminal event
           // committing after the viewer's observation keeps the newer idle transition unread.
           time_viewed: sql`max(${idle}, coalesce(${SessionTable.time_viewed}, ${idle}))`,
@@ -884,7 +919,7 @@ const layer = Layer.effectDiscard(
     yield* bus.project(SessionEvent.Archived, (event) =>
       db
         .update(SessionTable)
-        .set({ time_archived: event.created, time_updated: event.created })
+        .set({ time_archived: event.created, time_updated: event.created, change_seq: event.durable.seq })
         .where(eq(SessionTable.id, event.data.sessionID))
         .run()
         .pipe(Effect.orDie),
@@ -892,13 +927,15 @@ const layer = Layer.effectDiscard(
     yield* bus.project(SessionEvent.Unarchived, (event) =>
       db
         .update(SessionTable)
-        .set({ time_archived: null, time_updated: event.created })
+        .set({ time_archived: null, time_updated: event.created, change_seq: event.durable.seq })
         .where(eq(SessionTable.id, event.data.sessionID))
         .run()
         .pipe(Effect.orDie),
     )
     yield* bus.project(SessionEvent.MessageContentUpdated, (event) => run(db, event))
-    yield* bus.project(SessionEvent.UsageRecorded, (event) => applyUsage(db, event.data.sessionID, event.data))
+    yield* bus.project(SessionEvent.UsageRecorded, (event) =>
+      applyUsage(db, event.data.sessionID, event.durable.seq, event.data),
+    )
     yield* bus.project(SessionEvent.Forked, (event) => projectFork(db, event))
     yield* bus.project(SessionEvent.InboxDelivered, (event) =>
       Effect.gen(function* () {
@@ -906,6 +943,9 @@ const layer = Layer.effectDiscard(
           id: event.data.inboxID,
           sessionID: event.data.sessionID,
         })
+        yield* SessionChanges.tombstone(db, event.data.sessionID, event.durable.seq, [
+          { kind: "inbox", rowID: event.data.inboxID },
+        ])
         if (input.type === "compaction" || input.type === "move") return
         yield* insertMessage(
           db,
@@ -943,16 +983,21 @@ const layer = Layer.effectDiscard(
         })
         yield* db
           .update(SessionTable)
-          .set({ time_updated: event.created })
+          .set({ time_updated: event.created, change_seq: event.durable.seq })
           .where(eq(SessionTable.id, event.data.sessionID))
           .run()
           .pipe(Effect.orDie)
       }),
     )
     yield* bus.project(SessionEvent.InboxCancelled, (event) =>
-      SessionInbox.projectCancelled(db, {
-        id: event.data.inboxID,
-        sessionID: event.data.sessionID,
+      Effect.gen(function* () {
+        yield* SessionInbox.projectCancelled(db, {
+          id: event.data.inboxID,
+          sessionID: event.data.sessionID,
+        })
+        yield* SessionChanges.tombstone(db, event.data.sessionID, event.durable.seq, [
+          { kind: "inbox", rowID: event.data.inboxID },
+        ])
       }),
     )
     yield* bus.project(SessionEvent.InboxDeliveryChanged, (event) =>
@@ -960,6 +1005,7 @@ const layer = Layer.effectDiscard(
         id: event.data.inboxID,
         sessionID: event.data.sessionID,
         delivery: event.data.delivery,
+        changeSeq: event.durable.seq,
       }),
     )
     yield* bus.project(SessionEvent.Execution.Succeeded, (event) => projectIdle(db, event))
@@ -985,7 +1031,7 @@ const layer = Layer.effectDiscard(
     yield* bus.project(SessionEvent.Step.Ended, (event) =>
       Effect.gen(function* () {
         yield* run(db, event)
-        yield* applyUsage(db, event.data.sessionID, event.data, event.created)
+        yield* applyUsage(db, event.data.sessionID, event.durable.seq, event.data, event.created)
       }),
     )
     yield* bus.project(SessionEvent.Step.Failed, (event) =>
@@ -995,6 +1041,7 @@ const layer = Layer.effectDiscard(
           yield* applyUsage(
             db,
             event.data.sessionID,
+            event.durable.seq,
             { cost: event.data.cost, tokens: event.data.tokens },
             event.created,
           )
@@ -1025,6 +1072,7 @@ const layer = Layer.effectDiscard(
         yield* db
           .update(SessionTable)
           .set({
+            change_seq: event.durable.seq,
             revert,
             time_updated: event.created,
           })
@@ -1036,7 +1084,7 @@ const layer = Layer.effectDiscard(
     yield* bus.project(SessionEvent.RevertEvent.Cleared, (event) =>
       db
         .update(SessionTable)
-        .set({ revert: null, time_updated: event.created })
+        .set({ revert: null, time_updated: event.created, change_seq: event.durable.seq })
         .where(eq(SessionTable.id, event.data.sessionID))
         .run()
         .pipe(Effect.orDie, Effect.asVoid),
@@ -1052,14 +1100,15 @@ const layer = Layer.effectDiscard(
           .get()
           .pipe(Effect.orDie)
         if (!boundary) return yield* Effect.die(new Error(`Revert boundary message not found: ${event.data.to}`))
-        yield* db
+        const messages = yield* db
           .delete(SessionMessageTable)
           .where(
             and(eq(SessionMessageTable.session_id, event.data.sessionID), gte(SessionMessageTable.seq, boundary.seq)),
           )
-          .run()
+          .returning({ id: SessionMessageTable.id })
+          .all()
           .pipe(Effect.orDie)
-        yield* db
+        const inbox = yield* db
           .delete(SessionInboxTable)
           .where(
             and(
@@ -1067,11 +1116,16 @@ const layer = Layer.effectDiscard(
               gte(SessionInboxTable.enqueued_seq, boundary.seq),
             ),
           )
-          .run()
+          .returning({ id: SessionInboxTable.id })
+          .all()
           .pipe(Effect.orDie)
+        yield* SessionChanges.tombstone(db, event.data.sessionID, event.durable.seq, [
+          ...messages.map((row) => ({ kind: "message" as const, rowID: row.id })),
+          ...inbox.map((row) => ({ kind: "inbox" as const, rowID: row.id })),
+        ])
         yield* db
           .update(SessionTable)
-          .set({ revert: null, time_updated: event.created })
+          .set({ revert: null, time_updated: event.created, change_seq: event.durable.seq })
           .where(eq(SessionTable.id, event.data.sessionID))
           .run()
           .pipe(Effect.orDie)

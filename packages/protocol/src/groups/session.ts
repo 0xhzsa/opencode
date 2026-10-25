@@ -82,6 +82,40 @@ const ImportedMessages = Schema.Array(Schema.Json).pipe(
   }),
 )
 
+const ChangeSeq = NonNegativeInt.annotate({
+  description: "Per-session change number. Every row written by one transaction shares it.",
+})
+
+const SessionChange = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("session"), seq: ChangeSeq, session: PublicSessionInfo }),
+  Schema.Struct({ type: Schema.Literal("message"), seq: ChangeSeq, message: PublicSessionMessage }),
+  Schema.Struct({
+    type: Schema.Literal("part"),
+    seq: ChangeSeq,
+    messageID: SessionMessage.ID,
+    ordinal: NonNegativeInt,
+    part: SessionMessage.AssistantContent,
+  }),
+  Schema.Struct({ type: Schema.Literal("inbox"), seq: ChangeSeq, item: PublicInboxInfo }),
+  Schema.Struct({
+    type: Schema.Literal("removed"),
+    seq: ChangeSeq,
+    kind: Schema.Literals(["message", "part", "inbox"]),
+    id: SessionMessage.ID,
+    ordinal: NonNegativeInt.pipe(Schema.optional),
+  }),
+]).annotate({ identifier: "Session.Change" })
+
+const SessionChanges = Schema.Struct({
+  sessionID: Session.ID,
+  head: ChangeSeq,
+  through: ChangeSeq.annotate({
+    description: "Every change after since through this number is in the page. Pass it as since for the next page.",
+  }),
+  more: Schema.Boolean,
+  changes: Schema.Array(SessionChange),
+}).annotate({ identifier: "Session.Changes" })
+
 const FormCreatePayload = Schema.Struct({
   id: Form.ID.pipe(Schema.optional),
   title: Form.Info.fields.title,
@@ -302,7 +336,8 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           metadata: Session.Metadata.pipe(Schema.optional),
           permissions: Permission.Ruleset.pipe(Schema.optional),
           archived: Schema.Boolean.pipe(Schema.optional).annotate({
-            description: "Archive the session with true or restore it with false. Repeating the current state is a no-op.",
+            description:
+              "Archive the session with true or restore it with false. Repeating the current state is a no-op.",
           }),
         }),
         success: HttpApiSchema.NoContent,
@@ -678,6 +713,29 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           summary: "Read the session log",
           description:
             "Experimental durable session event log. Reads events after an exclusive aggregate sequence and continues with live events when follow=true.",
+        }),
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get("session.changes", "/api/experimental/session/:sessionID/changes", {
+        params: { sessionID: Session.ID },
+        query: {
+          since: Schema.NumberFromString.pipe(Schema.decodeTo(NonNegativeInt), Schema.optional).annotate({
+            description: "Exclusive change number. Omit to read the whole session.",
+          }),
+          limit: Schema.NumberFromString.pipe(Schema.decodeTo(PositiveInt), Schema.optional).annotate({
+            description:
+              "Approximate number of rows per page. A page never splits a change number, so it can run over.",
+          }),
+        },
+        success: Schema.Struct({ data: SessionChanges }),
+        error: [SessionNotFoundError, ServiceUnavailableError, UnknownError],
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "experimental.session.changes",
+          summary: "Read session changes",
+          description:
+            "Experimental change feed. Returns the session, message, part and inbox rows written after a change number, at their latest version, plus removals. Requires OPENCODE_EXPERIMENTAL_SYNC.",
         }),
       ),
     )
