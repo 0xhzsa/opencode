@@ -24,7 +24,14 @@ import { fromRow } from "@opencode/core/session/info"
 import { SessionInbox } from "@opencode/core/session/inbox"
 import { SessionStore } from "@opencode/core/session/store"
 import { Shell } from "@opencode/schema/shell"
-import { InstructionStateTable, SessionInboxTable, SessionMessageTable, SessionTable } from "@opencode/core/session/sql"
+import {
+  InstructionStateTable,
+  SessionInboxTable,
+  SessionMessageTable,
+  SessionPartTable,
+  SessionTable,
+} from "@opencode/core/session/sql"
+import { SessionHistory } from "@opencode/core/session/history"
 import { testEffect } from "./lib/effect"
 import { Snapshot } from "@opencode/core/snapshot"
 
@@ -750,7 +757,7 @@ describe("SessionProjector", () => {
       expect(JSON.parse(replayed?.data ?? "{}")).toMatchObject({ native: { step: "replayed" } })
       expect(JSON.parse(replayed?.data ?? "{}")).not.toHaveProperty("providerState")
 
-      // Projecting onto the legacy row wrote it back in the current shape.
+      // Projecting onto the legacy row split its parts into session_part in the current shape.
       const rewritten = JSON.parse(
         (yield* db.get<{ data: string }>(sql`SELECT data FROM session_message WHERE id = ${assistantID}`))?.data ??
           "{}",
@@ -758,13 +765,22 @@ describe("SessionProjector", () => {
       expect(rewritten).not.toHaveProperty("providerState")
       expect(rewritten).toMatchObject({
         native: { step: "replayed" },
-        content: [
-          { type: "text", native: { signature: "text" } },
-          { type: "reasoning", native: { signature: "reasoning" } },
-          { type: "tool", native: { call: "kept", result: "kept" } },
-        ],
+        content: [],
       })
-      expect(rewritten.content.map((part: Record<string, unknown>) => Object.keys(part).toSorted())).toEqual([
+      const partRows = yield* db
+        .select({ data: SessionPartTable.data })
+        .from(SessionPartTable)
+        .where(eq(SessionPartTable.message_id, assistantID))
+        .orderBy(asc(SessionPartTable.ordinal))
+        .all()
+        .pipe(Effect.orDie)
+      const rewrittenParts = partRows.map((row) => row.data)
+      expect(rewrittenParts).toMatchObject([
+        { type: "text", native: { signature: "text" } },
+        { type: "reasoning", native: { signature: "reasoning" } },
+        { type: "tool", native: { call: "kept", result: "kept" } },
+      ])
+      expect(rewrittenParts.map((part) => Object.keys(part).toSorted())).toEqual([
         ["native", "text", "type"],
         ["native", "text", "type"],
         ["executed", "id", "name", "native", "state", "time", "type"],
@@ -815,7 +831,8 @@ describe("SessionProjector", () => {
         .where(eq(SessionMessageTable.id, assistantMessageID))
         .get()
         .pipe(Effect.orDie)
-      expect(row?.data).toMatchObject({
+      expect(row?.data).toMatchObject({ content: [] })
+      expect(yield* SessionHistory.loadMessageRow(db, row!)).toMatchObject({
         content: [
           { id: "succeeded", native: { call: "succeeded", result: "succeeded" }, state: { status: "completed" } },
           { id: "failed", native: { call: "failed" }, state: { status: "error" } },
@@ -923,9 +940,7 @@ describe("SessionProjector", () => {
         .orderBy(asc(SessionMessageTable.id))
         .all()
         .pipe(Effect.orDie)
-      const messages = rows.map((row) =>
-        Schema.decodeUnknownSync(SessionMessage.Info)({ ...row.data, id: row.id, type: row.type }),
-      )
+      const messages = yield* SessionHistory.decodeMessageRows(db, rows).pipe(Effect.orDie)
       expect(messages).toEqual([
         SessionMessage.Assistant.make({
           id: SessionMessage.ID.make("msg_assistant_completed"),
@@ -991,6 +1006,240 @@ describe("SessionProjector", () => {
         error: { type: "provider.invalid-request", message: "Failed" },
       })
       expect(yield* updated()).toEqual({ time_updated: 15 })
+    }),
+  )
+
+  it.effect(
+    "stores interleaved assistant parts in session_part by ordinal across out-of-order tool completions and forks",
+    () =>
+      Effect.gen(function* () {
+        const db = yield* seedSession()
+        const bus = yield* Bus.Service
+        const assistantMessageID = SessionMessage.ID.make("msg_interleaved")
+
+        yield* bus.publish(SessionEvent.Step.Started, {
+          sessionID,
+          assistantMessageID,
+          agent: build,
+          model,
+          started: 1,
+        })
+        yield* bus.publish(SessionEvent.Reasoning.Started, { sessionID, assistantMessageID, ordinal: 0 })
+        yield* bus.publish(SessionEvent.Reasoning.Ended, {
+          sessionID,
+          assistantMessageID,
+          ordinal: 0,
+          text: "plan first",
+        })
+        yield* bus.publish(SessionEvent.Text.Started, { sessionID, assistantMessageID, ordinal: 1 })
+        yield* bus.publish(SessionEvent.Text.Ended, {
+          sessionID,
+          assistantMessageID,
+          ordinal: 1,
+          text: "running two tools",
+        })
+        yield* bus.publish(SessionEvent.Tool.Input.Started, {
+          sessionID,
+          assistantMessageID,
+          id: "call_first",
+          name: "read",
+        })
+        yield* bus.publish(SessionEvent.Tool.Called, {
+          sessionID,
+          assistantMessageID,
+          id: "call_first",
+          input: { file: "a.ts" },
+          executed: true,
+        })
+        yield* bus.publish(SessionEvent.Tool.Input.Started, {
+          sessionID,
+          assistantMessageID,
+          id: "call_second",
+          name: "read",
+        })
+        yield* bus.publish(SessionEvent.Tool.Called, {
+          sessionID,
+          assistantMessageID,
+          id: "call_second",
+          input: { file: "b.ts" },
+          executed: true,
+        })
+        // Complete the second tool before the first tool
+        yield* bus.publish(SessionEvent.Tool.Success, {
+          sessionID,
+          assistantMessageID,
+          id: "call_second",
+          content: [{ type: "text", text: "b contents" }],
+          executed: true,
+        })
+        yield* bus.publish(SessionEvent.Tool.Success, {
+          sessionID,
+          assistantMessageID,
+          id: "call_first",
+          content: [{ type: "text", text: "a contents" }],
+          executed: true,
+        })
+        yield* bus.publish(SessionEvent.Text.Started, { sessionID, assistantMessageID, ordinal: 4 })
+        yield* bus.publish(SessionEvent.Text.Ended, {
+          sessionID,
+          assistantMessageID,
+          ordinal: 4,
+          text: "all done",
+        })
+        yield* bus.publish(SessionEvent.Step.Ended, {
+          sessionID,
+          assistantMessageID,
+          finish: "stop",
+          cost: Money.USD.make(0),
+          tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 0, write: 0 } },
+        })
+
+        const envelope = yield* db
+          .select()
+          .from(SessionMessageTable)
+          .where(eq(SessionMessageTable.id, assistantMessageID))
+          .get()
+          .pipe(Effect.orDie)
+        expect(envelope?.data).toMatchObject({ content: [] })
+
+        const parts = yield* db
+          .select()
+          .from(SessionPartTable)
+          .where(eq(SessionPartTable.message_id, assistantMessageID))
+          .orderBy(asc(SessionPartTable.ordinal))
+          .all()
+          .pipe(Effect.orDie)
+        expect(parts.map((row) => ({ ordinal: row.ordinal, type: row.type, callID: row.call_id }))).toEqual([
+          { ordinal: 0, type: "reasoning", callID: null },
+          { ordinal: 1, type: "text", callID: null },
+          { ordinal: 2, type: "tool", callID: "call_first" },
+          { ordinal: 3, type: "tool", callID: "call_second" },
+          { ordinal: 4, type: "text", callID: null },
+        ])
+
+        const forkedSessionID = Session.ID.make("ses_projected_fork")
+        yield* bus.publish(SessionEvent.Forked, {
+          sessionID: forkedSessionID,
+          parentID: sessionID,
+          boundary: { type: "through", messageID: assistantMessageID },
+        })
+        const forkedMessage = yield* db
+          .select()
+          .from(SessionMessageTable)
+          .where(eq(SessionMessageTable.session_id, forkedSessionID))
+          .get()
+          .pipe(Effect.orDie)
+        const loadedFork = yield* SessionHistory.loadMessageRow(db, forkedMessage!).pipe(Effect.orDie)
+        expect(loadedFork).toMatchObject({
+          type: "assistant",
+          content: [
+            { type: "reasoning", text: "plan first" },
+            { type: "text", text: "running two tools" },
+            { type: "tool", id: "call_first", state: { status: "completed" } },
+            { type: "tool", id: "call_second", state: { status: "completed" } },
+            { type: "text", text: "all done" },
+          ],
+        })
+      }),
+  )
+
+  it.effect("replaces conflicting session_part rows when splitting an inline assistant row", () =>
+    Effect.gen(function* () {
+      const db = yield* seedSession()
+      const bus = yield* Bus.Service
+      const conflictID = SessionMessage.ID.make("msg_conflict_replace")
+
+      // Simulate a row that had stale session_part rows (ordinals 0..2) and then had inline content written
+      yield* db
+        .insert(SessionMessageTable)
+        .values({
+          id: conflictID,
+          session_id: sessionID,
+          seq: 1,
+          type: "assistant",
+          time_created: 10,
+          time_updated: 20,
+          data: {
+            agent: build,
+            model,
+            content: [
+              { type: "reasoning", text: "fresh inline reasoning", time: { created: 10, completed: 12 } },
+              { type: "text", text: "fresh inline text" },
+            ],
+            time: { created: 10 },
+          },
+        })
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .insert(SessionPartTable)
+        .values([
+          {
+            message_id: conflictID,
+            session_id: sessionID,
+            ordinal: 0,
+            type: "text",
+            call_id: null,
+            time_created: 1,
+            time_updated: 1,
+            data: { type: "text", text: "stale part 0" },
+          },
+          {
+            message_id: conflictID,
+            session_id: sessionID,
+            ordinal: 1,
+            type: "text",
+            call_id: null,
+            time_created: 2,
+            time_updated: 2,
+            data: { type: "text", text: "stale part 1" },
+          },
+          {
+            message_id: conflictID,
+            session_id: sessionID,
+            ordinal: 2,
+            type: "text",
+            call_id: null,
+            time_created: 3,
+            time_updated: 3,
+            data: { type: "text", text: "stale trailing part 2" },
+          },
+        ])
+        .run()
+        .pipe(Effect.orDie)
+
+      yield* bus.publish(SessionEvent.Text.Started, {
+        sessionID,
+        assistantMessageID: conflictID,
+        ordinal: 2,
+      })
+      yield* bus.publish(SessionEvent.Text.Ended, {
+        sessionID,
+        assistantMessageID: conflictID,
+        ordinal: 2,
+        text: "appended after split",
+      })
+
+      const messageRow = yield* db
+        .select()
+        .from(SessionMessageTable)
+        .where(eq(SessionMessageTable.id, conflictID))
+        .get()
+        .pipe(Effect.orDie)
+      expect(messageRow?.data).toMatchObject({ content: [] })
+
+      const partRows = yield* db
+        .select()
+        .from(SessionPartTable)
+        .where(eq(SessionPartTable.message_id, conflictID))
+        .orderBy(asc(SessionPartTable.ordinal))
+        .all()
+        .pipe(Effect.orDie)
+      expect(partRows.map((row) => ({ ordinal: row.ordinal, data: row.data }))).toMatchObject([
+        { ordinal: 0, data: { type: "reasoning", text: "fresh inline reasoning" } },
+        { ordinal: 1, data: { type: "text", text: "fresh inline text" } },
+        { ordinal: 2, data: { type: "text", text: "appended after split" } },
+      ])
     }),
   )
 })

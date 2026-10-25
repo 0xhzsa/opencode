@@ -1,5 +1,6 @@
 export * as SessionProjector from "./projector.js"
 
+import { produce } from "immer"
 import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm"
 import { DateTime, Effect, Layer, Schema, Stream } from "effect"
 import path from "path"
@@ -12,7 +13,7 @@ import { SessionMessage } from "./message.js"
 import { SessionMessageUpdater } from "./message-updater.js"
 import { SessionInbox } from "./inbox.js"
 import { InstructionState } from "./instruction-state.js"
-import { SessionInboxTable, SessionMessageTable, SessionTable } from "./sql.js"
+import { SessionInboxTable, SessionMessageTable, SessionPartTable, SessionTable } from "./sql.js"
 import { InstructionEntry } from "./instruction-entry.js"
 import { Slug } from "../util/slug.js"
 import { FSUtil } from "@opencode/util/fs-util"
@@ -215,7 +216,10 @@ const projectFork = Effect.fn("SessionProjector.projectFork")(function* (
           seq: row.seq,
           time_created: row.time_created,
           time_updated: row.time_updated,
-          data: row.data,
+          data:
+            row.type === "assistant" && SessionHistory.hasInlineContent(row.data)
+              ? { ...row.data, content: [] }
+              : row.data,
         }
         // A summary references the first message it kept, which the fork copied under a new ID.
         const keepID = row.type === "compaction" ? row.data.metadata?.keepID : undefined
@@ -235,6 +239,61 @@ const projectFork = Effect.fn("SessionProjector.projectFork")(function* (
     )
     yield* db.insert(SessionMessageTable).values(values).run().pipe(Effect.orDie)
 
+    const assistantRows = rows.filter((row) => row.type === "assistant")
+    if (assistantRows.length > 0) {
+      const idMap = new Map(assistantRows.map((row) => [row.id, forkedID(row.seq)]))
+      const storedParts = yield* db
+        .select()
+        .from(SessionPartTable)
+        .where(
+          and(
+            eq(SessionPartTable.session_id, event.data.parentID),
+            inArray(
+              SessionPartTable.message_id,
+              assistantRows.map((row) => row.id),
+            ),
+          ),
+        )
+        .orderBy(asc(SessionPartTable.message_id), asc(SessionPartTable.ordinal))
+        .all()
+        .pipe(Effect.orDie)
+      const splitParentIDs = new Set(storedParts.map((part) => part.message_id))
+      const partValues: Array<typeof SessionPartTable.$inferInsert> = storedParts.map((part) => ({
+        message_id: idMap.get(part.message_id)!,
+        session_id: event.data.sessionID,
+        ordinal: part.ordinal,
+        type: part.type,
+        call_id: part.call_id,
+        time_created: part.time_created,
+        time_updated: part.time_updated,
+        data: part.data,
+      }))
+      for (const row of assistantRows) {
+        if (splitParentIDs.has(row.id) || !SessionHistory.hasInlineContent(row.data)) continue
+        const decoded = SessionHistory.decodeMessageRowSync(row)
+        if (decoded.type !== "assistant") continue
+        decoded.content.forEach((part, ordinal) => {
+          partValues.push({
+            message_id: idMap.get(row.id)!,
+            session_id: event.data.sessionID,
+            ordinal,
+            type: part.type,
+            call_id: part.type === "tool" ? part.id : null,
+            time_created: row.time_created,
+            time_updated: row.time_updated,
+            data: SessionHistory.encodePart(part),
+          })
+        })
+      }
+      for (let index = 0; index < partValues.length; index += ForkBatchSize) {
+        yield* db
+          .insert(SessionPartTable)
+          .values(partValues.slice(index, index + ForkBatchSize))
+          .run()
+          .pipe(Effect.orDie)
+      }
+    }
+
     cursor = rows.at(-1)!.seq
   }
   if (copiedSeq !== undefined) yield* Bus.reserveSequence(db, event.data.sessionID, copiedSeq)
@@ -244,12 +303,79 @@ const projectFork = Effect.fn("SessionProjector.projectFork")(function* (
 
 function run(db: DatabaseService, event: MessageEvent) {
   return Effect.gen(function* () {
+    const splitLegacyAssistantRow = Effect.fnUntraced(function* (row: typeof SessionMessageTable.$inferSelect) {
+      const message = SessionHistory.decodeMessageRowSync(row)
+      if (message.type !== "assistant") return undefined
+      if (!SessionHistory.hasInlineContent(row.data)) return message
+      const partRows = message.content.map((part, ordinal) => ({
+        message_id: message.id,
+        session_id: row.session_id,
+        ordinal,
+        type: part.type,
+        call_id: part.type === "tool" ? part.id : null,
+        time_created: row.time_created,
+        time_updated: event.created,
+        data: SessionHistory.encodePart(part),
+      }))
+      yield* db.delete(SessionPartTable).where(eq(SessionPartTable.message_id, message.id)).run().pipe(Effect.orDie)
+      for (let index = 0; index < partRows.length; index += ForkBatchSize) {
+        yield* db
+          .insert(SessionPartTable)
+          .values(partRows.slice(index, index + ForkBatchSize))
+          .run()
+          .pipe(Effect.orDie)
+      }
+      const envelope: SessionMessage.Assistant = { ...message, content: [] }
+      const { id: _, type: __, ...data } = encodeMessage(envelope)
+      yield* db
+        .update(SessionMessageTable)
+        .set({ data })
+        .where(and(eq(SessionMessageTable.id, message.id), eq(SessionMessageTable.session_id, row.session_id)))
+        .run()
+        .pipe(Effect.orDie)
+      return envelope
+    })
+    const ensureAssistantPartsSplit = Effect.fnUntraced(function* (messageID: SessionMessage.ID) {
+      const row = yield* db
+        .select({
+          id: SessionMessageTable.id,
+          inlineCount: sql<number>`json_array_length(${SessionMessageTable.data}, '$.content')`,
+        })
+        .from(SessionMessageTable)
+        .where(
+          and(
+            eq(SessionMessageTable.id, messageID),
+            eq(SessionMessageTable.session_id, event.data.sessionID),
+            eq(SessionMessageTable.type, "assistant"),
+          ),
+        )
+        .get()
+        .pipe(Effect.orDie)
+      if (!row) return false
+      if (row.inlineCount > 0) {
+        const full = yield* db
+          .select()
+          .from(SessionMessageTable)
+          .where(eq(SessionMessageTable.id, messageID))
+          .get()
+          .pipe(Effect.orDie)
+        if (full) yield* splitLegacyAssistantRow(full)
+      }
+      return true
+    })
     const updateMessage = (message: SessionMessage.Info) => {
-      const encoded = encodeMessage(message)
-      const { id: _, type, ...data } = encoded
+      const encoded = encodeMessage(
+        message.type === "assistant" && message.content.length > 0 ? { ...message, content: [] } : message,
+      )
+      const { id: _, type: __, ...data } = encoded
       return db
         .update(SessionMessageTable)
-        .set({ type, time_created: DateTime.toEpochMillis(message.time.created), data })
+        .set({
+          ...(event.type === SessionEvent.Step.Started.type
+            ? { time_created: DateTime.toEpochMillis(message.time.created) }
+            : {}),
+          data,
+        })
         .where(
           and(
             eq(SessionMessageTable.id, message.id),
@@ -324,8 +450,8 @@ function run(db: DatabaseService, event: MessageEvent) {
             .get()
             .pipe(Effect.orDie)
           if (!row) return
-          const message = SessionHistory.decodeMessageRowSync(row)
-          return message.type === "assistant" && !message.time.completed ? message : undefined
+          const message = yield* splitLegacyAssistantRow(row)
+          return message && !message.time.completed ? message : undefined
         })
       },
       getAssistant(messageID) {
@@ -343,8 +469,121 @@ function run(db: DatabaseService, event: MessageEvent) {
             .get()
             .pipe(Effect.orDie)
           if (!row) return
-          const message = SessionHistory.decodeMessageRowSync(row)
-          return message.type === "assistant" ? message : undefined
+          return yield* splitLegacyAssistantRow(row)
+        })
+      },
+      appendAssistantPart(messageID, part) {
+        return Effect.gen(function* () {
+          if (!(yield* ensureAssistantPartsSplit(messageID))) return
+          const next = yield* db
+            .select({ ordinal: sql<number>`coalesce(max(${SessionPartTable.ordinal}) + 1, 0)` })
+            .from(SessionPartTable)
+            .where(eq(SessionPartTable.message_id, messageID))
+            .get()
+            .pipe(Effect.orDie)
+          yield* db
+            .insert(SessionPartTable)
+            .values({
+              message_id: messageID,
+              session_id: event.data.sessionID,
+              ordinal: next?.ordinal ?? 0,
+              type: part.type,
+              call_id: part.type === "tool" ? part.id : null,
+              time_created: event.created,
+              time_updated: event.created,
+              data: SessionHistory.encodePart(part),
+            })
+            .run()
+            .pipe(Effect.orDie)
+        })
+      },
+      updateAssistantPart(messageID, match, recipe) {
+        return Effect.gen(function* () {
+          if (!(yield* ensureAssistantPartsSplit(messageID))) return
+          const row = yield* db
+            .select()
+            .from(SessionPartTable)
+            .where(
+              and(
+                eq(SessionPartTable.message_id, messageID),
+                eq(SessionPartTable.session_id, event.data.sessionID),
+                eq(SessionPartTable.type, match.type),
+                match.callID !== undefined ? eq(SessionPartTable.call_id, match.callID) : undefined,
+                match.incompleteReasoning
+                  ? sql`json_extract(${SessionPartTable.data}, '$.time.completed') is null`
+                  : undefined,
+              ),
+            )
+            .orderBy(desc(SessionPartTable.ordinal))
+            .limit(1)
+            .get()
+            .pipe(Effect.orDie)
+          if (!row) return
+
+          const current = SessionHistory.decodePartRowSync(row) as Extract<
+            SessionMessage.AssistantContent,
+            { readonly type: typeof match.type }
+          >
+          const updated = produce(current, recipe)
+          if (updated === current) return
+          yield* db
+            .update(SessionPartTable)
+            .set({ data: SessionHistory.encodePart(updated), time_updated: event.created })
+            .where(
+              and(
+                eq(SessionPartTable.message_id, messageID),
+                eq(SessionPartTable.ordinal, row.ordinal),
+              ),
+            )
+            .run()
+            .pipe(Effect.orDie)
+        })
+      },
+      replaceAssistantParts(messageID, parts) {
+        return Effect.gen(function* () {
+          const messageRow = yield* db
+            .select()
+            .from(SessionMessageTable)
+            .where(
+              and(
+                eq(SessionMessageTable.id, messageID),
+                eq(SessionMessageTable.session_id, event.data.sessionID),
+                eq(SessionMessageTable.type, "assistant"),
+              ),
+            )
+            .get()
+            .pipe(Effect.orDie)
+          if (!messageRow) return
+          if (SessionHistory.hasInlineContent(messageRow.data)) {
+            const message = SessionHistory.decodeMessageRowSync(messageRow)
+            if (message.type === "assistant") {
+              const { id: _, type: __, ...data } = encodeMessage({ ...message, content: [] })
+              yield* db
+                .update(SessionMessageTable)
+                .set({ data })
+                .where(eq(SessionMessageTable.id, messageID))
+                .run()
+                .pipe(Effect.orDie)
+            }
+          }
+          yield* db.delete(SessionPartTable).where(eq(SessionPartTable.message_id, messageID)).run().pipe(Effect.orDie)
+          const partRows = parts.map((part, ordinal) => ({
+            message_id: messageID,
+            session_id: event.data.sessionID,
+            ordinal,
+            type: part.type,
+            call_id: part.type === "tool" ? part.id : null,
+            time_created: event.created,
+            time_updated: event.created,
+            data: SessionHistory.encodePart(part),
+          }))
+          for (let index = 0; index < partRows.length; index += ForkBatchSize) {
+            yield* db
+              .insert(SessionPartTable)
+              .values(partRows.slice(index, index + ForkBatchSize))
+              .run()
+              .pipe(Effect.orDie)
+          }
         })
       },
       getShell(shellID) {
@@ -399,20 +638,44 @@ function run(db: DatabaseService, event: MessageEvent) {
 }
 
 function insertMessage(db: DatabaseService, event: SessionEvent.DurableEvent, message: SessionMessage.Info) {
-  const encoded = encodeMessage(message)
-  const { id: _, type, ...data } = encoded
-  return db
-    .insert(SessionMessageTable)
-    .values({
-      id: message.id,
-      session_id: event.data.sessionID,
-      type,
-      seq: event.durable.seq,
-      time_created: DateTime.toEpochMillis(message.time.created),
-      data,
-    })
-    .run()
-    .pipe(Effect.orDie)
+  return Effect.gen(function* () {
+    const encoded = encodeMessage(
+      message.type === "assistant" && message.content.length > 0 ? { ...message, content: [] } : message,
+    )
+    const { id: _, type, ...data } = encoded
+    const timeCreated = DateTime.toEpochMillis(message.time.created)
+    yield* db
+      .insert(SessionMessageTable)
+      .values({
+        id: message.id,
+        session_id: event.data.sessionID,
+        type,
+        seq: event.durable.seq,
+        time_created: timeCreated,
+        data,
+      })
+      .run()
+      .pipe(Effect.orDie)
+    if (message.type === "assistant" && message.content.length > 0) {
+      const partRows = message.content.map((part, ordinal) => ({
+        message_id: message.id,
+        session_id: event.data.sessionID,
+        ordinal,
+        type: part.type,
+        call_id: part.type === "tool" ? part.id : null,
+        time_created: timeCreated,
+        time_updated: event.created,
+        data: SessionHistory.encodePart(part),
+      }))
+      for (let index = 0; index < partRows.length; index += ForkBatchSize) {
+        yield* db
+          .insert(SessionPartTable)
+          .values(partRows.slice(index, index + ForkBatchSize))
+          .run()
+          .pipe(Effect.orDie)
+      }
+    }
+  })
 }
 
 function projectIdle(
