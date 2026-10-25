@@ -1026,6 +1026,11 @@ describe("V1Migration database workflow", () => {
             data: '{"text":"from next\'s history","time":{"created":12}}',
           },
         ])
+        // Copied rows sit at the head the copy sets, so the change feed sees them.
+        expect(
+          yield* db.all(sql`SELECT change_seq FROM session_message WHERE session_id = 'ses_next'
+            UNION ALL SELECT change_seq FROM session_v2 WHERE id = 'ses_next'`),
+        ).toEqual([{ change_seq: 4 }, { change_seq: 4 }])
         expect(yield* db.get(sql`SELECT seq, owner_id FROM event_sequence WHERE aggregate_id = 'ses_next'`)).toEqual({
           seq: 4,
           owner_id: null,
@@ -1301,6 +1306,10 @@ describe("V1Migration database workflow", () => {
         expect(yield* db.all(sql`SELECT id, data FROM message`)).toEqual([{ id: source.id, data: source.data }])
         expect(yield* db.all(sql`SELECT id, data FROM part`)).toEqual([{ id: "prt_1", data: sourcePart.data }])
         expect(yield* db.get(sql`SELECT seq FROM event_sequence WHERE aggregate_id = 'ses_test'`)).toEqual({ seq: 0 })
+        // The replaced projection leaves a tombstone so a synced client drops its copy.
+        expect(yield* db.all(sql`SELECT kind, row_id, change_seq FROM session_tombstone`)).toEqual([
+          { kind: "message", row_id: "msg_stale", change_seq: 0 },
+        ])
         expect(yield* db.all(sql`SELECT id FROM event`)).toEqual([])
         expect(
           yield* db.get(
@@ -1330,6 +1339,29 @@ describe("V1Migration database workflow", () => {
         expect(yield* db.get(sql`SELECT value FROM kv WHERE key = 'migration.v1-v2'`)).toEqual({
           value: '{"phase":"completed"}',
         })
+      }),
+    )
+  })
+
+  test("stamps copied rows at the watermark it sets as the head", async () => {
+    await database(
+      Effect.gen(function* () {
+        const { db } = yield* Database.Service
+        yield* db.run(
+          sql`INSERT INTO project (id, worktree, time_created, time_updated, sandboxes) VALUES ('global', '/tmp/test', 1, 2, '[]')`,
+        )
+        yield* db.run(
+          sql`INSERT INTO session (id, project_id, slug, directory, title, version, time_created, time_updated) VALUES ('ses_test', 'global', 'test', '/tmp/test', 'Test', '1', 1, 2)`,
+        )
+        for (const [index, message] of [user("msg_a", {}, 10), user("msg_b", {}, 30)].entries())
+          yield* db.run(
+            sql`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (${message.id}, 'ses_test', ${index}, ${index}, ${message.data})`,
+          )
+        expect(yield* V1Migration.run()).toEqual({ status: "completed" })
+        expect(yield* db.get(sql`SELECT seq FROM event_sequence WHERE aggregate_id = 'ses_test'`)).toEqual({ seq: 1 })
+        expect(
+          yield* db.all(sql`SELECT change_seq FROM session_message UNION ALL SELECT change_seq FROM session_v2`),
+        ).toEqual([{ change_seq: 1 }, { change_seq: 1 }, { change_seq: 1 }])
       }),
     )
   })

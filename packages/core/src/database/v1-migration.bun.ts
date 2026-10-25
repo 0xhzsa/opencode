@@ -5,6 +5,7 @@ import { Database } from "./database.js"
 import { storedAbsolutePath } from "./path.js"
 import { SessionMessageTable, SessionTable } from "../session/sql.js"
 import { SessionV1 } from "@opencode/schema/session-v1"
+import { SessionChanges } from "../session/changes.js"
 import { SessionMessage } from "../session/message.js"
 import { SessionSchema } from "../session/schema.js"
 import { KVTable } from "../kv/sql.js"
@@ -701,7 +702,20 @@ export function run(
               yield* Effect.forEach(transformed.warnings, (warning) =>
                 Effect.logWarning("Skipped V1 migration row", warning),
               )
-              yield* tx.delete(SessionMessageTable).where(eq(SessionMessageTable.session_id, next.id)).run()
+              // The copy is the session's newest change: stamp it at the head it sets.
+              const changeSeq = Math.max(transformed.watermark, 0)
+              const removed = yield* tx
+                .delete(SessionMessageTable)
+                .where(eq(SessionMessageTable.session_id, next.id))
+                .returning({ id: SessionMessageTable.id })
+                .all()
+              // Rewritten messages are removed too, so clients drop their old parts before the copy re-adds them.
+              yield* SessionChanges.tombstone(
+                tx,
+                next.id,
+                changeSeq,
+                removed.map((row) => ({ kind: "message" as const, rowID: row.id })),
+              )
               yield* Effect.forEach(transformed.messages, (message) =>
                 tx
                   .insert(SessionMessageTable)
@@ -710,6 +724,7 @@ export function run(
                     session_id: SessionSchema.ID.make(message.session_id),
                     type: message.type,
                     seq: message.seq,
+                    change_seq: changeSeq,
                     time_created: message.time_created,
                     time_updated: message.time_updated,
                     data: sql`${JSON.stringify(message.data)}`,
@@ -718,7 +733,7 @@ export function run(
               )
               yield* tx
                 .update(SessionTable)
-                .set({ ...transformed.session, time_updated: next.time_updated })
+                .set({ ...transformed.session, change_seq: changeSeq, time_updated: next.time_updated })
                 .where(eq(SessionTable.id, next.id))
                 .run()
               yield* tx
@@ -881,13 +896,15 @@ function importNextDatabase(
                 .where(eq(SessionTable.id, SessionSchema.ID.make(session.id)))
                 .get()
               if (existing) return
+              const head = messages.at(-1)?.seq ?? -1
+              const changeSeq = Math.max(head, 0)
               yield* tx.run(sql`
                 INSERT INTO session_v2 (
                   id, project_id, workspace_id, parent_id, fork_session_id, fork_boundary, slug, directory,
                   path, title, version, share_url, summary_additions, summary_deletions, summary_files,
                   summary_diffs, metadata, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read,
                   tokens_cache_write, revert, permission, agent, model, time_created, time_updated, time_compacting,
-                  time_archived, time_suspended
+                  time_archived, time_suspended, change_seq
                 ) VALUES (
                   ${session.id}, ${projectID}, ${session.workspace_id}, ${session.parent_id},
                   ${session.fork_session_id}, ${session.fork_boundary}, ${session.slug}, ${session.directory},
@@ -897,7 +914,7 @@ function importNextDatabase(
                   ${session.tokens_output}, ${session.tokens_reasoning}, ${session.tokens_cache_read},
                   ${session.tokens_cache_write}, ${session.revert}, ${session.permission}, ${session.agent},
                   ${session.model}, ${session.time_created}, ${session.time_updated}, ${session.time_compacting},
-                  ${session.time_archived}, ${session.time_suspended}
+                  ${session.time_archived}, ${session.time_suspended}, ${changeSeq}
                 )
               `)
               yield* Effect.forEach(messages, (message) =>
@@ -908,6 +925,7 @@ function importNextDatabase(
                     session_id: SessionSchema.ID.make(message.session_id),
                     type: message.type as SessionMessage.Type,
                     seq: message.seq,
+                    change_seq: changeSeq,
                     time_created: message.time_created,
                     time_updated: message.time_updated,
                     data: sql`${message.data}`,
@@ -916,10 +934,10 @@ function importNextDatabase(
               )
               yield* tx
                 .insert(EventSequenceTable)
-                .values({ aggregate_id: session.id, seq: messages.at(-1)?.seq ?? -1 })
+                .values({ aggregate_id: session.id, seq: head })
                 .onConflictDoUpdate({
                   target: EventSequenceTable.aggregate_id,
-                  set: { seq: messages.at(-1)?.seq ?? -1, owner_id: null },
+                  set: { seq: head, owner_id: null },
                 })
                 .run()
             }),

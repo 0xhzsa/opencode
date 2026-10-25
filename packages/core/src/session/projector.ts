@@ -316,20 +316,23 @@ const projectFork = Effect.fn("SessionProjector.projectFork")(function* (
 function run(db: DatabaseService, event: MessageEvent) {
   return Effect.gen(function* () {
     const changeSeq = event.durable.seq
-    // Part keys at or past `from` that a rewrite of the message's parts no longer holds.
-    const deleteParts = Effect.fnUntraced(function* (messageID: SessionMessage.ID, from: number) {
+    // Part keys at or past `from` that a rewrite of the message's parts no longer holds. `inline` counts the parts a
+    // legacy row held in `data.content`, which the feed sent as part keys too.
+    const deleteParts = Effect.fnUntraced(function* (messageID: SessionMessage.ID, from: number, inline = 0) {
       const deleted = yield* db
         .delete(SessionPartTable)
         .where(eq(SessionPartTable.message_id, messageID))
         .returning({ ordinal: SessionPartTable.ordinal })
         .all()
         .pipe(Effect.orDie)
+      const ordinals = new Set(deleted.map((row) => row.ordinal))
+      for (let ordinal = 0; ordinal < inline; ordinal++) ordinals.add(ordinal)
       yield* SessionChanges.tombstone(
         db,
         event.data.sessionID,
         changeSeq,
-        deleted.flatMap((row) =>
-          row.ordinal >= from ? [{ kind: "part" as const, rowID: messageID, ordinal: row.ordinal }] : [],
+        [...ordinals].flatMap((ordinal) =>
+          ordinal >= from ? [{ kind: "part" as const, rowID: messageID, ordinal }] : [],
         ),
       )
     })
@@ -577,9 +580,11 @@ function run(db: DatabaseService, event: MessageEvent) {
             .get()
             .pipe(Effect.orDie)
           if (!messageRow) return
+          let inline = 0
           if (SessionHistory.hasInlineContent(messageRow.data)) {
             const message = SessionHistory.decodeMessageRowSync(messageRow)
             if (message.type === "assistant") {
+              inline = message.content.length
               const { id: _, type: __, ...data } = encodeMessage({ ...message, content: [] })
               yield* db
                 .update(SessionMessageTable)
@@ -589,7 +594,7 @@ function run(db: DatabaseService, event: MessageEvent) {
                 .pipe(Effect.orDie)
             }
           }
-          yield* deleteParts(messageID, parts.length)
+          yield* deleteParts(messageID, parts.length, inline)
           const partRows = parts.map((part, ordinal) => ({
             message_id: messageID,
             session_id: event.data.sessionID,

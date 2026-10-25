@@ -38,7 +38,7 @@ export const MaxLimit = 5000
 
 /** Record removed rows at `changeSeq`. Removing a message removes its parts, which need no tombstones. */
 export const tombstone = Effect.fnUntraced(function* (
-  db: DatabaseService,
+  db: Pick<DatabaseService, "insert">,
   sessionID: SessionSchema.ID,
   changeSeq: number,
   keys: ReadonlyArray<TombstoneKey>,
@@ -165,7 +165,29 @@ export const read = Effect.fnUntraced(function* (
           ...(yield* seqs(SessionInboxTable.session_id, SessionInboxTable.change_seq, SessionInboxTable)),
           ...(yield* seqs(SessionTombstoneTable.session_id, SessionTombstoneTable.change_seq, SessionTombstoneTable)),
         ].sort((a, b) => a - b)
-        const through = candidates.length >= limit ? candidates[limit - 1]! : head
+        const end = candidates.length >= limit ? candidates[limit - 1]! : head
+        // Rows can sit below the head (forks, imports, v1 copies), so a full page may already hold the last change.
+        const after = (session: AnySQLiteColumn, seq: AnySQLiteColumn, table: SQLiteTable) =>
+          db
+            .select({ seq: sql<number>`${seq}` })
+            .from(table)
+            .where(and(eq(session, sessionID), gt(seq, end)))
+            .limit(1)
+            .get()
+            .pipe(
+              Effect.orDie,
+              Effect.map((row) => row !== undefined),
+            )
+        const remaining =
+          end < head &&
+          (session.change_seq > end ||
+            candidates.some((seq) => seq > end) ||
+            (yield* after(SessionMessageTable.session_id, SessionMessageTable.change_seq, SessionMessageTable)) ||
+            (yield* after(SessionPartTable.session_id, SessionPartTable.change_seq, SessionPartTable)) ||
+            (yield* after(SessionInboxTable.session_id, SessionInboxTable.change_seq, SessionInboxTable)) ||
+            (yield* after(SessionTombstoneTable.session_id, SessionTombstoneTable.change_seq, SessionTombstoneTable)))
+        // A cursor past the head (a stale or foreign one) never moves backwards.
+        const through = Math.max(remaining ? end : head, since)
         const range = (session: AnySQLiteColumn, seq: AnySQLiteColumn) =>
           and(eq(session, sessionID), gt(seq, since), lte(seq, through))
 

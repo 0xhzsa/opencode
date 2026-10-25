@@ -91,19 +91,20 @@ const readAll = (sessionID: Session.ID, since?: number, limit?: number) =>
   Effect.gen(function* () {
     const { db } = yield* Database.Service
     const changes: SessionChanges.Change[] = []
+    const sizes: number[] = []
     let cursor = since
-    let pages = 0
     while (true) {
       const page = yield* SessionChanges.read(db, { sessionID, since: cursor, limit })
-      pages++
+      sizes.push(page.changes.length)
       for (const change of page.changes) {
         // A page never splits a change number, so the next page starts past everything this one held.
         expect(change.seq).toBeLessThanOrEqual(page.through)
         if (cursor !== undefined) expect(change.seq).toBeGreaterThan(cursor)
       }
+      if (cursor !== undefined) expect(page.through).toBeGreaterThanOrEqual(cursor)
       changes.push(...page.changes)
       cursor = page.through
-      if (!page.more) return { changes, head: page.head, pages }
+      if (!page.more) return { changes, head: page.head, through: page.through, sizes }
     }
   })
 
@@ -162,6 +163,19 @@ const messageSeqs = (sessionID: Session.ID) =>
       .all()
       .pipe(Effect.orDie)
   })
+
+const replaceContent = (sessionID: Session.ID, messageID: SessionMessage.ID, texts: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const bus = yield* Bus.Service
+    yield* bus.publish(SessionEvent.MessageContentUpdated, {
+      sessionID,
+      messageID,
+      content: texts.map((text) => ({ type: "text" as const, text })),
+    })
+  })
+
+const messageParts = (state: Snapshot, messageID: string) =>
+  [...state.parts.keys()].filter((key) => key.startsWith(`${messageID}#`)).toSorted()
 
 const updatesPartInPlace = Effect.gen(function* () {
   const session = yield* Session.Service
@@ -275,6 +289,11 @@ describe("SessionChanges", () => {
       const state = yield* snapshot(forked.id)
       expect(state.messages.size).toBe(rows.length)
       expect(state.parts.size).toBe(parts.length)
+      // Small pages still end on the page that holds the copy, not on an empty one after it.
+      const paged = yield* readAll(forked.id, undefined, 2)
+      expect(paged.sizes.every((size) => size > 0)).toBe(true)
+      expect(paged.through).toBe(forkHead)
+      expect(apply(empty(), paged.changes)).toEqual(state)
 
       // The next write to the fork lands after everything the copy wrote.
       yield* prompt(forked.id, "after")
@@ -318,6 +337,15 @@ describe("SessionChanges", () => {
       expect(seqs.size).toBe(1)
       expect([...seqs][0]).toBeLessThanOrEqual(importHead)
       expect(read.changes.map((change) => change.type)).toEqual(["session", "message", "message", "part", "part"])
+      const paged = yield* readAll(sessionID, undefined, 2)
+      expect(paged.sizes).toEqual([5])
+      expect(paged.through).toBe(importHead)
+      // A cursor past the head never moves backwards.
+      expect(yield* readAll(sessionID, importHead + 5)).toMatchObject({
+        changes: [],
+        through: importHead + 5,
+        sizes: [0],
+      })
 
       yield* prompt(sessionID, "after")
       const next = yield* readAll(sessionID, importHead)
@@ -371,6 +399,63 @@ describe("SessionChanges", () => {
           expect(apply(state, read.changes)).toEqual(final)
         }
       }
+    }),
+  )
+
+  it.effect("removes inline parts a legacy row loses when its content is replaced", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Service
+      const { db } = yield* Database.Service
+      const created = yield* session.create({ location })
+      yield* prompt(created.id, "hello")
+      const legacyID = SessionMessage.ID.create()
+      yield* db
+        .insert(SessionMessageTable)
+        .values({
+          id: legacyID,
+          session_id: created.id,
+          type: "assistant",
+          seq: (yield* messageSeqs(created.id)).length,
+          change_seq: yield* head(created.id),
+          time_created: 10,
+          time_updated: 10,
+          data: {
+            agent: Agent.ID.make("build"),
+            model,
+            content: ["a", "b", "c"].map((text) => ({ type: "text" as const, text })),
+            time: { created: 10, completed: 11 },
+          },
+        })
+        .run()
+        .pipe(Effect.orDie)
+      const cursor = yield* head(created.id)
+      const before = yield* snapshot(created.id)
+      expect(messageParts(before, legacyID)).toHaveLength(3)
+
+      yield* replaceContent(created.id, legacyID, ["a"])
+      const after = apply(before, (yield* readAll(created.id, cursor)).changes)
+      expect(messageParts(after, legacyID)).toEqual([partKey(legacyID, 0)])
+      expect(after).toEqual(yield* snapshot(created.id))
+    }),
+  )
+
+  it.effect("re-creates a part key after a shrink, applied in change order", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Service
+      const created = yield* session.create({ location })
+      yield* prompt(created.id, "hello")
+      const messageID = yield* answer(created.id, "one")
+      const record: Array<{ cursor: number; state: Snapshot }> = []
+      for (const texts of [["a", "b", "c"], ["a"], ["a", "b"]]) {
+        record.push({ cursor: yield* head(created.id), state: yield* snapshot(created.id) })
+        yield* replaceContent(created.id, messageID, texts)
+      }
+      // A full read holds both the old tombstone and the re-created row; the row comes later, so it wins.
+      const final = yield* snapshot(created.id)
+      expect(messageParts(final, messageID)).toEqual([partKey(messageID, 0), partKey(messageID, 1)])
+      for (const { cursor, state } of record)
+        for (const limit of [1, undefined])
+          expect(apply(state, (yield* readAll(created.id, cursor, limit)).changes)).toEqual(final)
     }),
   )
 
