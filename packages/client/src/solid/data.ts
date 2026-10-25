@@ -1141,14 +1141,24 @@ export function createData(config: CreateDataInput) {
           setStore("session", "info", event.data.sessionID, "revert", undefined)
         }
         // Messages are in server sequence order, but IDs do not sort by it (forked IDs end in `_<seq>`, and iOS
-        // mints mixed-case IDs), so cut by position. A boundary missing from the loaded tail is older than all of it.
+        // mints mixed-case IDs), so cut by position. With older pages unloaded, a missing boundary is older than the
+        // whole loaded tail; with everything loaded, it was already removed (a sync applied the revert first).
+        const cursor = store.session.messageCursor[event.data.sessionID]
+        const cut =
+          messageIndex.get(event.data.sessionID)?.get(event.data.to) ?? (cursor === undefined ? undefined : 0)
         const removed = new Set<string>()
-        message.update(event.data.sessionID, (draft, index) => {
-          for (const item of draft.splice(index.get(event.data.to) ?? 0)) {
-            index.delete(item.id)
-            removed.add(item.id)
-          }
-        })
+        if (cut !== undefined)
+          message.update(event.data.sessionID, (draft, index) => {
+            for (const item of draft.splice(cut)) {
+              index.delete(item.id)
+              removed.add(item.id)
+            }
+          })
+        // Cutting from the first loaded message deletes the cursor's anchor, so older pages must be read afresh.
+        if (cut === 0 && cursor !== undefined) {
+          sync.invalidate(`session.message:${event.data.sessionID}`)
+          refresh(() => result.session.message.sync(event.data.sessionID))
+        }
         if (!store.session.pending[event.data.sessionID]?.length) return
         setStore(
           "session",

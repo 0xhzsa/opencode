@@ -1064,6 +1064,99 @@ test.each([
   }
 })
 
+test.each([
+  ["at the first loaded message", "msg_b", ["msg_a"]],
+  ["in an unloaded older page", "msg_0", []],
+])("rereads messages when a committed revert lands %s", async (_, to, kept) => {
+  const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
+  const server = { messages: ["msg_a", "msg_b", "msg_c"], cursor: "msg_b" as string | undefined }
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async () =>
+      Response.json({
+        data: server.messages.map((id) => ({ id, type: "user", text: id, time: { created: 1 } })).toReversed(),
+        cursor: server.cursor ? { next: server.cursor } : {},
+      }),
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({
+      api: () => api,
+      directory: "/project",
+      event: {
+        on: () => () => {},
+        listen(handler) {
+          listeners.add(handler)
+          return () => listeners.delete(handler)
+        },
+      },
+    }),
+    dispose,
+  }))
+
+  try {
+    server.messages = ["msg_b", "msg_c"]
+    await setup.data.session.message.sync("ses_refresh")
+    server.messages = kept
+    server.cursor = undefined
+    const event: OpenCodeEvent = {
+      id: "evt_revert",
+      created: 2,
+      type: "session.revert.committed",
+      durable: { aggregateID: "ses_refresh", seq: 1, version: 1 },
+      data: { sessionID: "ses_refresh", to },
+    }
+    listeners.forEach((listener) => listener({ name: event.type, details: event }))
+
+    await Bun.sleep(20)
+    expect(setup.data.session.message.list("ses_refresh").map((message) => message.id)).toEqual(kept)
+    expect(setup.data.session.message.more("ses_refresh")).toBe(false)
+  } finally {
+    setup.dispose()
+  }
+})
+
+test("keeps a fully loaded transcript when a committed revert boundary is already gone", async () => {
+  const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async () =>
+      Response.json({
+        data: ["msg_a", "msg_b"].map((id) => ({ id, type: "user", text: id, time: { created: 1 } })).toReversed(),
+        cursor: {},
+      }),
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({
+      api: () => api,
+      directory: "/project",
+      event: {
+        on: () => () => {},
+        listen(handler) {
+          listeners.add(handler)
+          return () => listeners.delete(handler)
+        },
+      },
+    }),
+    dispose,
+  }))
+
+  try {
+    await setup.data.session.message.sync("ses_refresh")
+    const event: OpenCodeEvent = {
+      id: "evt_revert",
+      created: 2,
+      type: "session.revert.committed",
+      durable: { aggregateID: "ses_refresh", seq: 1, version: 1 },
+      data: { sessionID: "ses_refresh", to: "msg_c" },
+    }
+    listeners.forEach((listener) => listener({ name: event.type, details: event }))
+
+    expect(setup.data.session.message.list("ses_refresh").map((message) => message.id)).toEqual(["msg_a", "msg_b"])
+  } finally {
+    setup.dispose()
+  }
+})
+
 test.each(["success", "failure", "cancel", "cancel-retry", "cancel-page", "join-cancel", "join-failure"])(
   "bulk history (%s)",
   async (mode) => {

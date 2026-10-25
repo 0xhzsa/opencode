@@ -25,9 +25,15 @@ test("selects user history strictly before the revert boundary", () => {
   const users = selectSessionUserMessages(messages)
 
   expect(users.map((message) => message.id)).toEqual(["msg_a", "msg_b", "msg_c"])
-  expect(selectVisibleSessionUserMessages(users, "msg_b").map((message) => message.id)).toEqual(["msg_a"])
-  expect(selectVisibleSessionUserMessages(users.slice(2), "msg_b")).toEqual([])
-  expect(selectVisibleSessionUserMessages(users)).toBe(users)
+  expect(selectVisibleSessionUserMessages(messages, "msg_b").map((message) => message.id)).toEqual(["msg_a"])
+  expect(selectVisibleSessionUserMessages(messages.slice(3), "msg_b")).toEqual([])
+  expect(selectVisibleSessionUserMessages(messages).map((message) => message.id)).toEqual(["msg_a", "msg_b", "msg_c"])
+})
+
+test("keeps the user message before a revert staged on an assistant message", () => {
+  const messages: SessionMessageInfo[] = [user("msg_a"), assistant, user("msg_b")]
+
+  expect(selectVisibleSessionUserMessages(messages, assistant.id).map((message) => message.id)).toEqual(["msg_a"])
 })
 
 // The server orders by sequence. Forked IDs end in `_<seq>`, where `_10` sorts before `_9`, and iOS mints
