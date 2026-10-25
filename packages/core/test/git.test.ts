@@ -575,6 +575,31 @@ describe("Git capture spawns", () => {
     ),
   )
 
+  isolated.live("asks Git again when the excludes file named by per-worktree config changes", () =>
+    counted(({ project, spawned }) =>
+      Effect.gen(function* () {
+        const excludes = path.join(path.dirname(project), "excludes")
+        yield* Effect.promise(async () => {
+          await Bun.write(excludes, "extra.txt\n")
+          await $`git config core.repositoryformatversion 1`.cwd(project).quiet()
+          await $`git config extensions.worktreeConfig true`.cwd(project).quiet()
+          await $`git config --worktree core.excludesFile ${excludes}`.cwd(project).quiet()
+        })
+        const capture = yield* store(project)
+        const before = yield* capture()
+        yield* Effect.promise(() => Bun.write(path.join(project, "extra.txt"), "a\n"))
+        expect(yield* capture()).toBe(before)
+
+        spawned.length = 0
+        expect(yield* capture()).toBe(before)
+        expect(spawned).toEqual(["diff-files", "ls-files"])
+
+        yield* Effect.promise(() => Bun.write(excludes, "# none at all\n"))
+        expect(yield* capture()).not.toBe(before)
+      }),
+    ),
+  )
+
   isolated.live("shares one scan between captures waiting for the same store", () =>
     counted(({ project, spawned }) =>
       Effect.gen(function* () {

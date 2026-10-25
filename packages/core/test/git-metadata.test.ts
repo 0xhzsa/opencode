@@ -159,6 +159,49 @@ describe.skipIf(process.platform === "win32")("GitMetadata", () => {
     }),
   )
 
+  it.live("rereads config locations when the Git config variables change", () =>
+    Effect.gen(function* () {
+      const tmp = yield* Effect.acquireRelease(
+        Effect.promise(() => tmpdir()),
+        (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+      )
+      const repo = path.join(tmp.path, "repo")
+      const global = path.join(tmp.path, "global")
+      yield* Effect.promise(async () => {
+        await initRepo(repo)
+        await git(repo, "remote", "add", "origin", "https://example.test/repo.git")
+        await fs.writeFile(global, '[url "https://mirror.test/"]\n\tinsteadOf = https://example.test/\n')
+      })
+      const saved = { global: process.env.GIT_CONFIG_GLOBAL, nosystem: process.env.GIT_CONFIG_NOSYSTEM }
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const [name, value] of [
+            ["GIT_CONFIG_GLOBAL", saved.global],
+            ["GIT_CONFIG_NOSYSTEM", saved.nosystem],
+          ] as const)
+            if (value === undefined) delete process.env[name]
+            else process.env[name] = value
+        }),
+      )
+      yield* Effect.gen(function* () {
+        const service = yield* Git.Service
+        const repository = (yield* service.repo.discover(AbsolutePath.make(repo)))!
+        const origin = () => service.remote.get(repository)
+        expect(yield* origin()).toBe(yield* Effect.promise(() => cli(repo, "remote", "get-url", "origin")))
+
+        process.env.GIT_CONFIG_GLOBAL = global
+        expect(yield* origin()).toBe("https://mirror.test/repo.git")
+        expect(yield* origin()).toBe(yield* Effect.promise(() => cli(repo, "remote", "get-url", "origin")))
+
+        process.env.GIT_CONFIG_NOSYSTEM = "1"
+        expect(GitMetadata.parseConfigFiles("GIT_CONFIG_SYSTEM=/etc/gitconfig\nGIT_CONFIG_GLOBAL=/g\n")).toEqual({
+          system: undefined,
+          global: ["/g"],
+        })
+      }).pipe(Effect.provide(AppNodeBuilder.build(Git.node)))
+    }),
+  )
+
   it.live("leaves layouts it does not model to Git", () =>
     Effect.gen(function* () {
       const tmp = yield* Effect.acquireRelease(
@@ -169,8 +212,23 @@ describe.skipIf(process.platform === "win32")("GitMetadata", () => {
       const reftable = path.join(root, "reftable")
       const worktree = path.join(root, "worktree")
       const hasConfig = path.join(root, "hasconfig")
+      const includedBare = path.join(root, "included-bare")
+      const includedWorktree = path.join(root, "included-worktree")
       yield* Effect.promise(async () => {
-        await Promise.all([initRepo(reftable), initRepo(worktree), initRepo(hasConfig)])
+        await Promise.all([
+          initRepo(reftable),
+          initRepo(worktree),
+          initRepo(hasConfig),
+          initRepo(includedBare),
+          initRepo(includedWorktree),
+        ])
+        await fs.writeFile(path.join(includedBare, ".git", "bare"), "[core]\n\tbare = true\n")
+        await fs.appendFile(path.join(includedBare, ".git", "config"), "[include]\n\tpath = bare\n")
+        await fs.writeFile(path.join(includedWorktree, ".git", "elsewhere"), `[core]\n\tworktree = ${root}\n`)
+        await fs.appendFile(
+          path.join(includedWorktree, ".git", "config"),
+          `[includeIf "onbranch:${await cli(includedWorktree, "symbolic-ref", "--short", "HEAD")}"]\n\tpath = elsewhere\n`,
+        )
         await fs.appendFile(path.join(reftable, ".git", "config"), "[extensions]\n\trefStorage = reftable\n")
         await fs.appendFile(path.join(worktree, ".git", "config"), `[core]\n\tworktree = ${root}\n`)
         await fs.appendFile(
@@ -184,10 +242,44 @@ describe.skipIf(process.platform === "win32")("GitMetadata", () => {
         expect(yield* service.repo.metadata(AbsolutePath.make(worktree))).toBeUndefined()
         expect(yield* service.repo.metadata(AbsolutePath.make(hasConfig))).toBeUndefined()
         expect(yield* Effect.promise(() => GitMetadata.discover(path.join(worktree, ".git")))).toBeUndefined()
+        // Layout keys an include sets, or an include that can't be evaluated, leave discovery to Git.
+        for (const directory of [includedBare, includedWorktree, hasConfig])
+          expect(yield* Effect.promise(() => GitMetadata.discover(path.join(directory, ".git")))).toBeUndefined()
         // Git still answers for them.
         const repository = yield* service.repo.discover(AbsolutePath.make(worktree))
         expect(repository?.worktree).toBe(AbsolutePath.make(root))
       }).pipe(Effect.provide(AppNodeBuilder.build(Git.node)))
+    }),
+  )
+})
+
+describe("GitMetadata.wildmatch", () => {
+  it.effect("follows Git's character classes and leaves unmodelled patterns to Git", () =>
+    Effect.sync(() => {
+      const cases: [pattern: string, value: string, expected: boolean | undefined][] = [
+        // No class matches `/` under WM_PATHNAME, negated or not.
+        ["a[!b]c", "axc", true],
+        ["a[!b]c", "abc", false],
+        ["a[!b]c", "a/c", false],
+        ["a[^b]c", "a/c", false],
+        ["a[/]c", "a/c", false],
+        // A `]` first in the class, after any negation, is a member.
+        ["a[]]c", "a]c", true],
+        ["a[]x]c", "axc", true],
+        ["a[!]]c", "a]c", false],
+        ["a[!]]c", "axc", true],
+        ["a[a-c]d", "abd", true],
+        ["a[[]c", "a[c", true],
+        // Unterminated classes, POSIX classes, escapes and invalid ranges.
+        ["a[!]", "a]", undefined],
+        ["a[", "a[", undefined],
+        ["[[:alpha:]]", "a", undefined],
+        ["a[\\]]c", "a]c", undefined],
+        ["a[z-a]c", "abc", undefined],
+      ]
+      expect(cases.map(([pattern, value]) => GitMetadata.wildmatch(pattern, value, false))).toEqual(
+        cases.map((item) => item[2]),
+      )
     }),
   )
 })

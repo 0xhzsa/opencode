@@ -289,12 +289,22 @@ const layer = Layer.effect(
       return [gitDir, commonDir, head, ...files, ...stamps].join("\0")
     })
 
-    // Config file locations depend on how Git was built, so ask it once per process.
-    const configFiles = yield* Effect.cached(
-      run("/", proc, ["var", "-l"]).pipe(
-        Effect.map((result) => (result.exitCode === 0 ? GitMetadata.parseConfigFiles(result.text) : undefined)),
-      ),
-    )
+    // Config file locations depend on how Git was built and on these variables, so ask Git once for each value.
+    const configFileLookups = new Map<string, Effect.Effect<GitMetadata.ConfigFiles | undefined>>()
+    const configFiles = Effect.gen(function* () {
+      const key = ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "HOME", "XDG_CONFIG_HOME"]
+        .map((name) => process.env[name] ?? "\u0001")
+        .join("\0")
+      const lookup =
+        configFileLookups.get(key) ??
+        (yield* Effect.cached(
+          run("/", proc, ["var", "-l"]).pipe(
+            Effect.map((result) => (result.exitCode === 0 ? GitMetadata.parseConfigFiles(result.text) : undefined)),
+          ),
+        ))
+      configFileLookups.set(key, lookup)
+      return yield* lookup
+    })
 
     /** Repository metadata read without starting Git; undefined when Git itself must answer. */
     const open = Effect.fnUntraced(function* (layout: GitMetadata.Layout) {
@@ -802,15 +812,27 @@ const layer = Layer.effect(
     const pendingCaptures = new Map<string, Deferred.Deferred<TreeID, OperationError>>()
 
     /**
-     * Stamps the exclude rules only the source applies. Worktree `.gitignore` files are snapshotted
-     * themselves, and global excludes hide a path from the snapshot store too.
+     * Stamps every file whose rules decide whether the source ignores `untracked`: its exclude file, config,
+     * the excludes file that config names, and any untracked `.gitignore`. Undefined when the excludes file
+     * can't be resolved without Git, so the caller asks Git.
      */
-    const sourceExcludes = (source: Repository) =>
-      Effect.forEach(
-        [path.join(source.commonDirectory, "info", "exclude"), path.join(source.commonDirectory, "config")],
-        stamp,
-        { concurrency: 2 },
-      ).pipe(Effect.map((stamps) => stamps.join("\0")))
+    const sourceExcludes = Effect.fnUntraced(function* (source: Repository, untracked: readonly RelativePath[]) {
+      const metadata = yield* open(source)
+      if (!metadata) return undefined
+      const files = [
+        path.join(source.commonDirectory, "info", "exclude"),
+        path.join(source.commonDirectory, "config"),
+        path.join(source.gitDirectory, "config.worktree"),
+        GitMetadata.excludesFile(metadata) ?? "",
+        ...untracked
+          .filter((file) => path.basename(file) === ".gitignore")
+          .map((file) => path.join(source.worktree, file)),
+      ]
+      const stamps = yield* Effect.forEach(files, (file) => (file ? stamp(file) : Effect.succeed("")), {
+        concurrency: "unbounded",
+      })
+      return [...files, ...stamps].join("\0")
+    })
 
     /**
      * Changes are listed against the temporary index they are written to, never the
@@ -829,10 +851,9 @@ const layer = Layer.effect(
           const clean = !!scanned && last?.fingerprint === scanned && changes.every((change) => !change.tracked.length)
           // Paths the source ignores are listed as untracked on every scan; they leave the index unchanged, and
           // while the same paths meet the same source rules, Git need not be asked again.
-          const ignoredUntracked =
-            clean && input.ignores && untracked.length
-              ? [...untracked, yield* sourceExcludes(input.ignores)].join("\0")
-              : undefined
+          const rules =
+            clean && input.ignores && untracked.length ? yield* sourceExcludes(input.ignores, untracked) : undefined
+          const ignoredUntracked = rules ? [...untracked, rules].join("\0") : undefined
           if (last && ignoredUntracked && last.ignoredUntracked === ignoredUntracked)
             return { tree: last.tree, ignoredUntracked }
           const excluded = clean

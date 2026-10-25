@@ -72,7 +72,10 @@ export function parseConfigFiles(output: string): ConfigFiles | undefined {
   const global = lines.filter((line) => line.startsWith("GIT_CONFIG_GLOBAL=")).map((line) => line.slice(18))
   // Git before 2.42 does not report config paths.
   if (!global.length) return undefined
-  const system = lines.findLast((line) => line.startsWith("GIT_CONFIG_SYSTEM="))?.slice(18)
+  // `git var` still names the system file when GIT_CONFIG_NOSYSTEM disables it.
+  const system = bool(process.env.GIT_CONFIG_NOSYSTEM)
+    ? undefined
+    : lines.findLast((line) => line.startsWith("GIT_CONFIG_SYSTEM="))?.slice(18)
   return { system: system || undefined, global }
 }
 
@@ -91,12 +94,14 @@ export async function discover(dotGit: string): Promise<Layout | undefined> {
     ? await fs.realpath(path.resolve(gitDirectory, commondir.trim())).catch(() => undefined)
     : gitDirectory
   if (!commonDirectory) return undefined
-  if (!(await valid(gitDirectory, commonDirectory))) return undefined
+  const head = await valid(gitDirectory, commonDirectory)
+  if (!head) return undefined
   if (!(await owned([cwd, gitDirectory]))) return undefined
-  const common = parseConfig((await text(path.join(commonDirectory, "config"))) ?? "")
+  const context = { layout: { worktree: cwd, gitDirectory, commonDirectory }, head, depth: 0 }
+  const common = await layoutConfig(path.join(commonDirectory, "config"), context)
   if (!common || !repositoryFormat(common)) return undefined
   const perWorktreeConfig = bool(get(common, "extensions", "worktreeconfig"))
-    ? parseConfig((await text(path.join(gitDirectory, "config.worktree"))) ?? "")
+    ? await layoutConfig(path.join(gitDirectory, "config.worktree"), context)
     : []
   if (!perWorktreeConfig) return undefined
   const config = [...common, ...perWorktreeConfig]
@@ -158,6 +163,15 @@ export function bool(value: string | undefined) {
   if (["false", "no", "off", "0", ""].includes(normalized)) return false
   if (/^-?\d+$/.test(normalized)) return Number(normalized) !== 0
   return undefined
+}
+
+/** The excludes file Git reads: `core.excludesFile`, else `$XDG_CONFIG_HOME/git/ignore`. */
+export function excludesFile(repository: Repository) {
+  const configured = get(repository.config, "core", "excludesfile")
+  if (configured !== undefined)
+    return configured ? path.resolve(repository.layout.worktree, expandHome(configured)) : undefined
+  const home = process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || os.homedir(), ".config")
+  return path.join(home, "git", "ignore")
 }
 
 /** Remote names as `git remote` lists them. */
@@ -398,6 +412,27 @@ async function load(
   return expanded.flatMap((entry) => entry ?? [])
 }
 
+/**
+ * Config that decides the layout. Git reads the repository format without includes but later settings
+ * with them, so a layout key that only an include sets is left to Git.
+ */
+async function layoutConfig(file: string, context: { layout: Layout; head: Head; depth: number }) {
+  const [direct, loaded] = await Promise.all([
+    text(file).then((content) => parseConfig(content ?? "")),
+    load(file, context),
+  ])
+  if (!direct || !loaded) return undefined
+  return layoutKeys(loaded) === layoutKeys(direct) ? loaded : undefined
+}
+
+function layoutKeys(config: readonly Entry[]) {
+  return config.filter(
+    (entry) =>
+      entry.section === "extensions" ||
+      (entry.section === "core" && ["bare", "worktree", "repositoryformatversion"].includes(entry.key)),
+  ).length
+}
+
 /** Path of the file an include entry pulls in, false when it doesn't apply, undefined when unsupported. */
 async function included(entry: Entry, file: string, context: { layout: Layout; head: Head }) {
   if (entry.value === undefined) return entry.section === "include" || entry.section === "includeif" ? undefined : false
@@ -413,13 +448,17 @@ async function included(entry: Entry, file: string, context: { layout: Layout; h
       await fs.realpath(context.layout.gitDirectory).catch(() => context.layout.gitDirectory),
       path.resolve(context.layout.gitDirectory),
     ]
-    return candidates.some((candidate) => wildmatch(pattern, slashes(candidate), caseless)) ? resolved : false
+    const matches = candidates.map((candidate) => wildmatch(pattern, slashes(candidate), caseless))
+    if (matches.includes(undefined)) return undefined
+    return matches.includes(true) ? resolved : false
   }
   if (condition.startsWith("onbranch:")) {
     if (!("ref" in context.head) || !context.head.ref.startsWith("refs/heads/")) return false
     const pattern = condition.slice(9)
     const branch = context.head.ref.slice("refs/heads/".length)
-    return wildmatch(pattern.endsWith("/") ? pattern + "**" : pattern, branch, false) ? resolved : false
+    const matched = wildmatch(pattern.endsWith("/") ? pattern + "**" : pattern, branch, false)
+    if (matched === undefined) return undefined
+    return matched ? resolved : false
   }
   // `hasconfig:` depends on the whole config; unknown conditions never match in Git.
   if (condition.startsWith("hasconfig:")) return undefined
@@ -433,8 +472,11 @@ function gitdirPattern(input: string, file: string) {
   return anchored.endsWith("/") ? anchored + "**" : anchored
 }
 
-/** Wildmatch with WM_PATHNAME: `*` stays within a segment, `**` crosses them. */
-export function wildmatch(pattern: string, value: string, caseless: boolean) {
+/**
+ * Wildmatch with WM_PATHNAME: `*` stays within a segment, `**` crosses them.
+ * Undefined for a pattern it doesn't model, so the caller can leave it to Git.
+ */
+export function wildmatch(pattern: string, value: string, caseless: boolean): boolean | undefined {
   let regex = ""
   for (let index = 0; index < pattern.length; index++) {
     const char = pattern[index]!
@@ -450,19 +492,26 @@ export function wildmatch(pattern: string, value: string, caseless: boolean) {
     if (char === "*") regex += "[^/]*"
     else if (char === "?") regex += "[^/]"
     else if (char === "[") {
-      const close = pattern.indexOf("]", index + 2)
-      if (close === -1) regex += "\\["
-      else {
-        const body = pattern.slice(index + 1, close)
-        const negated = body.startsWith("!") || body.startsWith("^")
-        regex += `[${negated ? "^" : ""}${(negated ? body.slice(1) : body).replace(/[\\\]]/g, "\\$&")}]`
-        index = close
-      }
+      const negated = pattern[index + 1] === "!" || pattern[index + 1] === "^"
+      // A `]` right after the opening bracket (and any negation) is a member, not the end.
+      const close = pattern.indexOf("]", index + (negated ? 3 : 2))
+      // Git matches nothing for an unterminated class; escapes and POSIX classes are left to it.
+      if (close === -1) return undefined
+      const body = pattern.slice(index + (negated ? 2 : 1), close)
+      if (body.includes("\\") || body.includes("[:")) return undefined
+      // Under WM_PATHNAME no class matches `/`.
+      regex += `(?!/)[${negated ? "^" : ""}${body.replace(/[[\]]/g, "\\$&")}]`
+      index = close
     } else if (char === "\\" && index + 1 < pattern.length) {
       regex += escapeRegex(pattern[++index]!)
     } else regex += escapeRegex(char)
   }
-  return new RegExp(`^${regex}$`, caseless ? "i" : "").test(value)
+  // A range such as `[z-a]` is invalid as a regular expression.
+  try {
+    return new RegExp(`^${regex}$`, caseless ? "i" : "").test(value)
+  } catch {
+    return undefined
+  }
 }
 
 function escapeRegex(char: string) {
@@ -500,7 +549,7 @@ async function valid(gitDirectory: string, commonDirectory: string) {
     fs.stat(path.join(commonDirectory, "objects")).catch(() => undefined),
     fs.stat(path.join(commonDirectory, "refs")).catch(() => undefined),
   ])
-  return head !== undefined && !!objects?.isDirectory() && !!refs?.isDirectory()
+  return objects?.isDirectory() && refs?.isDirectory() ? head : undefined
 }
 
 // Git refuses repositories owned by someone else unless safe.directory allows them; leave that to Git.
