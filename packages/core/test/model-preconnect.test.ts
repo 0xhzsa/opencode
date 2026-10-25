@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
-import { LanguageModel } from "@opencode/ai"
+import { LanguageModel } from "@opencode/ai/effect"
 import { OpenAIChat } from "@opencode/ai/protocols"
 import { Agent } from "@opencode/schema/agent"
 import { Document, Info } from "@opencode/schema/config"
