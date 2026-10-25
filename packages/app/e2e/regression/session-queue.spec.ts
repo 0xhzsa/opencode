@@ -1070,7 +1070,7 @@ test("a steer's copy lands on its bubble's corners, and Working glides below the
   mock.emit("session.step.started", { sessionID, assistantMessageID: assistantID, agent: "build", model, started: 1 })
   await expect(working).toBeVisible()
 
-  // Every frame, each flight copy's painted corners: the larger of its clip's and its own, at the copy's scale.
+  // Every frame, each flight copy's painted corners: the larger of its clip's and its own, at its host's scale.
   await page.evaluate(() => {
     const flights: number[][][] = []
     const seen = new Map<Element, number[][]>()
@@ -1083,10 +1083,9 @@ test("a steer's copy lands on its bubble's corners, and Working glides below the
     ]
     const tick = () => {
       document.querySelectorAll<HTMLElement>("[data-flight]").forEach((host) => {
-        const style = getComputedStyle(host)
-        const scale = new DOMMatrix(style.transform).a
-        const clip = expand((/round ([^)/]+)/.exec(style.clipPath)?.[1] ?? "0").trim().split(/\s+/).map(parseFloat))
+        const scale = new DOMMatrix(getComputedStyle(host).transform).a
         const copy = getComputedStyle(host.firstElementChild!)
+        const clip = expand((/round ([^)/]+)/.exec(copy.clipPath)?.[1] ?? "0").trim().split(/\s+/).map(parseFloat))
         const own = [
           copy.borderTopLeftRadius,
           copy.borderTopRightRadius,
