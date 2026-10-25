@@ -1,3 +1,9 @@
 # web + desktop packages
 packages/app/      @Hona @Brendonovich
 packages/desktop/  @Hona @Brendonovich
+
+# CI, release, and publish scripts
+/.github/ @anomalyco/ci-owners
+/script/ @anomalyco/ci-owners
+/packages/*/script/ @anomalyco/ci-owners
+/github/ @anomalyco/ci-owners
