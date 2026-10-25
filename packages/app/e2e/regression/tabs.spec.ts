@@ -1211,6 +1211,40 @@ test("⌘W closes the session tab again once the window loses focus after the si
   await expect(sessions.alphaTab).toHaveCount(0)
 })
 
+test("⌘W in the side panel closes its New tab, then the panel, and only then the session tab", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const alpha = { id: "ses_side_new_alpha", title: "Side new alpha" }
+  const beta = { id: "ses_side_new_beta", title: "Side new beta" }
+  await openSession(page, { name: "SideCloseNewTab", sessions: [alpha, beta] })
+
+  const panel = page.locator("#review-panel")
+  const toggle = page.getByRole("button", { name: "Toggle review", exact: true })
+  const newTab = panel.getByRole("tab", { name: "New tab", exact: true })
+  const composer = page.getByRole("textbox", { name: "Prompt", exact: true })
+  const alphaTab = page.locator(`[data-titlebar-tab-slot]:has(a[href="${sessionHref(alpha.id)}"])`)
+
+  await composer.click()
+  await page.keyboard.press("ControlOrMeta+Shift+R")
+  await expect(newTab).toHaveAttribute("aria-selected", "true")
+  await expect.poll(() => panel.evaluate((element) => element.contains(document.activeElement))).toBe(true)
+
+  await page.keyboard.press("ControlOrMeta+w")
+  await expect(newTab).toHaveCount(0)
+  await expect(toggle).toHaveAttribute("aria-expanded", "true")
+
+  // Nothing is left to close in the panel, so ⌘W closes the panel rather than the session.
+  await page.keyboard.press("ControlOrMeta+w")
+  await expect(toggle).toHaveAttribute("aria-expanded", "false")
+  await expect(alphaTab).toHaveCount(1)
+  await expectPath(page, sessionHref(alpha.id))
+
+  // With no panel open, ⌘W from the composer closes the session tab.
+  await composer.click()
+  await page.keyboard.press("ControlOrMeta+w")
+  await expectPath(page, sessionHref(beta.id))
+  await expect(alphaTab).toHaveCount(0)
+})
+
 // Windows has no native menu bar: the titlebar menu owns Paste, which only the desktop edit action can perform.
 test("the Windows titlebar menu pastes through the desktop edit action", async ({ page }) => {
   await mockWorkspace(page, { name: "WindowsMenu", sessions: [] })
