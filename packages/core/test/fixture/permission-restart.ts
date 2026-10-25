@@ -28,7 +28,7 @@ import { offlineModels } from "./models"
 const mode = process.argv[2]
 const path = process.argv[3]
 const kind = process.argv[4]
-if ((mode !== "decline" && mode !== "recover") || !path || (kind !== "root" && kind !== "child"))
+if (!["decline", "shutdown", "recover", "resume"].includes(mode) || !path || (kind !== "root" && kind !== "child"))
   throw new Error("Expected mode, fixture database path, and session kind")
 const parentID = Session.ID.make("ses_decline_parent")
 const sessionID = Session.ID.make("ses_declined")
@@ -78,7 +78,7 @@ const result = await Effect.runPromise(
     const restart = yield* SessionRestart.Service
     const execution = yield* SessionExecution.Service
     const terminal = yield* Deferred.make<string>()
-    if (mode === "decline") {
+    if (mode === "decline" || mode === "shutdown") {
       const directory = AbsolutePath.make(`${path}.project`)
       yield* Effect.promise(() =>
         Bun.write(
@@ -156,6 +156,8 @@ const result = await Effect.runPromise(
         yield* subagents.background(recovery)
       }
       yield* Deferred.await(asked)
+      // Graceful shutdown: release the app scope while the permission is still pending.
+      if (mode === "shutdown") return { requests: (yield* model.requests()).length }
       yield* permissions.reply({ requestID, reply: "reject" })
       if (kind === "child") {
         const outcome = (yield* jobs.wait({ id: sessionID })).info
@@ -166,8 +168,10 @@ const result = await Effect.runPromise(
       }
       yield* execution.awaitIdle(sessionID)
     }
-    if (mode === "recover") {
+    if (mode === "recover" || mode === "resume") {
       yield* restart.resumeSuspendedSessions
+      // Recovery forks resumed drains; wait for the model before awaiting idle.
+      if (mode === "resume") yield* model.wait(1)
       yield* execution.awaitIdle(sessionID)
       if (kind === "child") yield* execution.awaitIdle(parentID)
       yield* restart.resumeSuspendedSessions

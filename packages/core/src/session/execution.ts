@@ -1,6 +1,6 @@
 export * as SessionExecution from "./execution.js"
 
-import { Cause, Context, Effect, Exit, Layer, Scope } from "effect"
+import { Cause, Context, Effect, Exit, Layer } from "effect"
 import { Bus } from "../bus.js"
 import { Database } from "../database/database.js"
 import { Job } from "../job.js"
@@ -46,7 +46,11 @@ type InterruptReason = "user" | "shutdown"
 
 export function terminal(exit: Exit.Exit<void, SessionRunner.RunError>, reason?: InterruptReason) {
   if (Exit.isSuccess(exit)) return { type: "succeeded" as const }
-  if (Cause.hasInterrupts(exit.cause)) return { type: "interrupted" as const, reason: reason ?? "user" }
+  if (Cause.hasInterrupts(exit.cause)) {
+    // Unattributed interruption is owner teardown, which may surface first as a closed Location.
+    const declined = Context.getOrUndefined(Cause.annotations(exit.cause), SessionRunner.Declined)
+    return { type: "interrupted" as const, reason: reason ?? (declined ? "user" : "shutdown") }
+  }
   return { type: "failed" as const, error: toSessionError(Cause.squash(exit.cause)) }
 }
 
@@ -58,7 +62,6 @@ export const layer = Layer.effect(
     const instances = yield* Instance.Service
     const bus = yield* Bus.Service
     const jobs = yield* Job.Service
-    const scope = yield* Scope.Scope
     const db = (yield* Database.Service).db
     const reportLifecycle = <A>(sessionID: SessionSchema.ID, effect: Effect.Effect<A>) =>
       effect.pipe(
@@ -118,9 +121,7 @@ export const layer = Layer.effect(
         reportLifecycle(
           sessionID,
           Effect.gen(function* () {
-            // Permission declines interrupt the runner while its owner is still alive.
-            // Only owner-scope teardown establishes shutdown; explicit user stops win.
-            const outcome = terminal(exit, reason ?? (scope.state._tag === "Closed" ? "shutdown" : "user"))
+            const outcome = terminal(exit, reason)
             if (outcome.type === "succeeded") {
               yield* bus.publish(SessionEvent.Execution.Succeeded, { sessionID }, releaseOnCommit(sessionID))
               return

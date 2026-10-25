@@ -46,11 +46,12 @@ describe("SessionExecution lifecycle", () => {
     ).toEqual({ type: "failed", error: { type: "provider.transport", message: "Disconnected" } })
   })
 
-  test("defaults a runner interruption to a deliberate stop and preserves explicit shutdown", () => {
+  test("defaults owner interruption to shutdown and settles a decline as a deliberate stop", () => {
     const interrupted = Effect.runSyncExit(Effect.interrupt)
-    expect(SessionExecution.terminal(interrupted)).toEqual({ type: "interrupted", reason: "user" })
-    expect(SessionExecution.terminal(interrupted, "shutdown")).toEqual({ type: "interrupted", reason: "shutdown" })
+    expect(SessionExecution.terminal(interrupted)).toEqual({ type: "interrupted", reason: "shutdown" })
     expect(SessionExecution.terminal(interrupted, "user")).toEqual({ type: "interrupted", reason: "user" })
+    const declined = Effect.runSyncExit(SessionRunner.declined.pipe(Effect.ensuring(Effect.void)))
+    expect(SessionExecution.terminal(declined)).toEqual({ type: "interrupted", reason: "user" })
   })
 
   it.effect("the sweep only lists claimed top-level Sessions", () =>
