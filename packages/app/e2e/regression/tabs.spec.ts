@@ -646,6 +646,25 @@ test("a narrow window keeps the desktop layout: the sidebar floats when called a
   await page.locator('[data-slot="session-chat-panel"]').click({ position: { x: 400, y: 300 } })
   await expect(sidebar).not.toHaveAttribute("data-peek")
 
+  // The toggle closes it again, and moving across the toggle's own parts afterwards doesn't bring it back.
+  await toggle.click()
+  await expect(sidebar).toHaveAttribute("data-peek", "")
+  await toggle.click()
+  const box = (await toggle.boundingBox())!
+  await page.mouse.move(box.x + 2, box.y + 2)
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await expect(sidebar).not.toHaveAttribute("data-peek")
+
+  // Called without the pointer, closing it hands focus back to the toggle rather than leaving it in the hidden sidebar.
+  await page.mouse.move(400, 300)
+  await toggle.focus()
+  await page.keyboard.press("Enter")
+  await expect(sidebar).toHaveAttribute("data-peek", "")
+  await tabB.focus()
+  await page.keyboard.press("Escape")
+  await expect(sidebar).not.toHaveAttribute("data-peek")
+  await expect(toggle).toBeFocused()
+
   // The side panel floats over the chat, which keeps the row's width, and Escape closes it.
   const chat = page.locator('[data-slot="session-chat-panel"]')
   const review = page.locator("#review-panel")
@@ -659,6 +678,50 @@ test("a narrow window keeps the desktop layout: the sidebar floats when called a
   await expect(sidebar).toHaveAttribute("data-state", "open")
   await expect(sidebar).toHaveCSS("width", "260px")
 })
+
+for (const width of [800, 1000]) {
+  test(`at ${width}px the side panel docks as the sidebar gives way, and stays docked as it closes`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 720 })
+    await openSession(page, {
+      name: "Docked",
+      sessions: [a, b],
+      seed: { settings: { appearance: { tabLayout: "vertical", sidebarOpen: true } } },
+    })
+
+    const sidebar = page.locator('[data-slot="vertical-tabs-sidebar"]')
+    const chat = page.locator('[data-slot="session-chat-panel"]')
+    const review = page.locator("#review-panel")
+    const toggle = page.getByRole("button", { name: "Toggle review", exact: true })
+    await expect(sidebar).toHaveAttribute("data-state", "open")
+
+    // Records whether the side panel ever floats as a sheet, on any frame, through an open and a close.
+    await page.evaluate(() => {
+      const sample = () => {
+        if (document.querySelector('[data-slot="session-side-panel-presence"].z-20'))
+          document.documentElement.dataset.sheetSeen = ""
+
+        requestAnimationFrame(sample)
+      }
+
+      requestAnimationFrame(sample)
+    })
+
+    await toggle.click()
+    await expect(review).toHaveAttribute("aria-hidden", "false")
+    await expect(sidebar).toHaveAttribute("data-state", "closed")
+    await expect
+      .poll(() => chat.evaluate((element) => element.parentElement!.clientWidth - element.clientWidth))
+      .toBeGreaterThan(0)
+
+    await toggle.click()
+    await expect(review).toHaveAttribute("aria-hidden", "true")
+    await expect(sidebar).toHaveAttribute("data-state", "open")
+    await expect(page.locator('[data-slot="session-side-panel-presence"]')).toHaveClass(/\bw-0\b/)
+    await expect(page.locator("html")).not.toHaveAttribute("data-sheet-seen")
+  })
+}
 
 test("vertical tab gaps hover and select the nearest row", async ({ page }) => {
   await mockWorkspace(page, {

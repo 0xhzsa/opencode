@@ -166,9 +166,17 @@ export function createSidebarPeek(input: {
     const aside = input.aside()
 
     if (aside?.contains(document.activeElement)) {
-      if (focus && toggle?.isConnected) toggle.focus({ preventScroll: true })
+      // Called by a shortcut, no toggle was hovered, so focus returns to the toggle that's showing.
+      const button = toggle?.isConnected
+        ? toggle
+        : [...document.querySelectorAll<HTMLElement>(toggles)].find(
+            (element) => !aside.contains(element) && element.getClientRects().length > 0,
+          )
 
-      if (!focus && document.activeElement instanceof HTMLElement) document.activeElement.blur()
+      if (focus && button) button.focus({ preventScroll: true })
+
+      if (document.activeElement instanceof HTMLElement && aside.contains(document.activeElement))
+        document.activeElement.blur()
     }
 
     run(0)
@@ -308,6 +316,9 @@ export function createSidebarPeek(input: {
         const button = event.target.closest<HTMLElement>(toggles)
 
         if (!button || input.aside()?.contains(button)) return
+
+        // Moving between the toggle's own parts isn't arriving at it, so a click that closes the peek stays closed.
+        if (event.relatedTarget instanceof Node && button.contains(event.relatedTarget)) return
 
         if (toggle !== button) corridor = undefined
         toggle = button

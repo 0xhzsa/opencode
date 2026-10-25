@@ -205,8 +205,12 @@ function SessionScreenContent(props: {
     distance: screen.side.width,
   })
 
-  // Floating through a close's flight too, so the sheet slides back out rather than dropping into the row.
-  const sideSheet = createMemo(() => screen.side.narrow() && (sideVisible() || sideMotion.present()))
+  // Decided while open and kept through a close's flight, so the sheet slides back out rather than dropping into the
+  // row, and a docked panel doesn't turn into a sheet as the sidebar docks again on its way out.
+  const sideSheet = createMemo<boolean>(
+    (previous) => (sideVisible() ? screen.side.sheet() : previous && sideMotion.present()),
+    false,
+  )
 
   // Escape closes the side panel's sheet, unless a dialog, a terminal, or a field beside the sheet, like the composer,
   // wants the key.

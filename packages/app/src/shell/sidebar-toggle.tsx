@@ -9,7 +9,7 @@ import { useLanguage } from "@/runtime/i18n/language"
 import { usePlatform } from "@/runtime/platform/platform"
 import { useSettings } from "@/settings/model"
 import { sidebarUnread } from "@/shell/sidebar-peek"
-import { sidebarAutoHidden } from "@/shell/room"
+import { room } from "@/shell/room"
 
 // The toggle's dot for sidebar sessions with unread activity, shown while the sidebar is closed.
 function UnreadBadge(props: { show: boolean; ring: "base" | "deep" }) {
@@ -64,7 +64,7 @@ export function SidebarToggle(props: { handoff?: "out" | "in" }) {
   const language = useLanguage()
   const settings = useSettings()
   const keybind = () => command.keybindParts("sidebar.toggle")
-  const docked = () => settings.appearance.sidebarOpen() && !sidebarAutoHidden()
+  const docked = () => settings.appearance.sidebarOpen() && !room.sidebarAutoHidden
   const side = props.handoff
   let full: SVGSVGElement | undefined
   let outline: HTMLSpanElement | undefined
@@ -149,7 +149,7 @@ function useCollapsedSlot() {
 
   return {
     visible: () => desktop() && !windows() && settings.appearance.tabLayout() !== "horizontal",
-    open: () => settings.appearance.sidebarOpen() && !sidebarAutoHidden(),
+    open: () => settings.appearance.sidebarOpen() && !room.sidebarAutoHidden,
     // Lays the toggle out as if the traffic lights were the header's first control.
     width: () =>
       mac()

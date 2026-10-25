@@ -3,7 +3,7 @@ import { createStore } from "solid-js/store"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { createSizing } from "./helpers"
 import type { SessionModel } from "./model"
-import { contentRoom, roomHysteresis, setContentMinimum } from "@/shell/room"
+import { room, roomHysteresis, setRoom } from "@/shell/room"
 import {
   clampSessionPanelWidth,
   SESSION_PANEL_WIDTH_FIT,
@@ -35,17 +35,17 @@ export function createSessionScreenLayout(session: SessionModel, input: { wide: 
   })
 
   // Asks the open sidebar to give way before the side panel has to float.
-  createEffect(() => setContentMinimum(tabsOpen() ? SIDE_PANE_DOCK_ROW : SESSION_PANEL_WIDTH_FIT))
-  onCleanup(() => setContentMinimum(SESSION_PANEL_WIDTH_FIT))
+  createEffect(() => setRoom("contentMinimum", tabsOpen() ? SIDE_PANE_DOCK_ROW : SESSION_PANEL_WIDTH_FIT))
+  onCleanup(() => setRoom("contentMinimum", SESSION_PANEL_WIDTH_FIT))
 
-  // Read from the room the shell lands at rather than the row, which moves while the left sidebar does, so a sidebar
-  // giving way to the side panel doesn't float the panel on its way.
+  // Read from the shell's whole row rather than this one, which moves while the left sidebar does and shrinks when it
+  // docks, so the sidebar giving way to the side panel, or docking again as it closes, doesn't float the panel.
   const narrow = createMemo<boolean>((previous) => {
-    const room = contentRoom() ?? rowSize.width
+    const width = room.inner ?? rowSize.width
 
-    if (room === undefined) return false
+    if (width === undefined) return false
 
-    return room < SIDE_PANE_DOCK_ROW + (previous ? roomHysteresis : 0)
+    return width < SIDE_PANE_DOCK_ROW + (previous ? roomHysteresis : 0)
   }, false)
 
   const sheet = createMemo(() => tabsOpen() && narrow())
@@ -110,9 +110,7 @@ export function createSessionScreenLayout(session: SessionModel, input: { wide: 
       contentWidth: sideContentWidth,
       width: sideWidth,
       open: tabsOpen,
-      /** The row is too narrow to dock the side panel beside the chat, so it floats over the chat as a sheet. */
-      narrow,
-      /** The open side panel floats over the chat. */
+      /** The open side panel floats over the chat, as the row is too narrow to dock it beside the chat. */
       sheet,
       tabs: { open: tabsOpen },
     },

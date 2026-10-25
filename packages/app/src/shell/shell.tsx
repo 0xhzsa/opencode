@@ -27,7 +27,7 @@ import {
 import { createPanelMotion, guardClosingFocus, panelOpacity } from "@/shell/panel-motion"
 import { createSidebarPeek } from "@/shell/sidebar-peek"
 import { windowDragEnabled } from "@/session/header/drag-area"
-import { contentMinimum, roomHysteresis, setContentRoom, setSidebarAutoHidden } from "@/shell/room"
+import { room, roomHysteresis, setRoom } from "@/shell/room"
 
 // How far Home steps along a peek's header to clear the collapsed toggle: to the toggle's end, from the sidebar's 18px
 // start padding.
@@ -70,21 +70,17 @@ export default function Layout(props: ParentProps) {
 
   // Too narrow to dock the sidebar beside what the routed screen needs, it hides and floats when called instead. The
   // saved preference stays as it is, so widening the window docks it again.
-  const hidesAt = (room: number | undefined, hidden: boolean) =>
+  const hidesAt = (width: number | undefined, hidden: boolean) =>
     verticalTabs() &&
-    room !== undefined &&
-    room - 16 - state.tabsWidth < contentMinimum() + (hidden ? roomHysteresis : 0)
+    width !== undefined &&
+    width - 16 - state.tabsWidth < room.contentMinimum + (hidden ? roomHysteresis : 0)
 
   const autoHidden = createMemo<boolean>((hidden) => hidesAt(state.room, hidden), false)
 
   const docked = () => preferences.appearance.sidebarOpen() && !autoHidden()
 
-  createEffect(() => setSidebarAutoHidden(autoHidden()))
-  createEffect(() => {
-    const room = inner()
-
-    setContentRoom(room === undefined ? undefined : room - (verticalTabs() && docked() ? state.tabsWidth : 0))
-  })
+  createEffect(() => setRoom("sidebarAutoHidden", autoHidden()))
+  createEffect(() => setRoom("inner", inner()))
 
   let row: HTMLDivElement | undefined
   createResizeObserver(
@@ -319,7 +315,7 @@ export default function Layout(props: ParentProps) {
                 size={state.tabsWidth}
                 min={136}
                 // Stops short of the width that would hide it.
-                max={Math.max(136, Math.min(640, (inner() ?? Infinity) - contentMinimum()))}
+                max={Math.max(136, Math.min(640, (inner() ?? Infinity) - room.contentMinimum))}
                 onResize={(width) => setState("tabsWidth", width)}
               />
             </Show>
