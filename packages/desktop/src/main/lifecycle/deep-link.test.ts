@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { formatDeepLink, parseDeepLink, tabsHoldSession } from "./deep-link"
+import { formatDeepLink, parseDeepLink, pickSessionWindow, tabsHoldSession } from "./deep-link"
 
 const session = "ses_efcd8972fffeT5zZbj9YtIl3LU"
 
@@ -12,9 +12,7 @@ describe("parseDeepLink", () => {
       server: "https://devbox.example.com:4096",
     })
     expect(
-      parseDeepLink(
-        `opencode://session/${session}?server=${encodeURIComponent("https://devbox.example.com:4096/")}`,
-      ),
+      parseDeepLink(`opencode://session/${session}?server=${encodeURIComponent("https://devbox.example.com:4096/")}`),
     ).toEqual({ type: "session", sessionID: session, server: "https://devbox.example.com:4096" })
     expect(parseDeepLink(`opencode://session/${session}?server=sidecar`)).toEqual({
       type: "session",
@@ -107,5 +105,44 @@ describe("tabsHoldSession", () => {
     expect(tabsHoldSession(null, session)).toBe(false)
     expect(tabsHoldSession("not json", session)).toBe(false)
     expect(tabsHoldSession('{"sessionId":"x"}', session)).toBe(false)
+  })
+})
+
+describe("pickSessionWindow", () => {
+  const pick = (input: { open: string[]; persisted?: string[]; focused?: string; holder?: string }) => {
+    const calls: string[] = []
+
+    const win = pickSessionWindow({
+      open: input.open,
+      restore: () => {
+        calls.push("restore")
+
+        return input.persisted ?? []
+      },
+      create: () => {
+        calls.push("create")
+
+        return "new"
+      },
+      focused: input.focused ?? null,
+      holds: (win) => win === input.holder,
+    })
+
+    return { win, calls }
+  }
+
+  test("prefers the window holding the session, then the focused one, then any", () => {
+    expect(pick({ open: ["a", "b"], focused: "a", holder: "b" })).toEqual({ win: "b", calls: [] })
+    expect(pick({ open: ["a", "b"], focused: "b" })).toEqual({ win: "b", calls: [] })
+    expect(pick({ open: ["a", "b"], focused: "popup" })).toEqual({ win: "a", calls: [] })
+  })
+
+  test("restores closed windows before opening a new one", () => {
+    expect(pick({ open: [], persisted: ["a", "b"], focused: "closed", holder: "b" })).toEqual({
+      win: "b",
+      calls: ["restore"],
+    })
+    expect(pick({ open: [], persisted: ["a"] })).toEqual({ win: "a", calls: ["restore"] })
+    expect(pick({ open: [], persisted: [] })).toEqual({ win: "new", calls: ["restore", "create"] })
   })
 })

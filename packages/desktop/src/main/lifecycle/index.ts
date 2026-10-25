@@ -22,7 +22,7 @@ import {
 import { marks } from "./marks"
 import { initializeFirstLaunchOnboarding } from "./onboarding"
 import { Shutdown } from "./shutdown"
-import { formatDeepLink, parseDeepLink, tabsHoldSession } from "./deep-link"
+import { formatDeepLink, parseDeepLink, pickSessionWindow, tabsHoldSession } from "./deep-link"
 import { linkArguments, receiveLinks } from "./link-intake"
 import { createLinkQueue } from "./link-queue"
 
@@ -66,19 +66,19 @@ const runtime = Layer.effect(
       win.focus()
     }
 
-    // A session link goes to the window already showing that session, then the window the user was
-    // last in, then any window; with every window closed (macOS) it opens a new one.
-    const sessionWindow = (sessionID: string) => {
-      const holder = getMainWindows().find((win) => {
-        const id = getWindowID(win)
+    // Restored windows exist before `activate` runs, so it finds windows and doesn't restore them again.
+    const sessionWindow = (sessionID: string) =>
+      pickSessionWindow({
+        open: getMainWindows(),
+        restore: restoreWindows,
+        create: createWindow,
+        focused: getLastFocusedWindow(),
+        holds: (win) => {
+          const id = getWindowID(win)
 
-        return !!id && tabsHoldSession(storage.state.get(windowDataFile(id), "tabs"), sessionID)
+          return !!id && tabsHoldSession(storage.state.get(windowDataFile(id), "tabs"), sessionID)
+        },
       })
-
-      const focused = getLastFocusedWindow()
-
-      return holder ?? (focused && getWindowID(focused) ? focused : getMainWindows()[0]) ?? createWindow()
-    }
 
     const openLink = (url: string) => {
       const link = parseDeepLink(url)

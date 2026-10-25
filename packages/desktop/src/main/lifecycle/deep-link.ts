@@ -46,6 +46,24 @@ export function tabsHoldSession(value: string | null, sessionID: string) {
   })
 }
 
+/**
+ * The window a session link opens in: the one already holding the session, then the window the user
+ * was last in, then any. With every window closed (macOS) the persisted windows are restored first, so
+ * the link can land in the one that held the session and restoration isn't lost to a blank window.
+ */
+export function pickSessionWindow<W>(input: {
+  open: W[]
+  restore: () => W[]
+  create: () => W
+  focused: W | null
+  holds: (win: W) => boolean
+}) {
+  const open = input.open.length ? input.open : input.restore()
+  const focused = input.focused && open.includes(input.focused) ? input.focused : undefined
+
+  return open.find(input.holds) ?? focused ?? open[0] ?? input.create()
+}
+
 function sessionLink(url: URL): DeepLink | undefined {
   const sessionID = url.pathname.slice(1)
 
