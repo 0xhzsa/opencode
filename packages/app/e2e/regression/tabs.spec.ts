@@ -1227,14 +1227,17 @@ test("⌘W in the side panel closes its New tab, then the panel, and only then t
   await page.keyboard.press("ControlOrMeta+Shift+R")
   await expect(newTab).toHaveAttribute("aria-selected", "true")
   await expect.poll(() => panel.evaluate((element) => element.contains(document.activeElement))).toBe(true)
+  // A launcher row in the New tab view holds focus as ⌘W removes it.
+  await panel.getByRole("button", { name: /^Open file/ }).focus()
 
   await page.keyboard.press("ControlOrMeta+w")
   await expect(newTab).toHaveCount(0)
   await expect(toggle).toHaveAttribute("aria-expanded", "true")
 
-  // Nothing is left to close in the panel, so ⌘W closes the panel rather than the session.
+  // Nothing is left to close in the panel, so ⌘W closes the panel rather than the session, and focus goes back.
   await page.keyboard.press("ControlOrMeta+w")
   await expect(toggle).toHaveAttribute("aria-expanded", "false")
+  await expect(composer).toBeFocused()
   await expect(alphaTab).toHaveCount(1)
   await expectPath(page, sessionHref(alpha.id))
 
