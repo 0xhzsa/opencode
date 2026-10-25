@@ -109,7 +109,7 @@ test("retries large images in memory and restores interrupted questions after re
   })
 
   const panel = page.locator('[data-slot="session-btw-panel"]')
-  await expect(page.getByRole("button", { name: "Vision", exact: true })).toBeVisible()
+  await expect(page.locator('[data-action="composer-model"]')).toContainText("Vision")
   await page.locator('input[type="file"]').setInputFiles({ name: "diagram.png", mimeType: "image/png", buffer })
   await expect(page.getByRole("img", { name: "diagram.png", exact: true })).toBeVisible()
   await editor.fill("/btw slow question")
