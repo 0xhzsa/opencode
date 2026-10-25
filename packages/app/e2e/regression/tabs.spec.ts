@@ -699,7 +699,7 @@ for (const width of [800, 1000]) {
     // Records whether the side panel ever floats as a sheet, on any frame, through an open and a close.
     await page.evaluate(() => {
       const sample = () => {
-        if (document.querySelector('[data-slot="session-side-panel-presence"].z-20'))
+        if (document.querySelector('[data-slot="session-side-panel-presence"][data-sheet]'))
           document.documentElement.dataset.sheetSeen = ""
 
         requestAnimationFrame(sample)

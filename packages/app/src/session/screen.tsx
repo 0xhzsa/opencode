@@ -534,6 +534,7 @@ function SessionScreenContent(props: {
                 paintSheet()
               }}
               data-slot="session-side-panel-presence"
+              data-sheet={sideMotion.present() && sideSheet() ? "" : undefined}
               class={`min-w-0 h-full overflow-visible ${
                 !sideMotion.present()
                   ? // Out of the row, so a closed panel takes no space or gap.
