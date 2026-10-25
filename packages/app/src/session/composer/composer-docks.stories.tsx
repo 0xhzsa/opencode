@@ -130,7 +130,8 @@ function ComposerDocksPreview(props: DockArgs) {
         retry() {},
         submit: async () => void setState("websearch", false),
       } satisfies WebSearchRequestModel,
-      permissionRequest: () => (state.permission ? activePermissionRequest : undefined),
+      elicitationRequest: () => undefined,
+    permissionRequest: () => (state.permission ? activePermissionRequest : undefined),
       permissionResponding: () => false,
       decide: () => {
         deciding = true

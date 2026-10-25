@@ -1,6 +1,6 @@
 {
   "name": "@opencode/app",
-  "version": "2.1.3",
+  "version": "2.1.4",
   "description": "",
   "type": "module",
   "exports": {
@@ -50,6 +50,7 @@
     "ghostty-web": "github:anomalyco/ghostty-web#e91e38a9ceb13c566ddfa15185a9393849f712a9",
     "happy-dom": "20.11.1",
     "knobs": "npm:@kitlangton/knobs@0.4.0-next.23",
+    "tailwindcss": "4.3.3",
     "tw-animate-css": "1.4.0",
     "vite": "8.2.2",
     "vite-plugin-pwa": "1.3.0",
@@ -59,7 +60,6 @@
     "@corvu/drawer": "catalog:",
     "@dnd-kit/abstract": "0.5.0",
     "@dnd-kit/dom": "0.5.0",
-    "@dnd-kit/helpers": "0.5.0",
     "@dnd-kit/solid": "0.5.0",
     "@ibm/plex": "6.4.1",
     "@kobalte/core": "catalog:",
@@ -74,7 +74,6 @@
     "@sentry/solid": "catalog:",
     "@solid-primitives/event-bus": "1.1.2",
     "@solid-primitives/event-listener": "catalog:",
-    "@solid-primitives/i18n": "2.2.1",
     "@solid-primitives/keyed": "1.5.3",
     "@solid-primitives/media": "catalog:",
     "@solid-primitives/resize-observer": "catalog:",
@@ -84,13 +83,9 @@
     "@solidjs/router": "catalog:",
     "@tanstack/solid-query": "5.91.4",
     "@tanstack/solid-virtual": "catalog:",
-    "core-js": "3.50.0",
     "effect": "catalog:",
     "fuzzysort": "catalog:",
     "qr-scanner": "1.4.2",
-    "remeda": "catalog:",
-    "solid-js": "catalog:",
-    "solid-presence": "0.2.0",
-    "tailwindcss": "4.3.3"
+    "solid-js": "catalog:"
   }
 }

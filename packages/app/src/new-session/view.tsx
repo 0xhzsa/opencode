@@ -14,7 +14,7 @@ import {
   ProjectAvatar,
 } from "@opencode/ui/project-avatar"
 import { Schema } from "effect"
-import createPresence from "solid-presence"
+import { createPresence } from "@/runtime/presence"
 import { Composer } from "@/composer/composer"
 import { ComposerDropzone } from "@/composer/dropzone"
 import type { ComposerModel } from "@/composer/model"
