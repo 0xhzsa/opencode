@@ -323,6 +323,16 @@ export function createTimelineMotion(input: {
         },
       }
     },
+    /**
+     * The rows moved `px` on screen with no content change to draw, as when the followed end rides the composer's edge.
+     * Whatever follows a row moves with it at once.
+     */
+    scroll(px: number) {
+      followers.forEach((follower) => {
+        follower.base += px
+        follower.element.style.translate = follower.base ? `0 ${follower.base}px` : ""
+      })
+    },
     /** Exit owns opacity while the row keeps its current motion. */
     leave(key: string) {
       const row = rows.get(key)

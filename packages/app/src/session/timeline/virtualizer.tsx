@@ -623,6 +623,12 @@ export function createTimelineVirtualizer(input: Input) {
     if (!previous) return settleArrivals()
     const layer = following() ? drawnTop - previous.top : 0
 
+    // A commit that moves the followed end a whole screen, like a finished reply arriving in one update, leaves
+    // nothing on screen to carry: the rows rest at once and what arrived only fades in.
+    if (!disclosing && Math.abs(layer) >= layoutState.viewport - bottomInset()) {
+      motion.cancel()
+      return fadeArrivals()
+    }
     if (!canAnimate()) {
       settleArrivals()
       return motion.cancel()
@@ -1186,8 +1192,13 @@ export function createTimelineVirtualizer(input: Input) {
         reportRect?.(rootRect ?? { width: root.offsetWidth, height: root.offsetHeight })
 
         if (!input.pinned()) return
-        // The composer region moved its edge: the followed end rides it in the same frame.
-        queueMicrotask(pinEnd)
+        // The composer region moved its edge: the followed end rides it in the same frame, and so does a flight
+        // landing on a row.
+        queueMicrotask(() => {
+          const from = drawnTop
+          pinEnd()
+          motion.scroll(from - drawnTop)
+        })
       },
       { defer: true },
     ),

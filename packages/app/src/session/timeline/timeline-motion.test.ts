@@ -217,6 +217,22 @@ test("carries a follower with its row through later jumps", () => {
   expect(carrier.style.translate).toBe("")
 })
 
+test("moves a follower with its row when the followed end rides the composer's edge", () => {
+  const { motion } = setup()
+  motion.kick(40, [])
+  const carrier = document.createElement("div")
+  const followed = motion.follow("a", carrier)
+  // The queue closing under a landing steer lowers every row with no content change to draw.
+  motion.scroll(30)
+  motion.scroll(14)
+  expect(carrier.style.translate).toBe("0 44px")
+  // A later jump keeps what the rows rode, and the spring still draws only the jump.
+  motion.kick(20, [])
+  expect(carrier.style.translate).toBe("0 24px")
+  followed.stop()
+  expect(carrier.style.translate).toBe("")
+})
+
 test("lands everything at once", () => {
   const { motion, reach, row } = setup()
   const { wrapper, inner } = row()

@@ -1053,6 +1053,58 @@ test("a queued prompt flies from its row onto its bubble as it leaves for the ti
   await expect(page.locator("[data-send-flight]")).toHaveCount(0)
 })
 
+test("a steered queue row's copy lands where its bubble rests while the closing queue lowers the transcript", async ({
+  page,
+}) => {
+  const model = { id: "queue-model", providerID: "opencode" }
+  const paragraph = "The harbor wakes before the town does, and the lanterns along the mole are still turning. "
+  const mock = createQueueMock(
+    ["steer me into place"],
+    [
+      { id: "msg_queue_delivered", type: "user", text: "First prompt", time: { created: 1 } },
+      {
+        id: "msg_queue_long_answer",
+        type: "assistant",
+        agent: "build",
+        model,
+        content: [{ type: "text", text: Array.from({ length: 12 }, () => paragraph.repeat(3)).join("\n\n") }],
+        finish: "stop",
+        time: { created: 2, completed: 3 },
+      },
+    ],
+  )
+  // Quarter speed, so even a slow runner draws many frames of the flight.
+  await seed(page, { storage: { "opencode.motion.v2": { speed: 0.25 } } })
+  const view = await openQueue(page, mock)
+  await expect(view.rows).toHaveCount(1)
+  await page.waitForTimeout(1000)
+
+  // Every frame, where the flight copy is painted.
+  await page.evaluate(() => {
+    const tops: number[] = []
+    Object.assign(window, { flightTops: tops })
+    const tick = () => {
+      const host = document.querySelector("[data-flight]")
+      if (host) tops.push(host.getBoundingClientRect().top)
+      requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+
+  await view.rows.nth(0).getByRole("button", { name: "Steer", exact: true }).click()
+  await expect(view.rows).toHaveCount(0)
+  const bubble = userRow(page, mock.rows[0]!.id).locator('[data-slot="user-message-text"]')
+  await expect(bubble).toContainText("steer me into place")
+  await expect(page.locator("[data-flight]")).toHaveCount(0)
+  await page.waitForTimeout(1000)
+  const tops = await page.evaluate(() => ("flightTops" in window ? (window.flightTops as number[]) : []))
+  const rest = (await bubble.boundingBox())!.y
+
+  expect(tops.length).toBeGreaterThan(2)
+  // The queue's row leaves and the transcript's end rides the composer down; the copy rides with it onto the bubble.
+  expect(Math.abs(tops.at(-1)! - rest)).toBeLessThanOrEqual(2)
+})
+
 test("a steer's copy lands on its bubble's corners, and Working glides below the steers they deliver", async ({
   page,
 }) => {

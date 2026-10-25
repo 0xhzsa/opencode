@@ -1028,6 +1028,61 @@ test.describe("Working", () => {
   })
 })
 
+test("fades in a whole long reply that arrives in one update instead of growing it", async ({ page }) => {
+  const timeline = await setupTimeline(page, {
+    messages: [userMessage(), assistantMessage([], { completed: false })],
+  })
+  await expect(page.locator('[data-component="session-working"]')).toBeVisible()
+  await page.waitForTimeout(500)
+  await page.evaluate(() => {
+    const played: { moves: boolean; duration: number }[] = []
+    Object.assign(window, { played })
+    const animate = Element.prototype.animate
+    Element.prototype.animate = function (frames, options) {
+      const list = Array.isArray(frames) ? frames : []
+      const timeline = this.closest("[data-timeline-key]") || this.querySelector(":scope > [data-timeline-key]")
+      if (timeline)
+        played.push({
+          moves: list.some((frame) => "transform" in frame || "clipPath" in frame),
+          duration: typeof options === "number" ? options : Number(options?.duration ?? 0),
+        })
+      return animate.call(this, frames, options)
+    }
+  })
+
+  await timeline.send({
+    id: "evt_instant_text_started",
+    type: "session.text.started",
+    created: 1700000002000,
+    location: { directory },
+    durable: { aggregateID: sessionID, seq: 0, version: 1 },
+    data: { sessionID, assistantMessageID: assistantID, ordinal: 0 },
+  })
+  const paragraph = "The harbor wakes before the town does, and the lanterns along the mole are still turning. "
+  await timeline.send({
+    id: "evt_instant_text_delta",
+    type: "session.text.delta",
+    created: 1700000002001,
+    location: { directory },
+    data: {
+      sessionID,
+      assistantMessageID: assistantID,
+      ordinal: 0,
+      delta: Array.from({ length: 16 }, () => paragraph.repeat(3)).join("\n\n"),
+    },
+  })
+  await expect(page.locator(`[data-timeline-part-id="${assistantID}:text:0"]`)).toContainText("The harbor wakes")
+  await page.waitForTimeout(500)
+  const played = await page.evaluate(() =>
+    "played" in window ? (window.played as { moves: boolean; duration: number }[]) : [],
+  )
+
+  // Nothing that was on screen survives a move of more than a screen, so nothing moves: the reply only fades in.
+  expect(played.filter((item) => item.moves)).toEqual([])
+  expect(played.length).toBeGreaterThan(0)
+  expect(Math.max(...played.map((item) => item.duration))).toBeLessThanOrEqual(200)
+})
+
 test.describe("background shortcut", () => {
   test("offers a standalone running subagent to the background with Ctrl+B", async ({ page }) => {
     await setupTimeline(page, {
