@@ -42,9 +42,47 @@ story("Escape cancels a drag", async ({ mount, page }) => {
   await page.mouse.move(box.x + box.width / 2, box.y + 70, { steps: 8 })
   await page.keyboard.press("Escape")
   await page.mouse.move(box.x + box.width / 2, box.y + 140, { steps: 8 })
+
+  const clicks = await page.evaluateHandle(() => {
+    const seen = { count: 0 }
+    document.addEventListener("click", () => seen.count++)
+
+    return seen
+  })
+
   await page.mouse.up()
   await expect(texts).toHaveText(order)
   expect(await page.evaluate(() => getSelection()?.toString())).toBe("")
+  // The canceled drag still holds the pointer, so its release must not click whatever it ends over.
+  expect(await clicks.evaluate((seen) => seen.count)).toBe(0)
+})
+
+story("a drag released before the next frame still reorders", async ({ mount }) => {
+  const component = await mount("session-queue-panel--short")
+  const texts = component.locator('[data-action="session-queue-edit"]')
+  const handle = component.getByRole("button", { name: "Reorder queued prompt" }).first()
+
+  // A fast flick can move and release between two frames, so dispatch the whole gesture in one task.
+  await handle.evaluate((el) => {
+    const box = el.getBoundingClientRect()
+    const x = box.left + box.width / 2
+    const y = box.top + box.height / 2
+
+    const send = (type: string, dy: number) =>
+      el.dispatchEvent(
+        new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: "mouse", clientX: x, clientY: y + dy }),
+      )
+
+    send("pointerdown", 0)
+    send("pointermove", 10)
+    send("pointermove", 40)
+    send("pointerup", 40)
+  })
+  await expect(texts).toHaveText([
+    "Rename the Alpha export",
+    "Compare the Alpha and Beta fixtures",
+    "Add a Beta regression test",
+  ])
 })
 
 story("dragging to the edge of a scrolling queue scrolls it", async ({ mount, page }) => {

@@ -6,13 +6,16 @@ export type SortableAxis = "x" | "y"
 
 export interface SortableOptions {
   axis: () => SortableAxis
-  /** Item IDs in rendered order. */
+  /**
+   * Item IDs in rendered order. Disabled items can't be picked up but still shift aside, so leave out any item that
+   * must stay put.
+   */
   ids: () => readonly string[]
   /** The element that scrolls the list, used for auto-scroll and text direction. */
   container: () => HTMLElement | undefined
   /** Called on drop or keyboard move. Update `ids` synchronously so the moved item settles from where it was dropped. */
   onReorder: (from: number, to: number, id: string) => void
-  onDragStart?: (id: string) => void
+  onDragStart?: (id: string, el: HTMLElement) => void
   onDragEnd?: (id: string) => void
   /** Descendants matching this selector never start a drag. */
   ignore?: string
@@ -26,7 +29,7 @@ type Item = {
 }
 
 // Positions are in flow coordinates, which grow with the item index; `sign` maps them to physical pixels.
-type Layout = { axis: SortableAxis; sign: 1 | -1; slots: Slot[]; elements: HTMLElement[] }
+type Layout = { axis: SortableAxis; sign: 1 | -1; ids: string[]; slots: Slot[]; elements: HTMLElement[] }
 
 type Motion = { spring: Spring; axis: SortableAxis; sign: 1 | -1 }
 
@@ -56,6 +59,8 @@ export function createSortable(options: SortableOptions) {
   const [active, setActive] = createSignal<string>()
   let pending: { item: Item; event: PointerEvent } | undefined
   let drag: Drag | undefined
+  // The pointer that activated a drag stays held until it is released, even after the drag is canceled.
+  let held: number | undefined
   let lifted: HTMLElement | undefined
   let stop: (() => void) | undefined
 
@@ -78,22 +83,7 @@ export function createSortable(options: SortableOptions) {
       const speed = current.scrollMax > 0 ? edgeSpeed(current.pointer, current.edges[0], current.edges[1]) : 0
 
       if (speed !== 0) scrollTo(current, current.scroll + speed * dt)
-
-      const delta = clampDelta(
-        current.slots,
-        current.from,
-        current.pointer - current.origin + current.scroll - current.scrollOrigin,
-      )
-
-      const to = targetIndex(current.slots, current.from, delta)
-
-      if (to !== current.to) {
-        current.to = to
-        const next = shifts(current.slots, current.from, to)
-        current.elements.forEach((el, index) => index !== current.from && offset(el, current).spring.set(next[index]!))
-      }
-
-      offset(current.elements[current.from]!, current).spring.snap(delta)
+      track(current)
     }
 
     for (const [el, entry] of motion) {
@@ -116,6 +106,26 @@ export function createSortable(options: SortableOptions) {
     return false
   }
 
+  // Moves the dragged item to the pointer and the others out of its way. A drop can arrive before the next frame, so
+  // it runs on drop as well as on each frame.
+  const track = (current: Drag) => {
+    const delta = clampDelta(
+      current.slots,
+      current.from,
+      current.pointer - current.origin + current.scroll - current.scrollOrigin,
+    )
+
+    const to = targetIndex(current.slots, current.from, delta)
+
+    if (to !== current.to) {
+      current.to = to
+      const next = shifts(current.slots, current.from, to)
+      current.elements.forEach((el, index) => index !== current.from && offset(el, current).spring.set(next[index]!))
+    }
+
+    offset(current.elements[current.from]!, current).spring.snap(delta)
+  }
+
   const draw = (el: HTMLElement, entry: Motion) => {
     const px = entry.spring.value * entry.sign
     el.style.transform = entry.axis === "y" ? `translate3d(0, ${px}px, 0)` : `translate3d(${px}px, 0, 0)`
@@ -123,6 +133,14 @@ export function createSortable(options: SortableOptions) {
 
   const animate = () => {
     stop ??= frameLoop.add(paint)
+  }
+
+  const lift = (el: HTMLElement) => {
+    lower()
+    lifted = el
+
+    if (getComputedStyle(el).position === "static") el.style.position = "relative"
+    el.style.zIndex = "10"
   }
 
   const lower = () => {
@@ -135,14 +153,15 @@ export function createSortable(options: SortableOptions) {
   // Layout positions, without the transforms this list is drawing.
   const measure = (): Layout | undefined => {
     const container = options.container()
-    const byId = new Map([...items].map((item) => [item.id(), item.el]))
-    const elements = options.ids().flatMap((id) => byId.get(id) ?? [])
+    const ids = [...options.ids()]
+    const byId = elements()
+    const found = ids.flatMap((id) => byId.get(id) ?? [])
 
-    if (!container || elements.length !== options.ids().length) return
+    if (!container || found.length !== ids.length) return
     const axis = options.axis()
     const sign = axis === "x" && getComputedStyle(container).direction === "rtl" ? -1 : 1
 
-    const slots = elements.map((el) => {
+    const slots = found.map((el) => {
       const rect = el.getBoundingClientRect()
       const drawn = (motion.get(el)?.spring.value ?? 0) * sign
 
@@ -153,20 +172,52 @@ export function createSortable(options: SortableOptions) {
       return { start: rect.left - drawn, size: rect.width }
     })
 
-    return { axis, sign, slots, elements }
+    return { axis, sign, ids, slots, elements: found }
   }
 
-  // After the caller's reorder each element sits `moved` further along the flow, so rebase its drawn offset to glide
+  const elements = () => new Map([...items].flatMap((item) => (item.el ? [[item.id(), item.el] as const] : [])))
+
+  // After the caller's reorder each item sits `moved` further along the flow, so rebase its drawn offset to glide
   // from where it is shown into place. The rebased offset is drawn now: pointerup and keydown are not frame-aligned,
-  // so the browser can paint the new order before the next frame callback.
+  // so the browser can paint the new order before the next frame callback. The caller may have remounted items, so
+  // their elements are looked up again.
   const settle = (layout: Layout, moved: number[] | undefined) => {
-    layout.elements.forEach((el, index) => {
+    const current = elements()
+
+    if (prefersReducedMotion()) {
+      motion.forEach((_, el) => {
+        el.style.transform = ""
+      })
+      motion.clear()
+      lower()
+
+      return
+    }
+
+    layout.ids.forEach((id, index) => {
+      const was = layout.elements[index]!
+      const el = current.get(id) ?? was
+      const shift = moved?.[index] ?? 0
+
+      if (el !== was) rehome(was, el)
+
+      if (shift === 0 && !motion.has(el)) return
       const entry = offset(el, layout)
-      entry.spring.value -= moved?.[index] ?? 0
+      entry.spring.value -= shift
       entry.spring.set(0)
       draw(el, entry)
     })
     animate()
+  }
+
+  const rehome = (was: HTMLElement, el: HTMLElement) => {
+    const entry = motion.get(was)
+    motion.delete(was)
+    was.style.transform = ""
+
+    if (entry) motion.set(el, entry)
+
+    if (lifted === was) lift(el)
   }
 
   const readScroll = (container: HTMLElement, layout: Layout) =>
@@ -196,11 +247,7 @@ export function createSortable(options: SortableOptions) {
     const rect = container.getBoundingClientRect()
     const scroll = readScroll(container, layout)
 
-    lower()
-    lifted = item.el
-
-    if (getComputedStyle(item.el).position === "static") item.el.style.position = "relative"
-    item.el.style.zIndex = "10"
+    lift(item.el)
     getSelection()?.removeAllRanges()
 
     if (event.target instanceof Element && event.target.isConnected) event.target.setPointerCapture(event.pointerId)
@@ -226,12 +273,16 @@ export function createSortable(options: SortableOptions) {
       from,
       to: from,
     }
+    held = event.pointerId
     container.addEventListener("scroll", scrolled, { passive: true })
     window.addEventListener("keydown", escape, true)
     window.addEventListener("selectstart", prevent, true)
-    window.addEventListener("blur", cancel)
+    window.addEventListener("blur", blur)
+
+    // Touch scrolls the page unless every move is canceled; handles opt out with `touch-action`, whole items may not.
+    if (event.pointerType === "touch") window.addEventListener("touchmove", prevent, { passive: false })
     setActive(id)
-    options.onDragStart?.(id)
+    options.onDragStart?.(id, item.el)
     animate()
   }
 
@@ -239,11 +290,13 @@ export function createSortable(options: SortableOptions) {
     const current = drag
 
     if (!current) return
+
+    if (!canceled) track(current)
     drag = undefined
     options.container()?.removeEventListener("scroll", scrolled)
     window.removeEventListener("keydown", escape, true)
-    window.removeEventListener("selectstart", prevent, true)
-    window.removeEventListener("blur", cancel)
+    window.removeEventListener("blur", blur)
+    window.removeEventListener("touchmove", prevent)
 
     const moved = !canceled && current.to !== current.from
 
@@ -276,24 +329,33 @@ export function createSortable(options: SortableOptions) {
   }
 
   const up = (event: PointerEvent) => {
-    if (event.pointerId !== (drag?.pointerId ?? pending?.event.pointerId)) return
+    if (event.pointerId !== (held ?? pending?.event.pointerId)) return
+    const dropped = held !== undefined && event.type === "pointerup"
     release()
 
-    if (!drag) return
-    // The pointer is released over the dragged item, which would read the drop as a click.
-    window.addEventListener("click", swallow, true)
-    setTimeout(() => window.removeEventListener("click", swallow, true), 0)
-    finish(event.type === "pointercancel")
+    if (drag && dropped) drag.pointer = pointer(event, drag)
+
+    // The pointer is captured by the item it activated on, so its release reads as a click there, even after a cancel.
+    if (dropped) {
+      window.addEventListener("click", swallow, true)
+      setTimeout(() => window.removeEventListener("click", swallow, true), 0)
+    }
+
+    finish(!dropped)
   }
 
+  // Until the pointer is released, text selection stays blocked and its click is swallowed by `up`.
   const release = () => {
     pending = undefined
+    held = undefined
     window.removeEventListener("pointermove", move)
     window.removeEventListener("pointerup", up)
     window.removeEventListener("pointercancel", up)
+    window.removeEventListener("selectstart", prevent, true)
   }
 
-  const cancel = () => {
+  // The window can lose the pointer's release, so a blur lets go of it rather than holding it.
+  const blur = () => {
     release()
     finish(true)
   }
@@ -302,13 +364,7 @@ export function createSortable(options: SortableOptions) {
     if (event.key !== "Escape") return
     event.preventDefault()
     event.stopPropagation()
-    cancel()
-    // The button is still down, so moving on would select text until it is released.
-    window.addEventListener("selectstart", prevent, true)
-    window.addEventListener("pointerup", () => window.removeEventListener("selectstart", prevent, true), {
-      capture: true,
-      once: true,
-    })
+    finish(true)
   }
 
   const scrolled = () => {
@@ -318,7 +374,7 @@ export function createSortable(options: SortableOptions) {
   }
 
   const down = (item: Item) => (event: PointerEvent) => {
-    if (event.button !== 0 || drag || item.disabled()) return
+    if (event.button !== 0 || drag || held !== undefined || item.disabled()) return
     const target = event.target instanceof Element ? event.target : null
 
     if (item.handle && !item.handle.contains(target)) return
@@ -351,10 +407,11 @@ export function createSortable(options: SortableOptions) {
     item.handle?.focus()
   }
 
-  createEffect(on(options.ids, () => drag && cancel(), { defer: true }))
+  createEffect(on(options.ids, () => drag && finish(true), { defer: true }))
 
   onCleanup(() => {
-    cancel()
+    release()
+    finish(true)
     stop?.()
     motion.forEach((_, el) => {
       el.style.transform = ""
@@ -386,6 +443,7 @@ export function createSortable(options: SortableOptions) {
         handle(el: HTMLElement) {
           item.handle?.removeEventListener("keydown", keys)
           item.handle = el
+          el.style.touchAction = "none"
           el.addEventListener("keydown", keys)
         },
         dragging: () => active() === id(),
