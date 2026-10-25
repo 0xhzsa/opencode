@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { formatDeepLink, parseDeepLink, pickSessionWindow, tabsHoldSession } from "./deep-link"
+import { formatDeepLink, linkBatchWindow, parseDeepLink, pickLinkWindow, tabsHoldSession } from "./deep-link"
 
 const session = "ses_efcd8972fffeT5zZbj9YtIl3LU"
 
@@ -108,11 +108,11 @@ describe("tabsHoldSession", () => {
   })
 })
 
-describe("pickSessionWindow", () => {
+describe("pickLinkWindow", () => {
   const pick = (input: { open: string[]; persisted?: string[]; focused?: string; holder?: string }) => {
     const calls: string[] = []
 
-    const win = pickSessionWindow({
+    const win = pickLinkWindow({
       open: input.open,
       restore: () => {
         calls.push("restore")
@@ -144,5 +144,23 @@ describe("pickSessionWindow", () => {
     })
     expect(pick({ open: [], persisted: ["a"] })).toEqual({ win: "a", calls: ["restore"] })
     expect(pick({ open: [], persisted: [] })).toEqual({ win: "new", calls: ["restore", "create"] })
+  })
+})
+
+describe("linkBatchWindow", () => {
+  test("brings forward the window the last accepted link opened in", () => {
+    expect(linkBatchWindow(["a", undefined, "b", null], () => "fallback")).toBe("b")
+  })
+
+  test("still brings the app forward when every link was rejected", () => {
+    // A rejected link opens no window; with every window closed the fallback restores them.
+    const fallback = () => pickLinkWindow({ open: [], restore: () => ["restored"], create: () => "new", focused: null })
+
+    expect(linkBatchWindow([undefined, undefined], fallback)).toBe("restored")
+    expect(
+      linkBatchWindow([undefined], () =>
+        pickLinkWindow({ open: ["a", "b"], restore: () => [], create: () => "new", focused: "b" }),
+      ),
+    ).toBe("b")
   })
 })

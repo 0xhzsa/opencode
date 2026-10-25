@@ -47,21 +47,29 @@ export function tabsHoldSession(value: string | null, sessionID: string) {
 }
 
 /**
- * The window a session link opens in: the one already holding the session, then the window the user
- * was last in, then any. With every window closed (macOS) the persisted windows are restored first, so
- * the link can land in the one that held the session and restoration isn't lost to a blank window.
+ * The window a link opens in: the one already holding its session, then the window the user was last
+ * in, then any. With every window closed (macOS) the persisted windows are restored first, so the link
+ * can land in the one that held the session and restoration isn't lost to a blank window.
  */
-export function pickSessionWindow<W>(input: {
+export function pickLinkWindow<W>(input: {
   open: W[]
   restore: () => W[]
   create: () => W
   focused: W | null
-  holds: (win: W) => boolean
+  holds?: (win: W) => boolean
 }) {
   const open = input.open.length ? input.open : input.restore()
   const focused = input.focused && open.includes(input.focused) ? input.focused : undefined
 
-  return open.find(input.holds) ?? focused ?? open[0] ?? input.create()
+  return (input.holds && open.find(input.holds)) || focused || open[0] || input.create()
+}
+
+/**
+ * The window a batch of links brings forward: the last one a link opened in. When every link was
+ * rejected (an old v1 link, a typo) the app still comes forward, as it did before links were validated.
+ */
+export function linkBatchWindow<W>(opened: (W | null | undefined)[], fallback: () => W) {
+  return opened.findLast((win) => !!win) ?? fallback()
 }
 
 function sessionLink(url: URL): DeepLink | undefined {

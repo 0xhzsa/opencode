@@ -22,7 +22,7 @@ import {
 import { marks } from "./marks"
 import { initializeFirstLaunchOnboarding } from "./onboarding"
 import { Shutdown } from "./shutdown"
-import { formatDeepLink, parseDeepLink, pickSessionWindow, tabsHoldSession } from "./deep-link"
+import { formatDeepLink, linkBatchWindow, parseDeepLink, pickLinkWindow, tabsHoldSession } from "./deep-link"
 import { linkArguments, receiveLinks } from "./link-intake"
 import { createLinkQueue } from "./link-queue"
 
@@ -67,17 +67,19 @@ const runtime = Layer.effect(
     }
 
     // Restored windows exist before `activate` runs, so it finds windows and doesn't restore them again.
-    const sessionWindow = (sessionID: string) =>
-      pickSessionWindow({
+    const linkWindow = (sessionID?: string) =>
+      pickLinkWindow({
         open: getMainWindows(),
         restore: restoreWindows,
         create: createWindow,
         focused: getLastFocusedWindow(),
-        holds: (win) => {
-          const id = getWindowID(win)
+        holds: sessionID
+          ? (win) => {
+              const id = getWindowID(win)
 
-          return !!id && tabsHoldSession(storage.state.get(windowDataFile(id), "tabs"), sessionID)
-        },
+              return !!id && tabsHoldSession(storage.state.get(windowDataFile(id), "tabs"), sessionID)
+            }
+          : undefined,
       })
 
     const openLink = (url: string) => {
@@ -90,7 +92,7 @@ const runtime = Layer.effect(
       }
 
       if (link.type === "console") return getWindowByID(link.windowID) ?? getLastFocusedWindow()
-      const win = sessionWindow(link.sessionID)
+      const win = linkWindow(link.sessionID)
       const canonical = formatDeepLink(link)
       runFork(
         Effect.logInfo("deep link opened", { type: link.type, sessionID: link.sessionID, window: getWindowID(win) }),
@@ -102,7 +104,7 @@ const runtime = Layer.effect(
       return win
     }
 
-    const openLinks = (urls: string[]) => focusWindow(urls.map(openLink).findLast((win) => !!win) ?? null)
+    const openLinks = (urls: string[]) => focusWindow(linkBatchWindow(urls.map(openLink), () => linkWindow()))
 
     const wireLinks = (win: BrowserWindow) => {
       const contents = win.webContents.id
