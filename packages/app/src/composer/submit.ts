@@ -95,6 +95,10 @@ export function createComposerSubmit(input: ComposerSubmitInput) {
             input.adapter.controls().model.selection.trackSessionCommit,
           )
 
+        // Images the model can't read inline become server paths; /btw cannot send those.
+        if (clientCommand.images && prompt.some((part) => part.type === "path" && part.mime.startsWith("image/")))
+          throw new Error("The selected model can't read this image directly")
+
         const files = clientCommand.images
           ? await Promise.all(
               prompt

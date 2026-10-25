@@ -223,6 +223,36 @@ describe("Composer submission", () => {
     },
   )
 
+  test("reports an image the model reads only as a path instead of dropping it from an image command", async () => {
+    const state = createMemoryComposerState().capture()
+
+    const prompt: Prompt = [
+      { type: "text", content: "/btw explain", start: 0, end: 12 },
+      { type: "path", id: "path", filename: "diagram.png", mime: "image/png", path: "/tmp/diagram.png" },
+    ]
+
+    state.set(prompt)
+    const failures: unknown[] = []
+    let ran = false
+    await submitInput(
+      active(state, session({ calls: [] })),
+      { missingSelection() {}, unqueueable() {}, failed: (_kind, error) => void failures.push(error) },
+      "normal",
+      undefined,
+      [],
+      () => ({
+        images: true,
+        run: () => {
+          ran = true
+        },
+      }),
+    ).submit(new Event("submit"))
+
+    expect(ran).toBe(false)
+    expect(failures).toHaveLength(1)
+    expect(state.current()).toEqual(prompt)
+  })
+
   test("applies the selection and runs a client argument command without admitting it to the session", async () => {
     const state = createMemoryComposerState().capture()
 

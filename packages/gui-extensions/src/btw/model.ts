@@ -86,6 +86,7 @@ export function createBtw(ctx: SetupContext<typeof Btw>) {
 
             if (current.model) chat.model = current.model
           })
+          attachments.delete(id)
         })
         // A missing answer is the retry state; no transient error flag is stored.
         .catch(() => undefined)

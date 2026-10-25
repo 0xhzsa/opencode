@@ -426,7 +426,7 @@ export interface KeymapCommand {
     readonly aliases?: string[]
     /** Keeps the slash command in the prompt and passes its raw input to run. */
     readonly arguments?: true
-    /** Receives captured image attachments on slash submission; other commands leave them in the prompt. */
+    /** Receives the prompt's attachments on slash submission. Commands without it clear them with the prompt. */
     readonly images?: true
   }
   /** Promotes the command in discovery UI. */
