@@ -204,6 +204,9 @@ function use(): Keymap {
 function createLayer(input: () => KeymapLayer) {
   const value = useValue()
   const enabled = useInteractivity()
+  // The keymap rebuilds a re-registered layer when a command's `opencode` object is new,
+  // so each command keeps one object while its data is unchanged.
+  const stable = new Map<string, KeymapCommand>()
   useBindings(() => {
     const layer = input()
     const { commands, bindings, mode, ...options } = layer
@@ -214,10 +217,13 @@ function createLayer(input: () => KeymapLayer) {
       ...(mode === "global" ? {} : { mode: mode ?? MODE.base }),
       commands: grouped.named.map((command) => {
         const { id, description, group, palette, bind, run, ...definition } = command
+        const previous = stable.get(id)
+        if (previous && sameData(previous, command)) Object.assign(previous, command)
+        else stable.set(id, command)
         return {
           ...definition,
           name: id,
-          opencode: command,
+          opencode: stable.get(id),
           run: (context: CommandContext<Renderable, KeyEvent>) => run(value.input(id), context.event),
           ...(description === undefined ? {} : { desc: description }),
           ...(group === undefined ? {} : { category: group }),
@@ -248,6 +254,19 @@ function createLayer(input: () => KeymapLayer) {
       ],
     }
   })
+}
+
+// Compares data fields only; functions are new closures on every run and take the latest by assignment.
+function sameData(previous: KeymapCommand, next: KeymapCommand) {
+  const keys = Object.keys(next) as (keyof KeymapCommand)[]
+  return (
+    keys.length === Object.keys(previous).length &&
+    keys.every((key) =>
+      typeof next[key] === "function"
+        ? typeof previous[key] === "function"
+        : Object.hasOwn(previous, key) && Object.is(previous[key], next[key]),
+    )
+  )
 }
 
 function groupCommands(commands: readonly KeymapCommand[] = []) {
