@@ -28,6 +28,7 @@ import {
   userMessage,
   userText,
 } from "../utils/timeline"
+import { seed } from "../utils/app"
 
 const detailed = timelinePresets[2].value
 
@@ -612,7 +613,10 @@ test("shows a background subagent's outcome as its own row where it finished", a
     }),
     inboxDelivered({ sessionID, inboxID: "msg_outcome" }),
     stepStarted(after),
-    ...partUpdated({ ...toolPart("call_read_after", "read", "completed", { filePath: "AGENTS.md" }), messageID: after.id }),
+    ...partUpdated({
+      ...toolPart("call_read_after", "read", "completed", { filePath: "AGENTS.md" }),
+      messageID: after.id,
+    }),
     messageUpdated(completedAssistantInfo(after)),
   ])
 
@@ -647,12 +651,12 @@ test("shows a background subagent's outcome as its own row where it finished", a
   await expect(page).toHaveURL(new RegExp(`/session/${childID}$`))
 })
 
-test("holds undelivered input still while live status above it comes and goes", async ({ page }) => {
+test("keeps undelivered input right under live status while it comes and goes", async ({ page }) => {
   const timeline = await setupTimeline(page, {
     sessionStatus: { [sessionID]: { type: "busy" } },
     messages: [
       userMessage(),
-      // Streaming text stands in for Working, so live status has nothing to show.
+      // Working keeps its own row while the reply streams.
       assistantMessage([textPart("prt_streaming_answer", "It ships as soon as it's ready.")], { completed: false }),
     ],
   })
@@ -676,37 +680,46 @@ test("holds undelivered input still while live status above it comes and goes", 
       },
     })
 
-  const first = page.locator('[data-slot="session-timeline-notice"]').filter({ hasText: "Audit constraints" })
-  const gap = async () => {
-    const [above, below] = await Promise.all([answer.boundingBox(), first.boundingBox()])
+  const notice = (description: string) =>
+    page.locator('[data-slot="session-timeline-notice"]').filter({ hasText: description })
+  const first = notice("Audit constraints")
+  // The space between two rows' boxes, so a hidden or collapsing lane shows up as a gap or an overlap.
+  const gap = (above: Locator, below: Locator) => async () => {
+    const [top, bottom] = await Promise.all([above.boundingBox(), below.boundingBox()])
 
-    return above && below ? Math.round(below.y - above.y - above.height) : undefined
+    return top && bottom ? Math.round(bottom.y - top.y - top.height) : undefined
   }
+  const row = (content: Locator) => page.locator("[data-timeline-key]", { has: content })
 
   await expect(answer).toBeVisible()
+  await expect(working).toBeVisible()
   await timeline.send(outcome("msg_pending_outcome", "Audit constraints"))
   await expect(first).toHaveText(/^General finished · Audit constraints$/)
-  await expect(working).toHaveCount(0)
-  // Live status moves above the waiting notice, but takes no room while it has nothing to show.
-  await expect.poll(lane).toBe(0)
-  const pending = await gap()
+  // Live status moves above the waiting notice at its full height, with nothing between them.
+  await expect(working).toBeVisible()
+  await expect.poll(lane).toBe(36)
+  await expect.poll(gap(activity, row(first))).toBe(0)
 
+  // Delivered input joins the turn, and live status follows it at the same height.
   await timeline.send(inboxDelivered({ sessionID, inboxID: "msg_pending_outcome" }))
-  await expect(activity).toHaveCount(0)
-  await expect.poll(gap).toBe(pending)
+  await expect.poll(gap(row(first), activity)).toBe(0)
+  await expect.poll(lane).toBe(36)
 
+  const second = notice("Review copy")
   await timeline.send(outcome("msg_pending_review", "Review copy"))
-  await expect(page.locator('[data-slot="session-timeline-notice"]').filter({ hasText: "Review copy" })).toBeVisible()
-  await expect.poll(lane).toBe(0)
+  await expect(second).toBeVisible()
+  await expect.poll(gap(activity, row(second))).toBe(0)
+  await expect.poll(lane).toBe(36)
 
-  // A finished read keeps Working on; the next streaming text hides it again. Once shown, the lane stays.
+  // A finished read and the next streaming text both keep Working on, and the lane never changes height.
   await timeline.send(partUpdated(toolPart("prt_live_read", "read", "completed", { filePath: "README.md" })))
   await expect(working).toBeVisible()
   await expect.poll(lane).toBe(36)
   await timeline.send(partUpdated(textPart("prt_live_text", "Checking the copy next.")))
   await expect(page.getByText("Checking the copy next.", { exact: true })).toBeVisible()
-  await expect(working).toHaveCount(0)
+  await expect(working).toBeVisible()
   await expect.poll(lane).toBe(36)
+  await expect.poll(gap(activity, row(second))).toBe(0)
 })
 
 test("jumps from a finished shell's notice to its call", async ({ page }) => {
@@ -851,7 +864,7 @@ test.describe("Working", () => {
       await timeline.send(partUpdated(toolPart(id, name, "streaming", input)))
       const tool = page.locator(`[data-timeline-part-id="${id}"]`)
       await expect(tool).toBeVisible()
-      await expect(working).toHaveCount(0)
+      await expect(working).toBeVisible()
 
       const metadata =
         name === "patch"
@@ -862,7 +875,7 @@ test.describe("Working", () => {
       await expect(tool).toContainText(
         { shell: "printf ready", patch: "working.ts", subagent: "Inspect working indicator" }[name],
       )
-      await expect(working).toHaveCount(0)
+      await expect(working).toBeVisible()
 
       await timeline.send(partUpdated(toolPart(id, name, "completed", input, { metadata })))
       await expect(tool).toBeVisible()
@@ -902,7 +915,9 @@ test.describe("Working", () => {
     await expect(working).toBeVisible()
 
     await timeline.send(partUpdated(toolPart("prt_read_four", "read", "running", { path: "src/four.ts" })))
-    await expect(group.locator('[data-slot="basic-tool-tool-subtitle"]')).toHaveText("one.ts, two.ts, three.ts, four.ts")
+    await expect(group.locator('[data-slot="basic-tool-tool-subtitle"]')).toHaveText(
+      "one.ts, two.ts, three.ts, four.ts",
+    )
     await expect(working).toBeVisible()
 
     await timeline.send(partUpdated(toolPart("prt_read_four", "read", "completed", { path: "src/four.ts" })))
@@ -947,7 +962,7 @@ test.describe("Working", () => {
 
       if (!grouped) {
         await expect(page.locator('[data-timeline-part-id="prt_background_active"]')).toBeVisible()
-        await expect(working).toHaveCount(0)
+        await expect(working).toBeVisible()
 
         return
       }
@@ -1009,7 +1024,7 @@ test.describe("Working", () => {
     await expect(page.locator(`[data-timeline-part-id="${assistantID}:text:0"]`)).toContainText(
       "The response is streaming.",
     )
-    await expect(working).toHaveCount(0)
+    await expect(working).toBeVisible()
   })
 })
 
@@ -1025,17 +1040,28 @@ test.describe("background shortcut", () => {
     await expect(page.getByText("Called `subagent`", { exact: false })).toHaveCount(0)
     await expect(page.locator('[data-component="background-tool-control"]')).toHaveCount(0)
     const hint = backgroundHint(page)
+    const working = page.locator('[data-component="session-working"]')
     await expect(hint).toBeVisible()
+    await expect(working).toBeVisible()
     await expect(page.locator('[data-timeline-row="Thinking"]')).toHaveCount(0)
+    // Working keeps its own row under the card, and the shortcut sits beside it.
     await expect
       .poll(async () => {
-        const [cardBox, hintBox] = await Promise.all([card.boundingBox(), hint.boundingBox()])
+        const [cardBox, workingBox, hintBox] = await Promise.all([
+          card.boundingBox(),
+          working.boundingBox(),
+          hint.boundingBox(),
+        ])
 
-        if (!cardBox || !hintBox) return undefined
+        if (!cardBox || !workingBox || !hintBox) return undefined
 
-        return { aligned: Math.abs(cardBox.x - hintBox.x) < 2, ordered: cardBox.y < hintBox.y }
+        return {
+          aligned: Math.abs(cardBox.x - workingBox.x) < 2,
+          beside: hintBox.x >= workingBox.x + workingBox.width,
+          ordered: cardBox.y < hintBox.y,
+        }
       })
-      .toEqual({ aligned: true, ordered: true })
+      .toEqual({ aligned: true, beside: true, ordered: true })
     await expectBackgroundRequest(page)
   })
 
@@ -1082,6 +1108,49 @@ test.describe("background shortcut", () => {
       if (name === "shell") await expectBackgroundRequest(page)
     })
   }
+
+  test("slides the background shortcut in beside Working without moving it", async ({ page }) => {
+    // Quarter speed, so even a slow runner draws many frames of the fade.
+    await seed(page, { storage: { "opencode.motion.v2": { speed: 0.25 } } })
+    const timeline = await setupTimeline(page, {
+      messages: [
+        userMessage(),
+        assistantMessage([toolPart("prt_hint_read", "read", "completed", { filePath: "package.json" })], {
+          completed: false,
+        }),
+      ],
+    })
+    const working = page.locator('[data-component="session-working"]')
+    await expect(working).toBeInViewport()
+    const left = (await working.boundingBox())!.x
+
+    // Every frame from the shell's start, the shortcut row's opacity and offset.
+    const frames = await page.evaluateHandle(() => {
+      const state = { on: true, frames: [] as { opacity: number; x: number }[] }
+      const tick = () => {
+        if (!state.on) return
+        const row = document.querySelector('[data-component="session-background-hint-row"]')
+        if (row)
+          state.frames.push({
+            opacity: +getComputedStyle(row).opacity,
+            x: parseFloat(getComputedStyle(row).translate) || 0,
+          })
+        requestAnimationFrame(tick)
+      }
+      requestAnimationFrame(tick)
+      return state
+    })
+    await timeline.send(partUpdated(toolPart("prt_hint_shell", "shell", "running", { command: "sleep 10" })))
+    await expect(backgroundHint(page)).toBeInViewport()
+    await page.waitForTimeout(1500)
+    const trace = await frames.evaluate((state) => ((state.on = false), state.frames))
+
+    // It fades in over several frames, sliding out from Working, and comes to rest where it lays out.
+    expect(trace.filter((frame) => frame.opacity > 0.05 && frame.opacity < 0.95).length).toBeGreaterThanOrEqual(4)
+    expect(Math.min(...trace.map((frame) => frame.x))).toBeLessThan(-2)
+    expect(trace.at(-1)).toEqual({ opacity: 1, x: 0 })
+    expect((await working.boundingBox())!.x).toBe(left)
+  })
 
   for (const placement of ["right", "center"] as const) {
     test(`anchors the activity panel to a ${placement}-placed capsule`, async ({ page }) => {
