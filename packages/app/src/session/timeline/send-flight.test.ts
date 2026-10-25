@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
-import { motionTuning } from "@opencode/ui/motion-tuning"
+import { motionGlobals, motionTuning } from "@opencode/ui/motion-tuning"
 import { growthSpring } from "./row-growth"
-import { landSendFlight, prepareSendFlight, sendFlightSpring } from "./send-flight"
+import { landSendFlight, prepareSendFlight, sendFlightArc, sendFlightSpring } from "./send-flight"
 
 type Played = {
   element: Element
@@ -65,11 +65,20 @@ function setup() {
     mocks.push(spyOn(element, "getBoundingClientRect").mockReturnValue(new DOMRect(1000, top, 80, 36)))
     return element
   }
-  return { editor, viewport, bubble, restore: () => mocks.forEach((mock) => mock.mockRestore()) }
+  return { root, editor, viewport, bubble, restore: () => mocks.forEach((mock) => mock.mockRestore()) }
 }
 
 const hosts = () => played.filter((item) => item.element instanceof HTMLElement && item.element.dataset.flight === "")
 const top = (frame: Keyframe) => Number(String(frame.transform).match(/translate\([^,]+, ([-\d.]+)px\)/)![1])
+const left = (frame: Keyframe) => Number(String(frame.transform).match(/translate\(([-\d.]+)px,/)![1])
+
+function knob(id: string) {
+  const found = motionTuning.list().find((item) => item.id === id)
+
+  if (!found) throw new Error(`no knob ${id}`)
+
+  return found
+}
 
 test("sends that share their first paint keep their distinct launch times", () => {
   const clock = spyOn(performance, "now").mockReturnValue(0)
@@ -117,9 +126,9 @@ test("aims at the bubble's resting slot while its row is still drawn away from i
   }
 })
 
-test("lands in local CSS pixels when its viewport is zoomed", async () => {
-  const { editor, viewport, bubble, restore } = setup()
-  viewport.style.zoom = "0.9"
+test("lands in local CSS pixels when the box holding both ends is zoomed", async () => {
+  const { root, editor, bubble, restore } = setup()
+  root.style.zoom = "0.9"
   try {
     prepareSendFlight("zoomed", editor)
     const element = bubble(300)
@@ -138,17 +147,10 @@ test("lands in local CSS pixels when its viewport is zoomed", async () => {
 
 test("flies on its own spring, not the rows' growth spring", () => {
   const { editor, bubble, restore } = setup()
-
-  const knob = (id: string) => {
-    const found = motionTuning.list().find((item) => item.id === id)
-
-    if (found?.kind !== "spring") throw new Error(`no spring ${id}`)
-
-    return found
-  }
-
   const flight = knob("timeline.sendFlight")
   const growth = knob("timeline.growth")
+
+  if (flight.kind !== "spring" || growth.kind !== "spring") throw new Error("not springs")
 
   const land = (id: string) => {
     played = []
@@ -168,6 +170,74 @@ test("flies on its own spring, not the rows' growth spring", () => {
   } finally {
     motionTuning.set(growth, { ...growth.initial })
     motionTuning.set(flight, { ...flight.initial })
+    restore()
+  }
+})
+
+test("draws over the composer it lifts off from, below the top of the timeline", () => {
+  const { root, editor, viewport, bubble, restore } = setup()
+  const visible = spyOn(viewport, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 40, 1200, 700))
+  try {
+    prepareSendFlight("over", editor)
+    expect(editor.parentElement?.hasAttribute("data-send-flight-launch")).toBe(true)
+    landSendFlight("over", bubble(300))
+    const layer = root.querySelector<HTMLElement>("[data-send-flight]")!
+    expect(layer.parentElement).toBe(root)
+    expect(layer.style.clipPath).toStartWith("inset(40px ")
+  } finally {
+    visible.mockRestore()
+    restore()
+  }
+})
+
+test("arcs across before it rises, and flies straight at no arc", () => {
+  const { editor, bubble, restore } = setup()
+  const arc = knob("timeline.sendFlight.arc")
+
+  if (arc.kind !== "number") throw new Error("not a number")
+
+  // How far along its straight line each axis is, at the middle frame of the flight.
+  const middle = (value: number) => {
+    played = []
+    motionTuning.set(arc, value)
+    prepareSendFlight(`arc-${value}`, editor)
+    landSendFlight(`arc-${value}`, bubble(300))
+    const frames = hosts()[0]!.frames
+    const along = (read: (frame: Keyframe) => number, frame: Keyframe) =>
+      (read(frame) - read(frames[0]!)) / (read(frames.at(-1)!) - read(frames[0]!))
+    const frame = frames[Math.round(frames.length / 8)]!
+    return { x: along(left, frame), y: along(top, frame) }
+  }
+
+  try {
+    expect(sendFlightArc()).toBe(0.6)
+    const straight = middle(0)
+    expect(straight.x).toBeCloseTo(straight.y, 5)
+    const bent = middle(1)
+    expect(bent.x).toBeGreaterThan(straight.x + 0.1)
+    expect(bent.y).toBeLessThan(straight.y - 0.1)
+  } finally {
+    motionTuning.set(arc, arc.initial)
+    restore()
+  }
+})
+
+test("slow motion stretches the flight once", () => {
+  const { editor, bubble, restore } = setup()
+  const land = (id: string) => {
+    played = []
+    prepareSendFlight(id, editor)
+    landSendFlight(id, bubble(300))
+
+    return hosts()[0]!.duration
+  }
+
+  try {
+    const normal = land("normal")
+    motionTuning.set(motionGlobals.slow, true)
+    expect(land("slow") / normal).toBeCloseTo(4, 1)
+  } finally {
+    motionTuning.set(motionGlobals.slow, false)
     restore()
   }
 })

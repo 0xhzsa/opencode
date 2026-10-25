@@ -1,7 +1,7 @@
 import { prefersReducedMotion, springAt, springSettle } from "@opencode/ui/motion"
 import { motionTuning } from "@opencode/ui/motion-tuning"
 
-// The composer's copy flies onto its bubble on this spring; the flight runs it at half its duration.
+// The composer's copy flies onto its bubble on this spring.
 export const sendFlightSpring = motionTuning.spring("timeline.sendFlight", {
   label: "Send flight",
   group: "Timeline",
@@ -13,10 +13,23 @@ export const sendFlightSpring = motionTuning.spring("timeline.sendFlight", {
   },
 })
 
+export const sendFlightArc = motionTuning.number("timeline.sendFlight.arc", {
+  label: "Arc",
+  group: "Timeline",
+  subsection: "Send flight",
+  description: "0 flies straight; 1 slides across before it rises.",
+  value: 0.6,
+  min: 0,
+  max: 1,
+  step: 0.05,
+})
+
 type Rect = { x: number; y: number; w: number; h: number }
 
 type Flight = {
   at: number
+  /** The text the copy was taken from. */
+  origin: HTMLElement
   text: HTMLElement
   layer: HTMLElement
   from: Rect
@@ -29,8 +42,8 @@ type Flight = {
   source?: HTMLElement
 }
 
-// The sent text rises from behind the composer, clipped to its timeline's visible viewport. The real bubble stays
-// hidden until the flight lands on it.
+// The sent text lifts off from where it sat in the composer, drawn over it, and stays below the top of its timeline's
+// visible viewport. The real bubble stays hidden until the flight lands on it.
 const waiting = new Map<string, Flight>()
 
 // A bubble that mounted before its flight was prepared, as when a queued prompt's row leaves the queue a moment after
@@ -83,19 +96,26 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined, s
     position: "absolute",
     inset: "0",
     pointerEvents: "none",
-    zIndex: "1",
+    // Above the composer region (z-70) it lifts off from.
+    zIndex: "71",
     contain: "strict",
     overflow: "hidden",
-    maskImage: "linear-gradient(to bottom, #000 calc(100% - 16px), transparent)",
     // The destination supplies its viewport before the copy may paint.
     visibility: "hidden",
   })
   document.body.append(layer)
 
   layer.append(text)
-  waiting.get(id)?.layer.remove()
-  waiting.set(id, {
+  const previous = waiting.get(id)
+  if (previous) {
+    clearTimeout(previous.expire)
+    release(previous)
+  }
+  // The composer's placeholder waits while the copy lifts off over it.
+  if (!source) editor.parentElement?.setAttribute("data-send-flight-launch", "")
+  const flight: Flight = {
     at: performance.now(),
+    origin: editor,
     text,
     layer,
     source,
@@ -111,9 +131,10 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined, s
           easing: "cubic-bezier(.4,0,1,1)",
           fill: "forwards",
         })
-        .finished.finally(() => layer.remove())
+        .finished.finally(() => release(flight))
     }, 700),
-  })
+  }
+  waiting.set(id, flight)
 
   const early = unclaimed.get(id)
   unclaimed.delete(id)
@@ -149,7 +170,7 @@ export function landSendFlight(
   clearTimeout(flight.expire)
 
   if (document.hidden || prefersReducedMotion()) {
-    flight.layer.remove()
+    release(flight)
 
     return false
   }
@@ -161,20 +182,23 @@ export function landSendFlight(
   const screen = bubble.getBoundingClientRect()
 
   if (!viewport || screen.width < 1) {
-    flight.layer.remove()
+    release(flight)
 
     return false
   }
-  viewport.append(flight.layer)
+  const box = flight.origin.isConnected ? sharedBox(viewport, flight.origin) : viewport
+  box.append(flight.layer)
   // DOM rects include CSS zoom; compositor keyframes and the row follower use local CSS pixels.
-  const zoom = cssZoom(viewport)
+  const zoom = cssZoom(box)
   const rect = {
     left: screen.left / zoom,
     top: screen.top / zoom,
     width: screen.width / zoom,
     height: screen.height / zoom,
   }
-  const clip = viewport.getBoundingClientRect()
+  const frame = flight.layer.getBoundingClientRect()
+  const visible = viewport.getBoundingClientRect()
+  flight.layer.style.clipPath = `inset(${(visible.top - frame.top) / zoom}px ${(frame.right - visible.right) / zoom}px 0 ${(visible.left - frame.left) / zoom}px)`
   const left = parseFloat(style.paddingLeft) || 0
   const right = parseFloat(style.paddingRight) || 0
   const top = parseFloat(style.paddingTop) || 0
@@ -222,17 +246,20 @@ export function landSendFlight(
   // A prompt that wraps differently in its bubble crosses over quickly, so the two wraps barely overlap.
   const rewraps = Math.abs(rect.height - top - bottom - flight.textHeight / zoom) > 2
   const spring = sendFlightSpring()
-  const omega = (2 * Math.PI) / (spring.duration / 2)
+  const omega = (2 * Math.PI) / spring.duration
   const zeta = 1 - spring.bounce
   const settle = springSettle(1, 0, omega, zeta, 0.001)
   const count = Math.max(2, Math.ceil(settle * 60))
   const progress = Array.from({ length: count + 1 }, (_, index) =>
     index === count ? 1 : Math.min(1, Math.max(0, 1 - springAt(1, 0, omega, zeta, (settle * index) / count)[0])),
   )
+  // Bent off the straight line, x leads and y trails: the copy slides across before it rises onto its bubble.
+  const bend = sendFlightArc()
   const poses = progress.map((p) => {
+    const arc = bend * p * (1 - p)
     const at = {
-      x: start.x + (end.x - start.x) * p,
-      y: start.y + (end.y - start.y) * p,
+      x: start.x + (end.x - start.x) * (p + arc),
+      y: start.y + (end.y - start.y) * (p - arc),
       w: start.w + (end.w - start.w) * p,
       h: start.h + (end.h - start.h) * p,
     }
@@ -244,20 +271,26 @@ export function landSendFlight(
     const round = from.map((corner, index) => `${(corner + (to[index]! - corner) * p) / scale}px`).join(" ")
     return {
       host: {
-        transform: `translate(${at.x - clip.left / zoom}px, ${at.y - hidden * scale - clip.top / zoom}px) scale(${scale})`,
-        clipPath: `inset(${hidden}px 0 ${Math.max(0, rect.height - hidden - shown)}px 0 round ${round})`,
+        transform: `translate(${at.x - frame.left / zoom}px, ${at.y - hidden * scale - frame.top / zoom}px) scale(${scale})`,
         opacity: rewraps ? Math.min(1, Math.max(0, (p - 0.1) / 0.3)) : Math.min(1, p / 0.5),
       },
+      copy: { clipPath: `inset(${hidden}px 0 ${Math.max(0, rect.height - hidden - shown)}px 0 round ${round})` },
       text: {
-        transform: `translate(${at.x + left - clip.left / zoom}px, ${at.y + top - (flight.above + clip.top) / zoom}px)`,
+        transform: `translate(${at.x + left - frame.left / zoom}px, ${at.y + top - (flight.above + frame.top) / zoom}px)`,
         opacity: Math.max(0, 1 - p / (rewraps ? 0.25 : 0.4)),
       },
     }
   })
-  const timing = { duration: settle * 1000 * motionTuning.timeScale(), easing: "linear", fill: "forwards" as const }
+  // The spring already carries the global speed.
+  const timing = { duration: settle * 1000, easing: "linear", fill: "forwards" as const }
+  // The clip runs apart from the moves, which stay on the compositor while the main thread is busy with the send.
   const animations = [
     host.animate(
       poses.map((pose) => pose.host),
+      timing,
+    ),
+    copy.animate(
+      poses.map((pose) => pose.copy),
       timing,
     ),
     flight.text.animate(
@@ -275,7 +308,7 @@ export function landSendFlight(
     document.removeEventListener("visibilitychange", onVisibilityChange)
     followed?.stop()
     bubble.style.removeProperty("opacity")
-    flight.layer.remove()
+    release(flight)
   }
 
   function onVisibilityChange() {
@@ -295,6 +328,18 @@ function corners(style: CSSStyleDeclaration) {
     style.borderBottomRightRadius,
     style.borderBottomLeftRadius,
   ].map((value) => parseFloat(value) || 0)
+}
+
+// Drops the copy, letting the composer show its placeholder again.
+function release(flight: Flight) {
+  flight.layer.remove()
+  flight.origin.parentElement?.removeAttribute("data-send-flight-launch")
+}
+
+// The nearest element holding both ends of the flight.
+function sharedBox(element: Element, other: Element) {
+  for (let node = element.parentElement; node; node = node.parentElement) if (node.contains(other)) return node
+  return document.body
 }
 
 function cssZoom(element: Element): number {
