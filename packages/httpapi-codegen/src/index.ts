@@ -680,8 +680,10 @@ function renderImportedEffectFiles(
         readonly shapeModule?: string
       },
 ): Output["files"] {
+  // An imported Api or group keeps its source group names; a projection rebuilds groups under their client names.
+  const rawKey = (group: Group) => JSON.stringify("endpoints" in options ? group.identifier : group.sourceIdentifier)
   const adapters = groups.map((group) => {
-    const rawGroup = group.endpoints[0]?.topLevel ? "RawClient" : `RawClient[${JSON.stringify(group.sourceIdentifier)}]`
+    const rawGroup = group.endpoints[0]?.topLevel ? "RawClient" : `RawClient[${rawKey(group)}]`
     const methods = group.endpoints.map((item) => {
       const prefix = endpointTypeName(group, item)
       const adapter = endpointAdapterName(group, item)
@@ -746,7 +748,7 @@ function renderImportedEffectFiles(
     (group) =>
       group.endpoints[0]?.topLevel
         ? { fields: `...adaptGroup${groupTypeName(group)}(raw)` }
-        : { whole: `adaptGroup${groupTypeName(group)}(raw[${JSON.stringify(group.sourceIdentifier)}])` },
+        : { whole: `adaptGroup${groupTypeName(group)}(raw[${rawKey(group)}])` },
     (name, value) => `${JSON.stringify(name)}: ${value}`,
     spreadObject,
     ", ",

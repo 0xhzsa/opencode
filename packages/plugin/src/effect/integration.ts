@@ -99,7 +99,7 @@ export interface IntegrationEditor {
   }
 }
 
-export interface IntegrationDomain extends Omit<IntegrationApi<unknown>, "wellknown"> {
+export interface IntegrationDomain extends IntegrationApi<unknown> {
   readonly transform: Transform<IntegrationEditor>
   readonly reload: () => Effect.Effect<void>
   readonly connection: {

@@ -442,6 +442,17 @@ describe("HttpApiCodegen.generate", () => {
     expect(imported.files.find((file) => file.path === "client.ts")?.content).toContain(
       '"experimental": { ...adaptGroupExperimental(raw["server.experimental"]), "session": adaptGroupExperimentalSession(raw["server.session"]) }',
     )
+    // A projection rebuilds the split group under its client name, so the raw client is keyed by that name.
+    const projected = emitEffectImported(contract, {
+      module: "@example/api",
+      endpoints: { "session.get": "Get", "experimental.session.stats": "Stats", "experimental.read": "Read" },
+    }).files.find((file) => file.path === "client.ts")?.content
+    expect(projected).toContain('HttpApiGroup.make("experimental.session").add(Stats)')
+    expect(projected).toContain('const adaptGroupExperimentalSession = (raw: RawClient["experimental.session"])')
+    expect(projected).toContain(
+      '"experimental": { ...adaptGroupExperimental(raw["experimental"]), "session": adaptGroupExperimentalSession(raw["experimental.session"]) }',
+    )
+    expect(projected).not.toContain('raw["server.')
     const shape = emitEffectShape(contract).files.find((file) => file.path === "api.ts")?.content
     expect(shape).toContain('readonly "session": SessionApi<E>')
     expect(shape).toContain(

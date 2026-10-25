@@ -126,7 +126,7 @@ interface Context {
   readonly integration: IntegrationDomain
   readonly mcp: MCPDomain
   readonly model: ModelDomain
-  readonly generate: GenerateApi<unknown>
+  readonly generate: ExperimentalGenerateApi<unknown>
   readonly permission: PermissionDomain
   readonly plugin: Pick<PluginApi<unknown>, "list">
   readonly provider: ProviderDomain
@@ -629,7 +629,7 @@ interface IntegrationEditor {
   }
 }
 
-interface IntegrationDomain extends Omit<IntegrationApi<unknown>, "wellknown"> {
+interface IntegrationDomain extends IntegrationApi<unknown> {
   readonly transform: Transform<IntegrationEditor>
   readonly reload: () => Effect.Effect<void>
   readonly connection: {
@@ -879,9 +879,9 @@ type SessionDomain = Pick<
   | "interrupt"
   | "update"
   | "move"
-  | "wait"
   | "context"
->
+> &
+  Pick<ExperimentalSessionApi<unknown>, "wait">
 ```
 
 ### Skills

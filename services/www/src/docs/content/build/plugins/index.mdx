@@ -858,7 +858,7 @@ interface SessionContext {
   compact(input: SessionCompactInput, requestOptions?: RequestOptions): Promise<SessionInboxCompaction>
   synthetic(input: SessionSyntheticInput, requestOptions?: RequestOptions): Promise<SessionInboxSynthetic>
   interrupt(input: SessionInterruptInput, requestOptions?: RequestOptions): Promise<{ interrupted: boolean }>
-  wait(input: SessionWaitInput, requestOptions?: RequestOptions): Promise<void>
+  wait(input: ExperimentalSessionWaitInput, requestOptions?: RequestOptions): Promise<void>
 }
 ```
 
