@@ -26,7 +26,13 @@ beforeEach(() => {
         cancel: () => finished.reject(new Error("cancelled")),
         finished: finished.promise,
       }
-      played.push({ element: this, frames, duration: Number(options?.duration), animation, finish: () => finished.resolve(animation) })
+      played.push({
+        element: this,
+        frames,
+        duration: Number(options?.duration),
+        animation,
+        finish: () => finished.resolve(animation),
+      })
       return animation
     },
   })

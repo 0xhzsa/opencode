@@ -377,7 +377,6 @@ export function CurrentUserMessageDisplay(props: {
     if (labelled()) setLabel(i18n.t(status() === "stranded" ? "ui.message.pending" : "ui.message.steering"))
   })
 
-
   // In a run, only the last message keeps the meta line; the others offer their actions beside the bubble.
   // Bubble corners tighten where two bubbles meet, as in the iOS app's grouped corners.
   const folded = createMemo(() => !!props.run?.below && !!props.text)
@@ -654,7 +653,11 @@ export function CurrentUserMessageDisplay(props: {
     >
       {renderAttachments()}
       <Show when={label()}>
-        <div data-slot="user-message-pending-label" class="text-12-regular text-v2-text-text-weak" aria-hidden={!labelled()}>
+        <div
+          data-slot="user-message-pending-label"
+          class="text-12-regular text-v2-text-text-weak"
+          aria-hidden={!labelled()}
+        >
           <span data-slot="user-message-pending" aria-hidden="true">
             <Icon name="outline-steer" size="small" />
           </span>

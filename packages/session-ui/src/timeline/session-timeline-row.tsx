@@ -963,13 +963,7 @@ export function createSessionTimelineRowRenderer(input: {
   function TurnGap(props: { messageID: string }) {
     const joined = run(props.messageID)
 
-    return (
-      <div
-        data-timeline-row="TurnGap"
-        aria-hidden="true"
-        style={{ height: joined()?.above ? "4px" : "16px" }}
-      />
-    )
+    return <div data-timeline-row="TurnGap" aria-hidden="true" style={{ height: joined()?.above ? "4px" : "16px" }} />
   }
 
   const render = (row: Accessor<TimelineRow.TimelineRow>, onSizeChange?: () => void) => {
@@ -1333,8 +1327,7 @@ export function createSessionTimelineRowRenderer(input: {
   const markdownLayout = createTimelineMarkdownLayout(textLayout)
 
   function layout(row: TimelineRow.TimelineRow, environment: TimelineLayoutEnvironment): TimelineRowLayout {
-    if (row._tag === "TurnGap")
-      return { source: "fixed", height: runs().get(row.userMessageID)?.above ? 4 : 16 }
+    if (row._tag === "TurnGap") return { source: "fixed", height: runs().get(row.userMessageID)?.above ? 4 : 16 }
     if (row._tag === "Activity") return { source: "fixed", height: 36 }
     const width =
       (input.centered?.() && environment.desktop ? Math.min(744, environment.width) : environment.width) -
@@ -1405,9 +1398,7 @@ export function createSessionTimelineRowRenderer(input: {
         if (measured.source === "dom") return measured
         const extra =
           (row.spacing === "content" ? 16 : 24 + (row.spacing === "tool" ? 8 : 0)) +
-          (copyContentID(row.userMessageID) === row.group.ref.partID
-            ? 24 - Math.min(4, measured.trailingMargin)
-            : 0)
+          (copyContentID(row.userMessageID) === row.group.ref.partID ? 24 - Math.min(4, measured.trailingMargin) : 0)
         return { source: "pretext", height: !text ? 0 : measured.height + extra }
       }
     }
