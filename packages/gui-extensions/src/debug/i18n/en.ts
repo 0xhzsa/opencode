@@ -60,6 +60,7 @@ export default {
     "Open a session on OpenCode Drive's simulated model to use these controls. Start one with script/drive/demo-session.ts.",
   "demo.hint": "Send a message or steer for a long reply. Type 'short', 'code' or 'random' for those replies.",
   "demo.action.long": "Long reply",
+  "demo.action.instant": "Instant reply",
   "demo.speed": "Speed",
   "demo.action.paragraph": "Paragraph",
   "demo.action.code": "Code block",

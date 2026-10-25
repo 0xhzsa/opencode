@@ -166,6 +166,14 @@ function respond(action: string, step: number, speed: number, directory: string)
       )
     case "short":
       return Stream.make(text("Sure. The harbor is quiet today."))
+    case "instant":
+      // The whole long reply in one update, as when a finished answer arrives at once.
+      return Stream.make(
+        Llm.text(
+          `${paragraph}\n\n${sentences.join(" ")}\n\n${paragraph}\n\n${sentences.slice(4).join(" ")}\n\n${summaries.join(" ")}`,
+          { delay: 0, chunkSize: 1_000_000 },
+        ),
+      )
     case "long":
     case "message":
     case "steer":
