@@ -7,6 +7,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "so
 import { useLanguage } from "@/runtime/i18n/language"
 import { useSettings } from "@/settings/model"
 import { createAnimatedPresence } from "@/runtime/animated-presence"
+import { useComposerLaneAlignment } from "./composer-lane"
 import "./activity-chips.css"
 
 const placements = { center: "top", start: "top-start", end: "top-end" } as const
@@ -46,8 +47,7 @@ export function formatElapsed(ms: number, t: (key: DurationKey, params: Record<s
   })
 }
 
-// Live work above the composer, one capsule like the iOS app's background-work summary. It floats out of flow in a
-// lane the timeline reserves at its tail, so coming and going never resizes the composer region or moves the timeline.
+// Live work above the composer, one capsule like the iOS app's background-work summary, in the composer lane.
 export function SessionActivityChips(props: {
   subagents: readonly SessionActivityItem[]
   shells: readonly SessionActivityItem[]
@@ -60,14 +60,7 @@ export function SessionActivityChips(props: {
   const active = () =>
     settings.general.backgroundActivity() !== "off" && (props.subagents.length > 0 || props.shells.length > 0)
 
-  const alignment = createMemo(() => {
-    const value = settings.general.backgroundActivity()
-
-    if (value === "center") return "center"
-
-    // Left/right are physical positions; Kobalte and flex alignment use logical start/end.
-    return (value === "left") !== (language.direction() === "rtl") ? "start" : "end"
-  })
+  const alignment = useComposerLaneAlignment()
 
   const placement = () => placements[alignment()]
 
@@ -175,11 +168,8 @@ export function SessionActivityChips(props: {
         ref={setCapsule}
         inert={!active() || undefined}
         data-component="session-activity-chips"
-        class="pointer-events-none absolute inset-x-0 bottom-full flex items-center pb-2.5"
+        class="flex min-w-0 shrink items-center"
         classList={{
-          "justify-start": alignment() === "start",
-          "justify-center": alignment() === "center",
-          "justify-end": alignment() === "end",
           "animate-out fade-out fill-mode-forwards duration-[110ms] ease-[cubic-bezier(.4,0,1,1)]": !active(),
         }}
       >

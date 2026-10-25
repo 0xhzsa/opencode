@@ -2,7 +2,7 @@
 
 Beta pull request and push runs skip the 23 tests tagged `@quarantine` (`--grep-invert @quarantine`). Most failed in every beta run, so they gave no signal and slowed every leg with retries. `dev` runs are unchanged.
 
-To run only the quarantined tests, use `gh workflow run test.yml --ref beta -f quarantine=true`. Their legs report without failing the e2e checks. `nightly-beta.yml` dispatches that run, plus a full beta run, every night. GitHub fires schedules only from the default branch (`dev`), so the nightly run starts once that workflow is on `dev`; until then, dispatch by hand.
+To run only the quarantined tests, use `gh workflow run check-test.yml --ref beta -f quarantine=true`. Their legs report without failing the e2e checks. `nightly-beta.yml` dispatches that run, plus a full beta run, every night. GitHub fires schedules only from the default branch (`dev`), so the nightly run starts once that workflow is on `dev`; until then, dispatch by hand.
 
 **Rule:** fix a quarantined test or delete it within 14 days of quarantine. When a fix lands, remove the tag and its row in the same pull request. Never quarantine a test that fails because of your own change; fix the test or the change.
 

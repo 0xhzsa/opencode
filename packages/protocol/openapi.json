@@ -14999,6 +14999,9 @@
               "background_compaction": {
                 "type": "boolean"
               },
+              "media_blob": {
+                "type": "boolean"
+              },
               "subagent_depth": {
                 "type": "integer",
                 "minimum": 0
@@ -19148,16 +19151,6 @@
             "minimum": 0
           },
           "hostname": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "username": {
             "anyOf": [
               {
                 "type": "string"
