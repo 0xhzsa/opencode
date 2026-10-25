@@ -24,10 +24,6 @@ import type {
   ProviderInfo,
   ReferenceInfo,
   SessionMessageInfo,
-  SessionMessageAssistant,
-  SessionMessageAssistantReasoning,
-  SessionMessageAssistantText,
-  SessionMessageAssistantTool,
   SessionInfo,
   SessionListInput,
   SessionInboxInfo,
@@ -52,6 +48,7 @@ import {
 import { createStore, produce, reconcile } from "solid-js/store"
 import type { SessionInbox } from "@opencode/schema/session-inbox"
 import { batch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { apply as applyTranscript, type Change, type TranscriptEvent } from "../transcript.prototype"
 
 export type DataSessionStatus = "idle" | "running"
 /**
@@ -76,6 +73,10 @@ export type CreateDataInput = {
   }
   readonly connection?: {
     readonly status: () => "connected" | "connecting" | "reconnecting"
+  }
+  /** PROTOTYPE (D-14): projected transcript events. Would ride the same SSE stream once the server emits them. */
+  readonly transcript?: {
+    readonly listen: (handler: (event: TranscriptEvent) => void) => () => void
   }
   /** Receives failed event-driven reads. Explicit reads still reject to their caller. */
   readonly onError?: (error: unknown) => void
@@ -467,50 +468,6 @@ export function createData(config: CreateDataInput) {
     insert(sessionID: string, item: SessionMessageInfo) {
       message.update(sessionID, (draft, index) => message.append(draft, index, item))
     },
-    // Streaming events target one assistant message and, within it, the latest part of a kind.
-    // A missing target means the row was never loaded or was evicted; the event is dropped.
-    editAssistant(sessionID: string, messageID: string, fn: (assistant: SessionMessageAssistant) => void) {
-      if (!messageIndex.get(sessionID)?.has(messageID)) return
-      message.update(sessionID, (draft, index) => {
-        const position = index.get(messageID)
-        const item = position === undefined ? undefined : draft[position]
-        if (item?.type === "assistant") fn(item)
-      })
-    },
-    editTool(sessionID: string, messageID: string, toolID: string, fn: (tool: SessionMessageAssistantTool) => void) {
-      message.editAssistant(sessionID, messageID, (assistant) => {
-        const tool = assistant.content.findLast(
-          (item): item is SessionMessageAssistantTool => item.type === "tool" && item.id === toolID,
-        )
-        if (tool) fn(tool)
-      })
-    },
-    editText(sessionID: string, messageID: string, fn: (text: SessionMessageAssistantText) => void) {
-      message.editAssistant(sessionID, messageID, (assistant) => {
-        const text = assistant.content.findLast((item): item is SessionMessageAssistantText => item.type === "text")
-        if (text) fn(text)
-      })
-    },
-    editReasoning(sessionID: string, messageID: string, fn: (reasoning: SessionMessageAssistantReasoning) => void) {
-      message.editAssistant(sessionID, messageID, (assistant) => {
-        const reasoning = assistant.content.findLast(
-          (item): item is SessionMessageAssistantReasoning => item.type === "reasoning" && !item.time?.completed,
-        )
-        if (reasoning) fn(reasoning)
-      })
-    },
-    activeAssistant(messages: SessionMessageInfo[]) {
-      const item = messages.findLast((item) => item.type === "assistant" && !item.time.completed)
-      return item?.type === "assistant" ? item : undefined
-    },
-    shell(messages: SessionMessageInfo[], shellID: string) {
-      const item = messages.findLast((item) => item.type === "shell" && item.shellID === shellID)
-      return item?.type === "shell" ? item : undefined
-    },
-    compaction(messages: SessionMessageInfo[]) {
-      const item = messages.findLast((item) => item.type === "compaction" && item.status === "running")
-      return item?.type === "compaction" ? item : undefined
-    },
     reindex(messages: SessionMessageInfo[], index: Map<string, number>, start: number) {
       for (let position = start; position < messages.length; position++) {
         const item = messages[position]
@@ -634,9 +591,29 @@ export function createData(config: CreateDataInput) {
     )
   }
 
+  // PROTOTYPE (D-14): the whole transcript projection. Everything below in handleEvent is session
+  // info, inbox and status bookkeeping, which stays per client.
+  const transcriptListeners = new Set<(sessionID: string, change: Change) => void>()
+  function handleTranscript(event: TranscriptEvent) {
+    const sessionID = event.data.sessionID
+    // An unloaded transcript is read whole on first view; a load in flight reconciles anything dropped here.
+    if (!store.session.message[sessionID] && !sync.has(`session.message:${sessionID}`)) return
+    let change: Change | undefined
+    message.update(sessionID, (messages, index) => {
+      change = applyTranscript({ messages, index }, event)
+    })
+    if (change) for (const listener of transcriptListeners) listener(sessionID, change)
+  }
+
   function handleEvent(event: OpenCodeEvent) {
     switch (event.type) {
       case "server.connected": {
+        // PROTOTYPE (D-14): only a stream the ring could not resume refetches loaded transcripts.
+        if (config.transcript && !("resumed" in event.data && event.data.resumed === true))
+          for (const id of Object.keys(store.session.message)) {
+            sync.invalidate(`session.message:${id}`)
+            refresh(() => result.session.message.sync(id))
+          }
         const updates = new Map<string, DataSessionStatus | undefined>()
         activeUpdates = updates
         refresh(() =>
@@ -693,44 +670,14 @@ export function createData(config: CreateDataInput) {
             tokens: event.data.tokens,
           })
         return
-      case "session.agent.selected": {
-        const previous = store.session.info[event.data.sessionID]?.agent
+      case "session.agent.selected":
         if (store.session.info[event.data.sessionID])
           setStore("session", "info", event.data.sessionID, "agent", event.data.agent)
-        message.insert(event.data.sessionID, {
-          id: SessionMessage.ID.fromEvent(event.id),
-          type: "agent-switched",
-          agent: event.data.agent,
-          previous,
-          time: { created: event.created },
-        })
         return
-      }
-      case "session.model.selected": {
-        const previous = event.data.previous ?? store.session.info[event.data.sessionID]?.model
+      case "session.model.selected":
         if (store.session.info[event.data.sessionID])
           setStore("session", "info", event.data.sessionID, "model", event.data.model)
-        if (!store.session.message[event.data.sessionID]) return
-        message.insert(event.data.sessionID, {
-          id: SessionMessage.ID.fromEvent(event.id),
-          type: "model-switched",
-          model: event.data.model,
-          previous,
-          time: { created: event.created },
-        })
-        refresh(() =>
-          api()
-            .session.message.get({ sessionID: event.data.sessionID, messageID: SessionMessage.ID.fromEvent(event.id) })
-            .then((item) => {
-              message.update(event.data.sessionID, (draft, index) => {
-                const position = index.get(item.id)
-                if (position === undefined) return message.append(draft, index, item)
-                draft[position] = item
-              })
-            }),
-        )
         return
-      }
       case "session.renamed": {
         // Preserve the live title when it races the session's initial read.
         refresh(() => {
@@ -759,23 +706,9 @@ export function createData(config: CreateDataInput) {
       case "session.moved": {
         const current = store.session.info[event.data.sessionID]
         if (current) {
-          const previous = {
-            location: { ...current.location },
-            projectID: current.projectID,
-            subpath: current.subpath,
-          }
           setStore("session", "info", event.data.sessionID, "location", event.data.location)
           setStore("session", "info", event.data.sessionID, "projectID", event.data.projectID)
           setStore("session", "info", event.data.sessionID, "subpath", event.data.subpath)
-          message.insert(event.data.sessionID, {
-            id: SessionMessage.ID.fromEvent(event.id),
-            type: "location-switched",
-            location: event.data.location,
-            projectID: event.data.projectID,
-            subpath: event.data.subpath,
-            previous,
-            time: { created: event.created },
-          })
         }
         return
       }
@@ -843,106 +776,6 @@ export function createData(config: CreateDataInput) {
         }
         return
       }
-      case "session.instructions.updated":
-        // Mirror the projector: the initial baseline and empty-rendering deltas carry no text
-        // and produce no transcript message.
-        const updateText = event.data.text
-        if (updateText === undefined) return
-        message.insert(event.data.sessionID, {
-          id: SessionMessage.ID.fromEvent(event.id),
-          type: "system",
-          text: updateText,
-          description: `Instructions updated: ${Object.keys(event.data.delta).join(", ")}`,
-          metadata: event.metadata,
-          time: { created: event.created },
-        })
-        return
-      case "session.synthetic":
-        message.insert(event.data.sessionID, {
-          id: SessionMessage.ID.fromEvent(event.id),
-          type: "synthetic",
-          text: event.data.text,
-          description: event.data.description,
-          metadata: event.data.metadata,
-          time: { created: event.created },
-        })
-        return
-      case "session.shell.started":
-        message.insert(event.data.sessionID, {
-          id: SessionMessage.ID.fromEvent(event.id),
-          type: "shell",
-          shellID: event.data.shell.id,
-          command: event.data.shell.command,
-          status: event.data.shell.status,
-          exit: event.data.shell.exit,
-          metadata:
-            event.data.shell.metadata.background === true ? { ...event.metadata, background: true } : event.metadata,
-          time: { created: event.created },
-        })
-        return
-      case "session.shell.ended":
-        if (!store.session.message[event.data.sessionID]) return
-        message.update(event.data.sessionID, (draft) => {
-          const match = message.shell(draft, event.data.shell.id)
-          if (!match) return
-          match.status = event.data.shell.status
-          match.exit = event.data.shell.exit
-          match.output = event.data.output
-          match.time.completed = event.created
-        })
-        return
-      case "session.step.started":
-        message.update(event.data.sessionID, (draft, index) => {
-          const position = index.get(event.data.assistantMessageID)
-          const existing = position === undefined ? undefined : draft[position]
-          if (existing?.type === "assistant") {
-            existing.agent = event.data.agent
-            existing.model = event.data.model
-            existing.retry = undefined
-            existing.error = undefined
-            existing.finish = undefined
-            existing.rawFinish = undefined
-            existing.native = undefined
-            existing.time.created = event.data.started
-            existing.time.streamed = undefined
-            existing.time.completed = undefined
-            if (event.data.snapshot) existing.snapshot = { ...existing.snapshot, start: event.data.snapshot }
-            return
-          }
-          const currentAssistant = message.activeAssistant(draft)
-          if (currentAssistant) {
-            currentAssistant.retry = undefined
-            currentAssistant.time.completed = event.created
-          }
-          message.append(draft, index, {
-            id: event.data.assistantMessageID,
-            type: "assistant",
-            agent: event.data.agent,
-            model: event.data.model,
-            metadata: event.metadata,
-            content: [],
-            snapshot: event.data.snapshot ? { start: event.data.snapshot } : undefined,
-            time: { created: event.data.started },
-          })
-        })
-        return
-      case "session.step.streamed":
-        message.editAssistant(event.data.sessionID, event.data.assistantMessageID, (assistant) => {
-          assistant.time.streamed = event.created
-        })
-        return
-      case "session.step.ended": {
-        message.editAssistant(event.data.sessionID, event.data.assistantMessageID, (assistant) => {
-          assistant.time.completed = event.created
-          assistant.finish = event.data.finish
-          assistant.rawFinish = event.data.rawFinish
-          assistant.native = event.data.native
-          assistant.cost = event.data.cost
-          assistant.tokens = event.data.tokens
-          if (event.data.snapshot) assistant.snapshot = { ...assistant.snapshot, end: event.data.snapshot }
-        })
-        return
-      }
       case "session.step.failed":
         // A budget refusal means the cached usage limits are out of date, which is what the refusal sends people to.
         if (
@@ -950,174 +783,18 @@ export function createData(config: CreateDataInput) {
           (event.data.error.type === "provider.budget-limit" || event.data.error.type === "provider.model-budget-limit")
         )
           refreshUsageLimits(event.location)
-        message.editAssistant(event.data.sessionID, event.data.assistantMessageID, (assistant) => {
-          assistant.time.completed = event.created
-          assistant.finish = event.data.finish ?? "error"
-          assistant.rawFinish = event.data.rawFinish
-          assistant.native = event.data.native
-          assistant.error = event.data.error
-          assistant.retry = undefined
-          if (event.data.cost !== undefined && event.data.tokens !== undefined) {
-            assistant.cost = event.data.cost
-            assistant.tokens = event.data.tokens
-          }
-        })
-        return
-      case "session.text.started":
-        message.editAssistant(event.data.sessionID, event.data.assistantMessageID, (assistant) => {
-          assistant.content.push({ type: "text", text: "" })
-        })
-        return
-      case "session.text.delta":
-        message.editText(event.data.sessionID, event.data.assistantMessageID, (text) => {
-          text.text += event.data.delta
-        })
-        return
-      case "session.text.ended":
-        message.editText(event.data.sessionID, event.data.assistantMessageID, (text) => {
-          text.text = event.data.text
-        })
-        return
-      case "session.tool.input.started":
-        message.editAssistant(event.data.sessionID, event.data.assistantMessageID, (assistant) => {
-          assistant.content.push({
-            type: "tool",
-            id: event.data.id,
-            name: event.data.name,
-            time: { created: event.created },
-            state: { status: "streaming", input: "" },
-          })
-        })
-        return
-      case "session.tool.input.delta":
-        message.editTool(event.data.sessionID, event.data.assistantMessageID, event.data.id, (tool) => {
-          if (tool.state.status === "streaming") tool.state.input += event.data.delta
-        })
-        return
-      case "session.tool.input.ended":
-        message.editTool(event.data.sessionID, event.data.assistantMessageID, event.data.id, (tool) => {
-          if (tool.state.status === "streaming") tool.state.input = event.data.text
-        })
-        return
-      case "session.tool.called":
-        message.editTool(event.data.sessionID, event.data.assistantMessageID, event.data.id, (tool) => {
-          tool.time.ran = event.created
-          tool.executed = event.data.executed
-          tool.native = event.data.native
-          tool.state = { status: "running", input: event.data.input, metadata: {} }
-        })
-        return
-      case "session.tool.progress":
-        message.editTool(event.data.sessionID, event.data.assistantMessageID, event.data.id, (tool) => {
-          if (tool.state.status === "running") tool.state.metadata = event.data.metadata
-        })
-        return
-      case "session.tool.success":
-        message.editTool(event.data.sessionID, event.data.assistantMessageID, event.data.id, (tool) => {
-          if (tool.state.status !== "running") return
-          tool.state = {
-            status: "completed",
-            input: tool.state.input,
-            metadata: event.data.metadata,
-            content: [...event.data.content],
-          }
-          tool.executed = event.data.executed || tool.executed === true
-          if (event.data.native) tool.native = { ...tool.native, ...event.data.native }
-          tool.time.completed = event.created
-        })
-        return
-      case "session.tool.failed":
-        message.editTool(event.data.sessionID, event.data.assistantMessageID, event.data.id, (tool) => {
-          if (tool.state.status !== "streaming" && tool.state.status !== "running") return
-          tool.state = {
-            status: "error",
-            error: event.data.error,
-            input: typeof tool.state.input === "string" ? {} : tool.state.input,
-            metadata: event.data.metadata,
-            content: event.data.content,
-          }
-          tool.executed = event.data.executed || tool.executed === true
-          if (event.data.native) tool.native = { ...tool.native, ...event.data.native }
-          tool.time.completed = event.created
-        })
-        return
-      case "session.reasoning.started":
-        message.editAssistant(event.data.sessionID, event.data.assistantMessageID, (assistant) => {
-          assistant.content.push({
-            type: "reasoning",
-            text: "",
-            native: event.data.native,
-            time: { created: event.created },
-          })
-        })
-        return
-      case "session.reasoning.delta":
-        message.editReasoning(event.data.sessionID, event.data.assistantMessageID, (reasoning) => {
-          reasoning.text += event.data.delta
-        })
-        return
-      case "session.reasoning.ended":
-        message.editReasoning(event.data.sessionID, event.data.assistantMessageID, (reasoning) => {
-          reasoning.text = event.data.text
-          reasoning.time = { created: reasoning.time?.created ?? event.created, completed: event.created }
-          if (event.data.native !== undefined) reasoning.native = event.data.native
-        })
-        return
-      case "session.retry.scheduled":
-        message.editAssistant(event.data.sessionID, event.data.assistantMessageID, (assistant) => {
-          assistant.retry = { attempt: event.data.attempt, at: event.data.at, error: event.data.error }
-        })
         return
       case "session.execution.started":
         setSessionActive(event.data.sessionID, "running")
         return
       case "session.compaction.started":
         if (event.data.inputID) removePending(event.data.sessionID, event.data.inputID)
-        message.insert(event.data.sessionID, {
-          id: event.data.inputID ?? SessionMessage.ID.fromEvent(event.id),
-          type: "compaction",
-          status: "running",
-          reason: event.data.reason,
-          summary: "",
-          time: { created: event.created },
-        })
         if (event.data.inputID) compacting.get(event.data.sessionID)?.observed.add(event.data.inputID)
         return
       case "session.execution.succeeded":
       case "session.execution.failed":
       case "session.execution.interrupted":
         setSessionActive(event.data.sessionID, "idle")
-        message.update(event.data.sessionID, (draft) => {
-          const currentAssistant = message.activeAssistant(draft)
-          if (currentAssistant) currentAssistant.retry = undefined
-        })
-        if (event.type === "session.execution.interrupted" && event.data.reason === "shutdown") return
-        // Mirror the projected idle marker so turn boundaries match before the next message read.
-        message.insert(event.data.sessionID, {
-          id: SessionMessage.ID.fromEvent(event.id),
-          type: "idle",
-          outcome:
-            event.type === "session.execution.succeeded"
-              ? "succeeded"
-              : event.type === "session.execution.failed"
-                ? "failed"
-                : "interrupted",
-          ...(event.type === "session.execution.failed" ? { error: event.data.error } : {}),
-          time: { created: event.created },
-        })
-        if (
-          store.session.message[event.data.sessionID]?.some(
-            (item) =>
-              item.type === "assistant" &&
-              item.content.some(
-                (part) =>
-                  part.type === "tool" && (part.state.status === "streaming" || part.state.status === "running"),
-              ),
-          )
-        ) {
-          sync.invalidate(`session.message:${event.data.sessionID}`)
-          refresh(() => result.session.message.sync(event.data.sessionID))
-        }
         // An event can overtake the first read; queue a revalidation when that read is still active.
         if (!store.session.info[event.data.sessionID] && !sync.has(`session:${event.data.sessionID}`)) return
         result.session.invalidate(event.data.sessionID)
@@ -1147,71 +824,9 @@ export function createData(config: CreateDataInput) {
           event.data.sessionID,
           (store.session.pending[event.data.sessionID] ?? []).filter((item) => item.id < event.data.to),
         )
-        message.update(event.data.sessionID, (draft, index) => {
-          const position = draft.findIndex((item) => item.id >= event.data.to)
-          if (position === -1) return
-          for (const item of draft.splice(position)) index.delete(item.id)
-        })
-        return
-      case "session.compaction.delta":
-        if (!store.session.message[event.data.sessionID]) return
-        message.update(event.data.sessionID, (draft) => {
-          const current = message.compaction(draft)
-          if (current?.status === "running") current.summary += event.data.text
-        })
-        return
-      case "session.compaction.ended":
-        message.update(event.data.sessionID, (draft, index) => {
-          const position = draft.findLastIndex((item) => item.type === "compaction" && item.status === "running")
-          const current = draft[position]
-          if (current?.type === "compaction") {
-            Object.assign(current, {
-              status: "completed",
-              reason: event.data.reason,
-              model: event.data.model,
-              native: event.data.native,
-              summary: event.data.text,
-              cost: event.data.cost,
-              tokens: event.data.tokens,
-            })
-            return
-          }
-          message.append(draft, index, {
-            id: SessionMessage.ID.fromEvent(event.id),
-            type: "compaction",
-            status: "completed",
-            reason: event.data.reason,
-            model: event.data.model,
-            native: event.data.native,
-            summary: event.data.text,
-            cost: event.data.cost,
-            tokens: event.data.tokens,
-            time: { created: event.created },
-          })
-        })
         return
       case "session.compaction.failed":
         if (event.data.inputID) removePending(event.data.sessionID, event.data.inputID)
-        message.update(event.data.sessionID, (draft, index) => {
-          const position = draft.findLastIndex((item) => item.type === "compaction" && item.status === "running")
-          const current = draft[position]
-          const failed: Extract<SessionMessageInfo, { type: "compaction"; status: "failed" }> = {
-            id: current?.id ?? event.data.inputID ?? SessionMessage.ID.fromEvent(event.id),
-            type: "compaction",
-            status: "failed",
-            reason: event.data.reason,
-            error: event.data.error,
-            metadata: current?.type === "compaction" ? current.metadata : event.metadata,
-            cost: event.data.cost,
-            tokens: event.data.tokens,
-            time: current?.type === "compaction" ? current.time : { created: event.created },
-          }
-          if (current?.type === "compaction") {
-            draft[position] = failed
-            return
-          }
-          message.append(draft, index, failed)
-        })
         if (event.data.inputID) compacting.get(event.data.sessionID)?.observed.add(event.data.inputID)
         return
       case "permission.asked":
@@ -1398,6 +1013,13 @@ export function createData(config: CreateDataInput) {
   const result = {
     on: config.event.on,
     listen: config.event.listen,
+    /** PROTOTYPE (D-14): what each transcript event changed, for views that build incrementally. */
+    transcript: {
+      on(listener: (sessionID: string, change: Change) => void) {
+        transcriptListeners.add(listener)
+        return () => void transcriptListeners.delete(listener)
+      },
+    },
     session: {
       list() {
         return sessions()
@@ -2023,6 +1645,8 @@ export function createData(config: CreateDataInput) {
   createEffect(() => {
     if (config.connection?.status() === "connected") return
     sync.invalidate()
+    // PROTOTYPE (D-14): loaded transcripts stay valid across a drop; server.connected says whether replay covered it.
+    if (config.transcript) for (const id of Object.keys(store.session.message)) sync.complete(`session.message:${id}`)
   })
 
   onCleanup(
@@ -2030,6 +1654,7 @@ export function createData(config: CreateDataInput) {
       handleEvent(details)
     }),
   )
+  if (config.transcript) onCleanup(config.transcript.listen(handleTranscript))
 
   return result
 }

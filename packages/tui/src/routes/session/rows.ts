@@ -247,9 +247,6 @@ export function createSessionRows(sessionID: Accessor<string>, onSynced?: (sessi
     return index === -1 ? rows.length : index
   }
 
-  const message = (event: { id: string; data: { sessionID: string } }) => {
-    if (event.data.sessionID === sessionID()) appendMessage(event.id.replace(/^evt_/, "msg_"))
-  }
   const input = (event: SessionInboxEnqueued) => {
     if (
       event.data.sessionID === sessionID() &&
@@ -258,63 +255,42 @@ export function createSessionRows(sessionID: Accessor<string>, onSynced?: (sessi
     )
       appendMessage(event.data.inboxID)
   }
+  // PROTOTYPE (D-14): rows now follow what the shared transcript reducer changed, not raw session events.
+  const part = (message: SessionMessageAssistant, position: number) => {
+    const item = message.content[position]
+    if (!item || (item.type !== "tool" && !item.text.trim())) return
+    const partID =
+      item.type === "tool"
+        ? item.id
+        : `${item.type}:${message.content.slice(0, position).filter((other) => other.type === item.type).length}`
+    appendPart({ messageID: message.id, partID }, item)
+  }
+  const terminal = (message: SessionMessageAssistant) =>
+    Boolean((message.finish && !["tool-calls", "unknown"].includes(message.finish)) || message.error)
   const subscriptions = [
     data.on("session.inbox.enqueued", input),
-    data.on("session.compaction.started", (event) => {
-      if (event.data.sessionID === sessionID()) appendMessage(event.data.inputID ?? event.id.replace(/^evt_/, "msg_"))
-    }),
-    data.on("session.instructions.updated", message),
-    data.on("session.synthetic", (event) => {
-      if (event.data.sessionID === sessionID() && event.data.description?.trim())
-        appendMessage(event.id.replace(/^evt_/, "msg_"))
-    }),
-    data.on("session.shell.started", message),
-    data.on("session.agent.selected", message),
-    data.on("session.model.selected", message),
-    data.on("session.text.delta", (event) => {
-      if (event.data.sessionID === sessionID() && event.data.delta.trim())
-        appendPart({ messageID: event.data.assistantMessageID, partID: `text:${event.data.ordinal}` }, { type: "text" })
-    }),
-    data.on("session.text.ended", (event) => {
-      if (event.data.sessionID === sessionID() && event.data.text.trim())
-        appendPart({ messageID: event.data.assistantMessageID, partID: `text:${event.data.ordinal}` }, { type: "text" })
-    }),
-    data.on("session.reasoning.delta", (event) => {
-      if (event.data.sessionID === sessionID() && event.data.delta.trim())
-        appendPart(
-          { messageID: event.data.assistantMessageID, partID: `reasoning:${event.data.ordinal}` },
-          { type: "reasoning" },
-        )
-    }),
-    data.on("session.reasoning.ended", (event) => {
-      if (event.data.sessionID === sessionID() && event.data.text.trim())
-        appendPart(
-          { messageID: event.data.assistantMessageID, partID: `reasoning:${event.data.ordinal}` },
-          { type: "reasoning", time: { completed: event.created } },
-        )
-    }),
-    data.on("session.tool.input.started", (event) => {
-      if (event.data.sessionID === sessionID())
-        appendPart(
-          { messageID: event.data.assistantMessageID, partID: event.data.id },
-          { type: "tool", name: event.data.name },
-        )
-    }),
-    data.on("session.retry.scheduled", (event) => {
-      if (event.data.sessionID === sessionID()) appendFooter(event.data.assistantMessageID)
-    }),
-    data.on("session.step.started", (event) => {
-      if (event.data.sessionID === sessionID()) removeFooter(event.data.assistantMessageID)
-    }),
-    data.on("session.step.ended", (event) => {
-      if (event.data.sessionID !== sessionID() || ["tool-calls", "unknown"].includes(event.data.finish)) return
-      appendFooter(event.data.assistantMessageID)
-      if (turnTokens()) rebuild()
-    }),
-    data.on("session.step.failed", (event) => {
-      if (event.data.sessionID !== sessionID()) return
-      appendFooter(event.data.assistantMessageID)
-      if (turnTokens()) rebuild()
+    data.transcript.on((id, change) => {
+      if (id !== sessionID()) return
+      if (change.type === "removed") return rebuild()
+      if (change.type === "appended") {
+        const message = data.session.message.get(id, change.messageID)
+        if (message?.type === "assistant" && change.part !== undefined && change.delta.trim()) part(message, change.part)
+        return
+      }
+      const message = change.message
+      if (message.type !== "assistant") {
+        if (change.type !== "inserted" || ["user", "idle", "skill", "location-switched"].includes(message.type)) return
+        if (message.type === "synthetic" && !message.description?.trim()) return
+        return appendMessage(message.id)
+      }
+      if (change.type === "inserted") message.content.forEach((_, position) => part(message, position))
+      else change.parts.forEach((item) => part(message, item.part))
+      const previous = change.type === "updated" && change.previous.type === "assistant" ? change.previous : undefined
+      if (previous && terminal(previous) && !terminal(message)) removeFooter(message.id)
+      if ((terminal(message) && !(previous && terminal(previous))) || (message.retry && !previous?.retry)) {
+        appendFooter(message.id)
+        if (turnTokens()) rebuild()
+      }
     }),
   ]
   onCleanup(() => subscriptions.forEach((unsubscribe) => unsubscribe()))
