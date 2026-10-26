@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
-import type { SessionMessageInfo } from "@opencode/client/promise"
+import type { OpenCodeEvent, SessionMessageInfo } from "@opencode/client/promise"
 import { timelinePresets } from "@opencode/session-ui/timeline/detail"
 import { expected, messages } from "../utils/markdown-sessions"
 import { expectPath, holdRoute, seed, sessionHref, type SeedInput } from "../utils/app"
@@ -177,7 +177,7 @@ test("keeps verified inline paths across a workspace tab switch", async ({ page 
   const queries: { query: string; directory: string }[] = []
   const existing = new Set([directory])
   await page.clock.setFixedTime(new Date("2026-10-21T00:00:00Z"))
-  await mockWorkspace(page, {
+  const workspace = await mockWorkspace(page, {
     name: "InlinePaths",
     directory,
     project: { sandboxes: [other] },
@@ -205,11 +205,11 @@ test("keeps verified inline paths across a workspace tab switch", async ({ page 
     },
   })
   await page.goto(sessionHref(sourceID))
-  const source = page.locator(`[data-timeline-part-id="answer_${sourceID}:text:0"] code`)
+  const source = part(page, sourceID).locator("code")
   await expect(source).toHaveAttribute("data-inline-code-kind", "path")
   const original = await source.elementHandle()
   await tab(page, targetID).click()
-  const target = page.locator(`[data-timeline-part-id="answer_${targetID}:text:0"] code`)
+  const target = part(page, targetID).locator("code")
   await expect(target).toHaveText("src/file.ts")
   await expect.poll(() => queries.some((query) => query.directory === other)).toBe(true)
   await expect(target).not.toHaveAttribute("data-inline-code-kind")
@@ -230,23 +230,26 @@ test("keeps verified inline paths across a workspace tab switch", async ({ page 
     held.release()
   }
 
-  // A view that renders again, here after its tab closed, repeats the lookups. Expired positives keep their styling
-  // while revalidation is pending; negatives must discover new files.
-  await closeTab(page, sourceID)
+  // Markdown that renders again repeats its lookups: expired positives keep their styling while revalidation is
+  // pending, and negatives must discover new files. Link results last as long as the session screen, which going
+  // Home unmounts, so the text changes in place.
   await page.clock.setFixedTime(new Date("2026-10-21T00:01:01Z"))
   const refresh = await holdRoute(page, /\/api\/fs\/find\?/)
 
   try {
-    await reopen(page, sourceID)
+    await workspace.push([textEnded(sourceID, directory)])
     await refresh.arrived
+    await expect(part(page, sourceID)).toContainText("again")
     await expect(source).toHaveAttribute("data-inline-code-kind", "path")
   } finally {
     refresh.release()
   }
 
   existing.add(other)
-  await closeTab(page, targetID)
-  await reopen(page, targetID)
+  await tab(page, targetID).click()
+  await expect(target).toBeVisible()
+  await workspace.push([textEnded(targetID, other)])
+  await expect(part(page, targetID)).toContainText("again")
   await expect(target).toHaveAttribute("data-inline-code-kind", "path")
 })
 
@@ -597,20 +600,19 @@ function placeholderHistory(id: string) {
   }
 }
 
-async function closeTab(page: Page, sessionID: string) {
-  const closing = tab(page, sessionID)
-  await closing.click({ button: "right" })
-  await page.getByRole("menuitem", { name: "Close tab", exact: true }).click()
-  await expect(closing).toBeHidden()
+function part(page: Page, sessionID: string) {
+  return page.locator(`[data-timeline-part-id="answer_${sessionID}:text:0"]`)
 }
 
-async function reopen(page: Page, sessionID: string) {
-  await page.getByRole("button", { name: "Home", exact: true }).click()
-  await page
-    .locator(
-      `[data-component="home-session-row-container"][data-session-id="${sessionID}"] [data-component="home-session-row"]`,
-    )
-    .click()
+function textEnded(sessionID: string, directory: string): OpenCodeEvent {
+  return {
+    id: `evt_text_${sessionID}`,
+    created: 4,
+    type: "session.text.ended",
+    location: { directory },
+    durable: { aggregateID: sessionID, seq: 0, version: 1 },
+    data: { sessionID, assistantMessageID: `answer_${sessionID}`, ordinal: 0, text: "Inspect `src/file.ts` again." },
+  }
 }
 
 function tab(page: Page, sessionID: string) {
