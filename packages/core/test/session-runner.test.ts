@@ -3229,7 +3229,9 @@ describe("SessionRunnerLLM", () => {
 
     expect(s.requests).toHaveLength(2)
     expect(userTexts(s.requests[0])[0]).toContain("<summary>\n## Objective\n- Preserve the task\n</summary>")
-    expect(userTexts(s.requests[0])[0]).toContain("Recent exact request")
+    // The measured 3,950-token input plus the next prompt exceeds the 4k window. Flattening moves the previous
+    // checkpoint's retained text into the following transcript message, keeping it verbatim for the new summary.
+    expect(userTexts(s.requests[0])[1]).toContain(`[User]: ${"Recent exact request ".repeat(180)}`)
     expect(userTexts(s.requests[0]).at(-1)).toBe(SessionCompaction.buildPrompt(true))
     expect((yield* store.context(sessionID))[0]).toMatchObject({
       type: "compaction",

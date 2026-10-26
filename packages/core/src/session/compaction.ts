@@ -537,9 +537,12 @@ export const layer = Layer.effect(
       // Automatic compaction starts past the ceiling, so the whole conversation is sent unchanged while the window can
       // still fit the summary. Below that, the history before the tail is sent instead, as before: unchanged when it fits,
       // which still reuses the cache for that shorter prefix, and as text otherwise. Dropping exchanges to make room
-      // for the tail would leave them in neither the summary nor the tail. Where 15% of the window is under
-      // `RESERVE_MIN`, the ceiling equals `summaryRoom`, so automatic compaction always takes this fallback.
-      const fit = trigger.reason === "overflow" ? budget : Math.max(budget, summaryRoom(context.model.limit))
+      // for the tail would leave them in neither the summary nor the tail. A smaller prepared output limit needs
+      // less reserve; do not discard a cached prefix to reserve output the request cannot generate.
+      const fit =
+        trigger.reason === "overflow"
+          ? budget
+          : Math.max(budget, summaryRoom(context.model.limit, prepared.request.generation?.maxTokens))
       const result = yield* deliver(
         trigger,
         prepared,
@@ -1195,9 +1198,9 @@ const calculateCeiling = (limit: SessionContext.Loaded["model"]["limit"], buffer
   return window - Math.max(Math.floor(window * RESERVE_SHARE), window >= 2 * RESERVE_MIN ? RESERVE_MIN : 0)
 }
 
-/** The largest summary request that leaves `RESERVE_MIN` of the window for the summary. Zero for an unknown window. */
-const summaryRoom = (limit: SessionContext.Loaded["model"]["limit"]) =>
-  Math.max(0, (limit.input || limit.context) - RESERVE_MIN)
+/** Leave up to `RESERVE_MIN` for the summary, capped by the prepared output limit. Zero for an unknown window. */
+const summaryRoom = (limit: SessionContext.Loaded["model"]["limit"], output = RESERVE_MIN) =>
+  Math.max(0, (limit.input || limit.context) - Math.min(RESERVE_MIN, output))
 
 /**
  * Another provider's count may describe a native window this model cannot replay. History then holds the original
