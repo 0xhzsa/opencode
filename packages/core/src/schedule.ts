@@ -8,6 +8,7 @@ import { Config } from "./config.js"
 import { Database } from "./database/database.js"
 import { Instance } from "./instance/service.js"
 import { Session } from "./session.js"
+import { SessionExecution } from "./session/execution.js"
 import { SessionMessage } from "./session/message.js"
 import { SessionSchema } from "./session/schema.js"
 import { SessionInboxTable } from "./session/sql.js"
@@ -74,17 +75,35 @@ const duration = (value: string) =>
 const millis = (value: string) =>
   Option.getOrThrowWith(ScheduleSchema.durationMillis(value), () => new Error(`Invalid duration: ${value}`))
 
-/** Parses an instant with an offset or zone, or else a wall-clock time in `zone`. */
+const OFFSET = /T.*(?:z|[+-]\d{2}:?\d{2})$/i
+const BRACKETED_ZONE = /^(.*)\[([^\]]+)\]$/
+
+/** Parses an instant with an offset, or a wall-clock time in a `[Zone]` suffix or else in `zone`. */
 const parseAt = (input: string, zone: DateTime.TimeZone) => {
-  const parsed: Option.Option<DateTime.DateTime> = DateTime.makeZonedFromString(input).pipe(
-    Option.orElse(
-      (): Option.Option<DateTime.DateTime> =>
-        /z$/i.test(input)
-          ? DateTime.make(input)
-          : DateTime.makeZoned(input, { timeZone: zone, adjustForTimeZone: true }),
-    ),
-  )
+  const bracketed = BRACKETED_ZONE.exec(input)
+  const local = bracketed?.[1] ?? input
+  const parsed: Option.Option<DateTime.DateTime> = OFFSET.test(local)
+    ? DateTime.make(local)
+    : Option.flatMap(bracketed ? DateTime.zoneMakeNamed(bracketed[2]) : Option.some(zone), (timeZone) =>
+        DateTime.makeZoned(local, { timeZone, adjustForTimeZone: true }),
+      )
   return Option.map(parsed, DateTime.toEpochMillis)
+}
+
+const cronNext = Option.liftThrowable(Cron.next)
+
+/**
+ * The first slot strictly after `now`, or undefined if the expression never matches a date. In a DST fall-back fold
+ * Cron.next maps the repeated hour to its first occurrence, which is already past, so step forward until a slot lands
+ * after `now`.
+ */
+const nextCron = (cron: Cron.Cron, now: number) => {
+  for (let cursor = now; cursor < now + 86_400_000; cursor += 60_000) {
+    const next = cronNext(cron, new Date(cursor))
+    if (Option.isNone(next)) return undefined
+    if (next.value.getTime() > now) return next.value.getTime()
+  }
+  return undefined
 }
 
 /** The first slot strictly after `now`, or undefined for one-shots. */
@@ -100,7 +119,7 @@ const following = (row: Pick<Row, "when" | "tz" | "next_due_at">, now: number) =
       return due + (Math.floor((now - due) / every) + 1) * every
     }
     case "cron":
-      return Cron.next(Cron.parseUnsafe(row.when.cron, row.tz), new Date(now)).getTime()
+      return nextCron(Cron.parseUnsafe(row.when.cron, row.tz), now)
   }
 }
 
@@ -132,6 +151,7 @@ const layer = Layer.effect(
     const { db } = yield* Database.Service
     const sessions = yield* Session.Service
     const instances = yield* Instance.Service
+    const execution = yield* SessionExecution.Service
     const doorbell = yield* Latch.make()
 
     // Config is per location, so a schedule follows the config where its Session lives.
@@ -203,16 +223,25 @@ const layer = Layer.effect(
       })
     })
 
+    // Pause or remove may have landed since the tick read the row.
+    const reload = (row: Row, due: number) =>
+      db
+        .select()
+        .from(ScheduleTable)
+        .where(
+          and(eq(ScheduleTable.id, row.id), eq(ScheduleTable.status, "active"), eq(ScheduleTable.next_due_at, due)),
+        )
+        .get()
+        .pipe(Effect.orDie)
+
     const step = Effect.fnUntraced(function* (row: Row, now: number) {
       const due = row.next_due_at
       if (due === null || row.session_id === null) return
       const session = yield* sessions.get(row.session_id)
       if (!(yield* settings(session)).enabled) return
-      if (row.ends_at !== null && now > row.ends_at) {
-        yield* update(row, { status: "done", next_due_at: null, last_outcome: "expired", time_updated: now })
-        return
-      }
       if (row.last_message_id !== null && (yield* pending(row.last_message_id))) {
+        // The wake that followed admission may have been lost; waking again is harmless.
+        yield* execution.wake(session.id)
         const next = following(row, now)
         const done = finished(row, next, row.remaining_runs)
         yield* update(row, {
@@ -223,11 +252,12 @@ const layer = Layer.effect(
         })
         return
       }
-      yield* fire(row, session.id, due, now)
+      const current = yield* reload(row, due)
+      if (current === undefined) return
+      yield* fire(current, session.id, due, now)
     })
 
-    const tick = Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis
+    const tickAt = Effect.fnUntraced(function* (now: number) {
       const due = yield* db
         .select()
         .from(ScheduleTable)
@@ -243,25 +273,50 @@ const layer = Layer.effect(
           ),
         { discard: true },
       )
-    }).pipe(Effect.withSpan("Schedule.tick"))
+    }, Effect.withSpan("Schedule.tick"))
 
-    // Rows that are due but could not fire (flag off, a failed prompt) are retried after MAX_SLEEP, not in a spin.
-    const nextWake = Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis
+    const tick = Effect.flatMap(Clock.currentTimeMillis, tickAt)
+
+    // Rows due by `from` that could not fire (flag off, a failed prompt) are retried after MAX_SLEEP, not in a spin.
+    const nextWake = Effect.fnUntraced(function* (from: number) {
       const row = yield* db
         .select({ at: min(ScheduleTable.next_due_at) })
         .from(ScheduleTable)
-        .where(and(eq(ScheduleTable.status, "active"), gt(ScheduleTable.next_due_at, now)))
+        .where(and(eq(ScheduleTable.status, "active"), gt(ScheduleTable.next_due_at, from)))
         .get()
         .pipe(Effect.orDie)
-      return Math.min(MAX_SLEEP, row?.at == null ? MAX_SLEEP : row.at - now)
+      if (row?.at == null) return MAX_SLEEP
+      return Math.max(0, Math.min(MAX_SLEEP, row.at - (yield* Clock.currentTimeMillis)))
     })
 
-    const run = Effect.gen(function* () {
+    // A crash between admitting a prompt and its Session claiming the work leaves the prompt unclaimed and the
+    // Session asleep, so wake every Session whose last scheduled prompt is still pending.
+    const rewake = db
+      .selectDistinct({ sessionID: ScheduleTable.session_id })
+      .from(ScheduleTable)
+      .innerJoin(SessionInboxTable, eq(SessionInboxTable.id, ScheduleTable.last_message_id))
+      .all()
+      .pipe(
+        Effect.orDie,
+        Effect.flatMap((rows) =>
+          Effect.forEach(rows, (row) => (row.sessionID === null ? Effect.void : execution.wake(row.sessionID)), {
+            discard: true,
+          }),
+        ),
+      )
+
+    const loop = Effect.gen(function* () {
       yield* doorbell.close
-      yield* tick.pipe(Effect.catchCause((cause) => Effect.logError("schedule tick failed", { cause })))
-      yield* doorbell.await.pipe(Effect.timeoutOption(yield* nextWake))
-    }).pipe(Effect.forever)
+      const now = yield* Clock.currentTimeMillis
+      yield* tickAt(now).pipe(Effect.catchCause((cause) => Effect.logError("schedule tick failed", { cause })))
+      const wait = yield* nextWake(now)
+      if (wait > 0) yield* doorbell.await.pipe(Effect.timeoutOption(wait))
+    })
+
+    const run = rewake.pipe(
+      Effect.catchCause((cause) => Effect.logError("schedule rewake failed", { cause })),
+      Effect.andThen(Effect.forever(loop)),
+    )
 
     const resolveZone = (tz: string | undefined) => {
       if (tz === undefined) return Effect.succeed(DateTime.zoneMakeLocal())
@@ -291,7 +346,9 @@ const layer = Layer.effect(
           if (Result.isFailure(cron)) return yield* new InvalidError({ reason: cron.failure.message })
           if (cron.success.seconds.size !== 1)
             return yield* new InvalidError({ reason: "cron must fire at most once a minute" })
-          return Cron.next(cron.success, new Date(now)).getTime()
+          const next = nextCron(cron.success, now)
+          if (next === undefined) return yield* new InvalidError({ reason: `cron never fires: ${when.cron}` })
+          return next
         }
       }
     })
@@ -390,5 +447,5 @@ const layer = Layer.effect(
 export const node = makeGlobalNode({
   service: Service,
   layer,
-  deps: [Database.node, Session.node, Instance.node],
+  deps: [Database.node, Session.node, SessionExecution.node, Instance.node],
 })

@@ -36,6 +36,8 @@ const enabledDirectory = "/enabled"
 const disabledDirectory = "/disabled"
 
 const wakes: Session.ID[] = []
+/** Runs inside the next wake, which happens while a schedule is firing. */
+let duringWake: Effect.Effect<void> = Effect.void
 const execution = Layer.succeed(
   SessionExecution.Service,
   SessionExecution.Service.of({
@@ -43,7 +45,13 @@ const execution = Layer.succeed(
     isActive: () => Effect.succeed(false),
     resume: () => Effect.void,
     interrupt: () => Effect.succeed(false),
-    wake: (sessionID) => Effect.sync(() => void wakes.push(sessionID)),
+    wake: (sessionID) =>
+      Effect.suspend(() => {
+        wakes.push(sessionID)
+        const effect = duringWake
+        duringWake = Effect.void
+        return effect
+      }),
     awaitIdle: () => Effect.void,
   }),
 )
@@ -106,6 +114,7 @@ const setup = (directory = enabledDirectory) =>
       .run()
       .pipe(Effect.orDie)
     wakes.length = 0
+    duringWake = Effect.void
     return yield* Schedule.Service
   })
 
@@ -285,6 +294,8 @@ describe("Schedule", () => {
       yield* schedules.tick
       expect(yield* pending).toEqual([messageID(schedule, 1)])
       expect(yield* schedules.get(schedule.id)).toMatchObject({ runCount: 1, lastOutcome: "skipped" })
+      // The skip wakes the Session again in case the wake after admission was lost.
+      expect(wakes).toEqual([sessionID, sessionID])
 
       yield* deliver
       yield* TestClock.adjust("1 minute")
@@ -398,6 +409,144 @@ describe("Schedule", () => {
       yield* Effect.yieldNow
       expect(yield* pending).toEqual([messageID(schedule, 1)])
       yield* Fiber.interrupt(fiber)
+    }),
+  )
+
+  it.effect("fires the last slot when the tick lands just after ends_at", () =>
+    Effect.gen(function* () {
+      const schedules = yield* setup()
+      const schedule = yield* schedules.create({
+        sessionID,
+        when: { type: "every", every: "10 minutes" },
+        ends: { after: "20 minutes" },
+        action: { type: "prompt", prompt: "poll" },
+      })
+      yield* TestClock.adjust("10 minutes")
+      yield* schedules.tick
+      yield* deliver
+      yield* TestClock.adjust(600_001)
+      yield* schedules.tick
+      expect(yield* pending).toEqual([messageID(schedule, 2)])
+      expect(yield* schedules.get(schedule.id)).toMatchObject({ status: "done", runCount: 2, lastOutcome: "fired" })
+    }),
+  )
+
+  it.effect("keeps the next cron slot after now inside a DST fold", () =>
+    Effect.gen(function* () {
+      // 1:00 EDT; at 06:00Z the clocks fall back and 1:00-1:59 repeats as EST.
+      yield* setTime("2026-11-01T05:00:00Z")
+      const schedules = yield* setup()
+      const early = yield* schedules.create({
+        sessionID,
+        when: { type: "cron", cron: "*/10 * * * *", tz: "America/New_York" },
+        action: { type: "prompt", prompt: "poll" },
+      })
+      expect(iso(early.nextDueAt)).toBe("2026-11-01T05:10:00.000Z")
+
+      yield* setTime("2026-11-01T06:05:00Z")
+      yield* schedules.tick
+      expect(iso((yield* schedules.get(early.id)).nextDueAt)).toBe("2026-11-01T07:00:00.000Z")
+      const inFold = yield* schedules.create({
+        sessionID,
+        when: { type: "cron", cron: "*/10 * * * *", tz: "America/New_York" },
+        action: { type: "prompt", prompt: "poll" },
+      })
+      expect(iso(inFold.nextDueAt)).toBe("2026-11-01T07:00:00.000Z")
+    }),
+  )
+
+  it.effect("rejects a cron that never fires", () =>
+    Effect.gen(function* () {
+      const schedules = yield* setup()
+      const error = yield* Effect.flip(
+        schedules.create({
+          sessionID,
+          when: { type: "cron", cron: "0 0 31 2 *" },
+          action: { type: "prompt", prompt: "never" },
+        }),
+      )
+      expect(error).toMatchObject({ _tag: "Schedule.InvalidError" })
+    }),
+  )
+
+  it.effect("wakes a Session on start when its scheduled prompt was never claimed", () =>
+    Effect.gen(function* () {
+      const schedules = yield* setup()
+      yield* schedules.create({
+        sessionID,
+        when: { type: "in", in: "1 minute" },
+        action: { type: "prompt", prompt: "once" },
+      })
+      yield* TestClock.adjust("1 minute")
+      yield* schedules.tick
+      // The process died before the Session claimed the prompt, so that wake was lost.
+      wakes.length = 0
+      const fiber = yield* Effect.forkChild(schedules.run)
+      yield* Effect.yieldNow
+      expect(wakes).toEqual([sessionID])
+      yield* Fiber.interrupt(fiber)
+    }),
+  )
+
+  it.effect("parses at times with offsets and bracketed zones", () =>
+    Effect.gen(function* () {
+      yield* setTime("2026-11-01T12:00:00Z")
+      const schedules = yield* setup()
+      const at = (value: string) =>
+        schedules
+          .create({ sessionID, when: { type: "at", at: value }, action: { type: "prompt", prompt: "at" } })
+          .pipe(Effect.map((schedule) => iso(schedule.nextDueAt)))
+      expect(yield* at("2026-11-02T09:30:00-0500")).toBe("2026-11-02T14:30:00.000Z")
+      expect(yield* at("2026-11-02T09:30:00-05:00")).toBe("2026-11-02T14:30:00.000Z")
+      expect(yield* at("2026-11-02T09:30:00[Europe/Paris]")).toBe("2026-11-02T08:30:00.000Z")
+      expect(yield* at("2026-11-02T09:30:00+01:00[Europe/Paris]")).toBe("2026-11-02T08:30:00.000Z")
+      expect(yield* at("2026-11-02T09:30")).toBe("2026-11-02T14:30:00.000Z")
+    }),
+  )
+
+  it.effect("run ticks again at once when a schedule fell due while it was firing", () =>
+    Effect.gen(function* () {
+      const schedules = yield* setup()
+      const first = yield* schedules.create({
+        sessionID,
+        when: { type: "in", in: "10 seconds" },
+        action: { type: "prompt", prompt: "first" },
+      })
+      const second = yield* schedules.create({
+        sessionID,
+        when: { type: "in", in: "10500 millis" },
+        action: { type: "prompt", prompt: "second" },
+      })
+      // Firing the first schedule takes a second.
+      duringWake = TestClock.adjust("1 second")
+      const fiber = yield* Effect.forkChild(schedules.run)
+      yield* Effect.yieldNow
+      yield* TestClock.adjust("10 seconds")
+      // Let the loop finish both ticks without moving the clock.
+      for (let i = 0; i < 50; i++) yield* Effect.yieldNow
+      expect(yield* pending).toEqual([messageID(first, 1), messageID(second, 1)])
+      yield* Fiber.interrupt(fiber)
+    }),
+  )
+
+  it.effect("does not fire a schedule paused after the tick read it", () =>
+    Effect.gen(function* () {
+      const schedules = yield* setup()
+      const first = yield* schedules.create({
+        sessionID,
+        when: { type: "in", in: "1 minute" },
+        action: { type: "prompt", prompt: "first" },
+      })
+      const second = yield* schedules.create({
+        sessionID,
+        when: { type: "in", in: "61 seconds" },
+        action: { type: "prompt", prompt: "second" },
+      })
+      yield* TestClock.adjust("61 seconds")
+      duringWake = schedules.pause(second.id).pipe(Effect.orDie, Effect.asVoid)
+      yield* schedules.tick
+      expect(yield* pending).toEqual([messageID(first, 1)])
+      expect(yield* schedules.get(second.id)).toMatchObject({ status: "paused", runCount: 0 })
     }),
   )
 })
