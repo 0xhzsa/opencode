@@ -16,14 +16,17 @@ export const growthSpring = motionTuning.spring("timeline.growth", {
 // The soft edge a growing row's new part reveals under. A streaming row's newest line uses a shorter one, so it gains
 // its height sooner and the mask shows for less time.
 export const softEdge = 28
+
 export const streamingEdge = 12
 
 const ease = (t: number) => t * t * (3 - 2 * t)
+
 const easeOut = (t: number) => 1 - (1 - t) * (1 - t)
 
 // Like the iOS WorkingHandoffPose: Working blurs and shrinks out as the reply's copy button sharpens in.
 export function workingHandoffPose(handoff: number, handsOffToCopy = true, reduceMotion = false) {
   const m = Math.min(1, Math.max(0, handoff))
+
   if (m <= 0)
     return {
       indicatorOpacity: 1,
@@ -33,6 +36,7 @@ export function workingHandoffPose(handoff: number, handsOffToCopy = true, reduc
       copyBlur: 6,
       copyScale: 0.6,
     }
+
   if (reduceMotion)
     return {
       indicatorOpacity: 1 - m,
@@ -42,8 +46,10 @@ export function workingHandoffPose(handoff: number, handsOffToCopy = true, reduc
       copyBlur: 0,
       copyScale: 1,
     }
+
   if (!handsOffToCopy) {
     const out = ease(m)
+
     return {
       indicatorOpacity: 1 - out,
       indicatorBlur: 4 * m,
@@ -53,10 +59,12 @@ export function workingHandoffPose(handoff: number, handsOffToCopy = true, reduc
       copyScale: 0.6,
     }
   }
+
   const out = Math.min(1, Math.max(0, m / 0.7))
   const into = Math.min(1, Math.max(0, (m - 0.25) / 0.75))
   const easedOut = ease(out)
   const easedInto = easeOut(into)
+
   return {
     indicatorOpacity: 1 - easedOut,
     indicatorBlur: 6 * out,
@@ -77,12 +85,15 @@ export function workingHandoff(
   const samples = 24
   const poses = Array.from({ length: samples + 1 }, (_, index) => workingHandoffPose(index / samples, !!copy, reduced))
   const timing = { duration: 340 * motionTuning.timeScale(), easing: "linear" }
+
   const frame = (opacity: number, blur: number, scale: number) => ({
     opacity,
     filter: `blur(${Math.round(blur * 100) / 100}px)`,
     transform: `scale(${Math.round(scale * 1000) / 1000})`,
   })
+
   if (copy) copy.style.transformOrigin = "left center"
+
   return [
     indicator?.animate(
       poses.map((pose) => frame(pose.indicatorOpacity, pose.indicatorBlur, pose.indicatorScale)),

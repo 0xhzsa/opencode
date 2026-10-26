@@ -46,12 +46,15 @@ export function readTimelineTypography(element: Element, revision: number): Time
   probe.append(code)
   element.append(probe)
   const chrome = getComputedStyle(code)
+
   const codeInset = [chrome.paddingTop, chrome.paddingBottom, chrome.borderTopWidth, chrome.borderBottomWidth].reduce(
     (sum, value) => sum + parseFloat(value),
     0,
   )
+
   const codeLineHeight = parseFloat(chrome.lineHeight) || 20
   probe.remove()
+
   return {
     family: style.getPropertyValue("--font-family-sans").trim(),
     codeFamily: style.getPropertyValue("--font-family-mono").trim(),
@@ -83,6 +86,7 @@ export function createTimelineTextLayout() {
       height?: number
     }
   >()
+
   const rich = new Map<
     string,
     {
@@ -93,6 +97,7 @@ export function createTimelineTextLayout() {
       height?: number
     }
   >()
+
   let revision = -1
 
   function refresh(next: number) {
@@ -109,11 +114,13 @@ export function createTimelineTextLayout() {
       const font = `${style.weight} ${style.size}px ${style.family}`
       const targetWidth = Math.max(1, width)
       const previous = text.get(key)
+
       const sameText =
         previous?.value === value &&
         previous.font === font &&
         previous.letterSpacing === style.letterSpacing &&
         previous.whiteSpace === whiteSpace
+
       if (
         sameText &&
         previous.width === targetWidth &&
@@ -121,9 +128,11 @@ export function createTimelineTextLayout() {
         previous.height !== undefined
       )
         return previous.height
+
       const prepared = sameText
         ? previous.prepared
         : prepare(value, font, { whiteSpace, letterSpacing: style.letterSpacing })
+
       const height = layout(prepared, targetWidth, style.lineHeight).height
       text.set(key, {
         value,
@@ -135,6 +144,7 @@ export function createTimelineTextLayout() {
         lineHeight: style.lineHeight,
         height,
       })
+
       return height
     },
     rich(key: string, items: RichInlineItem[], width: number, lineHeight: number, revision: number) {
@@ -142,11 +152,13 @@ export function createTimelineTextLayout() {
       const targetWidth = Math.max(1, width)
       const previous = rich.get(key)
       const same = !!previous && sameItems(previous.items, items)
+
       if (same && previous.width === targetWidth && previous.lineHeight === lineHeight && previous.height !== undefined)
         return previous.height
       const prepared = same ? previous.prepared : prepareRichInline(items)
       const height = walkRichInlineLineRanges(prepared, targetWidth, () => {}) * lineHeight
       rich.set(key, { items, prepared, width: targetWidth, lineHeight, height })
+
       return height
     },
     ch(style: TimelineTypography) {
@@ -154,6 +166,7 @@ export function createTimelineTextLayout() {
       const font = `${style.weight} ${style.size}px ${style.family}`
       const key = `ch:${font}`
       const previous = text.get(key)
+
       if (previous) return previous.height ?? measureNaturalWidth(previous.prepared)
       const prepared = prepare("0", font)
       const chWidth = measureNaturalWidth(prepared)
@@ -165,6 +178,7 @@ export function createTimelineTextLayout() {
         prepared,
         height: chWidth,
       })
+
       return chWidth
     },
   }

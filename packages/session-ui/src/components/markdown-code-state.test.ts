@@ -81,6 +81,7 @@ test("projects highlighted prefix with an unstyled trailing suffix while worker 
     ...interim,
     raw: "```ts\nconst x = 1\nconst y = 2\n",
   })
+
   expect(diffInterim).toEqual({
     keep: 4,
     append: [["const y = 2\n", ""]],
@@ -98,14 +99,11 @@ test("projects highlighted prefix with an unstyled trailing suffix while worker 
   const diffCaughtUp = diffCodeTokens(renderedInterim, {
     language: "ts",
     generation: 1,
-    stable: [
-      ...highlighted.stable,
-      [" = 1\n", "color:#00f"],
-      ["const", "color:#f00"],
-    ],
+    stable: [...highlighted.stable, [" = 1\n", "color:#00f"], ["const", "color:#f00"]],
     unstable: [[" y = 2\n", "color:#0f0"]],
     raw: "```ts\nconst x = 1\nconst y = 2\n",
   })
+
   expect(diffCaughtUp).toEqual({
     keep: 4,
     append: [
@@ -143,6 +141,7 @@ test("preserves matching token spans across completion generation bumps", () => 
     unstable: [],
     raw: "```ts\nconst x = 1\n```",
   })
+
   expect(completed).toEqual({
     keep: 3,
     append: [[" = 1", "color:#00f"]],

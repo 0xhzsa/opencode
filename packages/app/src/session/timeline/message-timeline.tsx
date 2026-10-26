@@ -251,15 +251,21 @@ function MessageTimelineView(
       )
     })
   })
+
   const showWorking = createMemo(() => working() && !thinking())
   const showActivity = createMemo(() => working() || !!backgroundHintPartID())
+
   const timelineRows = createMemo(() => {
     const base = projection.rows()
     const active = projection.activeMessageID()
+
     if (!showActivity() || !active) return base.filter((row) => !Predicate.isTagged(row, "Activity"))
+
     if (base.some((row) => Predicate.isTagged(row, "Activity"))) return base
+
     return [...base, new TimelineRow.Activity({ userMessageID: active })]
   })
+
   const timelineRowByKey = createMemo(() => new Map(timelineRows().map((row) => [TimelineRow.key(row), row])))
 
   const virtualized = createTimelineVirtualizer({
@@ -273,7 +279,7 @@ function MessageTimelineView(
     },
     showHeader,
     layout: (row, environment) =>
-      row._tag === "Activity" ? { source: "fixed", height: 36 } : rowRenderer.layout(row, environment),
+      Predicate.isTagged(row, "Activity") ? { source: "fixed", height: 36 } : rowRenderer.layout(row, environment),
     pinned,
     scroll: () => props.scroll,
     onResumeScroll: props.onResumeScroll,
@@ -689,6 +695,7 @@ function createStatusFade(show: Accessor<boolean>, hold = 0) {
 
   const run = (visible: boolean) => {
     if (!element) return !visible && setPresent(false)
+
     // An interrupted fade turns around from the opacity it has reached.
     const from = entering
       ? 0
@@ -697,15 +704,18 @@ function createStatusFade(show: Accessor<boolean>, hold = 0) {
         : visible
           ? 0
           : 1
+
     entering = false
     fade?.cancel()
 
     // It slides out from the status beside it as it fades, and back toward it as it leaves; reduced motion only fades.
     const still = prefersReducedMotion()
+
     const pose = (opacity: number) => ({
       opacity: String(opacity),
       translate: still ? "0 0" : `${(opacity - 1) * 6}px 0`,
     })
+
     const current = element.animate([pose(from), pose(visible ? 1 : 0)], {
       duration: (visible ? 240 : 140) * motionTuning.timeScale(),
       easing: visible ? "cubic-bezier(.22,1,.36,1)" : "cubic-bezier(.4,0,1,1)",
@@ -746,6 +756,7 @@ function createStatusFade(show: Accessor<boolean>, hold = 0) {
     present,
     ref(value: HTMLElement) {
       element = value
+
       // Solid builds the row outside the document, on a timeline that never runs, so the fade starts once it is
       // inserted, still before it paints.
       if (entering) queueMicrotask(() => entering && run(true))

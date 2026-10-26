@@ -388,10 +388,12 @@ export function ComposerEditor(props: ComposerEditorProps) {
                 style={{ "unicode-bidi": state.mode === "normal" ? "plaintext" : undefined, "text-align": "start" }}
               >
                 <FadingText
-                  text={view.placeholder?.() ??
+                  text={
+                    view.placeholder?.() ??
                     (state.mode === "shell"
                       ? i18n.t("ui.promptInput.placeholder.shell")
-                      : i18n.t("ui.promptInput.placeholder.normal", { slash: "/", at: "@" }))}
+                      : i18n.t("ui.promptInput.placeholder.normal", { slash: "/", at: "@" }))
+                  }
                 />
               </div>
             </Show>
@@ -1415,6 +1417,7 @@ function ComposerEditorAlternateDelivery(props: { controller: ComposerEditorMode
       { defer: true },
     ),
   )
+
   // Appears and leaves on the same frame as the placeholder, so typing never shows a fade.
   return (
     <Show when={settled()} keyed>
@@ -1515,6 +1518,7 @@ function FadingText(props: { text: string }) {
       (next, prev) => {
         activeCopy?.remove()
         activeCopy = undefined
+
         if (!element?.isConnected || !prev || !next || prev === next) return
         // SAFETY: a deep clone has the same element type as its source.
         const copy = element.cloneNode(true) as HTMLElement

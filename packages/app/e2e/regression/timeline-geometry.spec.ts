@@ -93,16 +93,19 @@ test("remeasures a recent explored context group before the next paint", async (
           const content = context!.querySelector<HTMLElement>('[data-slot="collapsible-content"]')
           const allocated = virtualRow.getBoundingClientRect().height
           const inner = virtualRow.firstElementChild?.getBoundingClientRect().height ?? Infinity
+
           // A revealing row is drawn down to its box less the clip that trims the box's reach below the reveal.
           const clip =
             getComputedStyle(virtualRow)
               .clipPath.match(/^inset\((.*)\)$/)?.[1]
               ?.split(" ")
               .map(parseFloat) ?? []
+
           const shown = Math.min(
             contextRow.getBoundingClientRect().bottom,
             virtualRow.getBoundingClientRect().bottom - Math.max(0, clip[2] ?? clip[0] ?? 0),
           )
+
           samples.push({
             frame,
             allocated,
@@ -588,6 +591,7 @@ for (const failed of [false, true]) {
       expect(frames.some((frame) => frame.working && frame.prompt === undefined)).toBe(false)
       const shown = frames.filter((frame) => frame.prompt !== undefined)
       expect(shown.length).toBeGreaterThan(0)
+
       // The prompt grows in at the followed end and rises into place: it never moves back down or jumps, including
       // when Working shows. A jump is more than 40px in one 60Hz frame; a slow machine's longer frames carry the rise
       // further, so the bound scales with the time each frame took.
@@ -595,6 +599,7 @@ for (const failed of [false, true]) {
         step: frame.prompt! - shown[index]!.prompt!,
         elapsed: frame.time - shown[index]!.time,
       }))
+
       expect(
         steps.filter((step) => step.step > 0.5 || step.step < -40 * Math.max(1, step.elapsed / (1000 / 60))),
       ).toEqual([])
@@ -801,6 +806,7 @@ test("groups consecutive sent prompts under the last one's meta line, with each 
   await expect(first.getByRole("button", { name: "Copy message" })).toHaveCount(1)
   // Beside the bubble, never over its text.
   const text = (await bubble(first).boundingBox())!
+
   const buttons = await first
     .locator('[data-slot="user-message-run-actions"] button')
     .evaluateAll((items) =>
@@ -808,6 +814,7 @@ test("groups consecutive sent prompts under the last one's meta line, with each 
         .filter((item) => item.checkVisibility({ visibilityProperty: true }))
         .map((item) => item.getBoundingClientRect().right),
     )
+
   expect(buttons.length).toBeGreaterThan(0)
   expect(Math.max(...buttons)).toBeLessThanOrEqual(text.x + 0.5)
 })

@@ -17,8 +17,10 @@ let report = () => ({
   offset: 0,
   viewport: 0,
   mounted: 0,
+  // SAFETY: widens the empty initial list to the field's type.
   mismatches: [] as string[],
 })
+
 let reveal = (_id: string) => {}
 
 export function mountLongTimeline(count = 1800) {
@@ -27,6 +29,7 @@ export function mountLongTimeline(count = 1800) {
   host.style.cssText =
     "position:fixed;inset:24px;width:744px;height:640px;z-index:1000;background:var(--v2-background-bg-base)"
   document.body.append(host)
+
   const fixture: SessionDocument = {
     sessionID: "pretext-long-session",
     status: { type: "idle" },
@@ -47,22 +50,23 @@ export function mountLongTimeline(count = 1800) {
         content: [
           {
             type: "text" as const,
-            text:
-              index % 3 === 0
-                ? `## Result ${index + 1}\n\n${"The prepared text preserves **strong words** and `inline code`. ".repeat(1 + (index % 7))}`
-                : index % 3 === 1
-                  ? `A concrete implementation.\n\n\`\`\`ts\nconst result = ${index};\nconsole.log(result);\n\`\`\`\n\nThe source stays selectable.`
-                  : `These are the steps.\n\n- Prepare the text once.\n- Reuse its measured advances when the viewport changes.\n- Paint the same revision.\n\nReady.`,
+            text: [
+              `## Result ${index + 1}\n\n${"The prepared text preserves **strong words** and `inline code`. ".repeat(1 + (index % 7))}`,
+              `A concrete implementation.\n\n\`\`\`ts\nconst result = ${index};\nconsole.log(result);\n\`\`\`\n\nThe source stays selectable.`,
+              `These are the steps.\n\n- Prepare the text once.\n- Reuse its measured advances when the viewport changes.\n- Paint the same revision.\n\nReady.`,
+            ][index % 3]!,
           },
         ],
         time: { created: STORY_TIME + index * 2, completed: STORY_TIME + index * 2 + 1 },
       },
     ]),
   }
+
   function Fixture() {
     const [state, setState] = createStore({ pinned: true })
     const sizes = new Map<string, TimelineRowLayout>()
     let viewport: HTMLDivElement | undefined
+
     const projection = createReactiveTimelineProjection({
       sessionMessages: () => fixture.messages,
       status: () => fixture.status,
@@ -70,6 +74,7 @@ export function mountLongTimeline(count = 1800) {
       shellToolDefaultOpen: () => false,
       editToolDefaultOpen: () => false,
     })
+
     const timeline = createTimelineVirtualizer({
       sessionKey: () => fixture.sessionID,
       projection,
@@ -77,6 +82,7 @@ export function mountLongTimeline(count = 1800) {
       layout: (row, environment) => {
         const value = renderer.layout(row, environment)
         sizes.set(TimelineRow.key(row), value)
+
         return value
       },
       pinned: () => state.pinned,
@@ -97,6 +103,7 @@ export function mountLongTimeline(count = 1800) {
         reveal = callback
       },
     })
+
     const renderer = createSessionTimelineRowRenderer({
       sessionID: () => fixture.sessionID,
       status: () => fixture.status,
@@ -107,8 +114,10 @@ export function mountLongTimeline(count = 1800) {
       editToolDefaultOpen: () => false,
       disclosure: timeline.disclosure,
     })
+
     report = () => {
       const mounted = [...host.querySelectorAll<HTMLElement>("[data-timeline-key]")]
+
       return {
         count: projection.rows().length,
         fallbacks: projection.rows().filter((row) => sizes.get(TimelineRow.key(row))?.source === "dom").length,
@@ -121,12 +130,14 @@ export function mountLongTimeline(count = 1800) {
           const key = element.dataset.timelineKey!
           const size = sizes.get(key)
           const natural = element.firstElementChild!.getBoundingClientRect().height
+
           return size && size.source !== "dom" && Math.abs(natural - size.height) > 1
             ? [`${key}: ${natural} != ${size.height}`]
             : []
         }),
       }
     }
+
     return (
       <timeline.View
         header={null}
@@ -135,6 +146,7 @@ export function mountLongTimeline(count = 1800) {
       />
     )
   }
+
   render(
     () => (
       <LanguageProvider locale="en">
@@ -152,7 +164,9 @@ export function mountLongTimeline(count = 1800) {
 export function longTimelineReport() {
   return report()
 }
+
 export function jumpLongTimeline(index: number) {
   reveal(`long-user-${index}`)
+
   return report()
 }

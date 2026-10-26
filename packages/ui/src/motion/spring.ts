@@ -31,6 +31,7 @@ function coefficients(w: number, z: number, t: number) {
 export function springAt(x0: number, v0: number, omega: number, zeta: number, t: number): [number, number] {
   if (t <= 0) return [x0, v0]
   coefficients(omega, zeta, t)
+
   return [matrix[3]! * x0 + matrix[4]! * v0, matrix[5]! * x0 + matrix[6]! * v0]
 }
 
@@ -40,10 +41,12 @@ export function springSettle(x0: number, v0: number, omega: number, zeta: number
   const step = 1 / 120
   let t = 0
   let state: [number, number] = [x0, v0]
+
   while (t < 4 && (Math.abs(state[0]) > limit || Math.abs(state[1]) > limit * omega)) {
     t += step
     state = springAt(x0, v0, omega, zeta, t)
   }
+
   return Math.max(step, t)
 }
 
@@ -103,6 +106,7 @@ export class Spring {
     }
 
     const nextOmega = (2 * Math.PI) / duration
+
     if (this.omega > 0) this.velocity *= nextOmega / this.omega
     this.omega = nextOmega
     this.zeta = 1 - bounce

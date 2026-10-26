@@ -184,6 +184,7 @@ export function ScrollView(props: ScrollViewProps) {
 
   const [state, setState] = createStore({
     isHovered: false,
+    // SAFETY: widens the initial value to the store's field type.
     dragging: undefined as "vertical" | "horizontal" | undefined,
     isScrolling: false,
     verticalThumbSize: 0,
@@ -280,7 +281,9 @@ export function ScrollView(props: ScrollViewProps) {
       () =>
         local.verticalGeometry && !horizontal()
           ? []
-          : ([viewportRef, viewportRef.firstElementChild, thumbMount()].filter(Boolean) as HTMLElement[]),
+          : [viewportRef, viewportRef.firstElementChild, thumbMount()].filter(
+              (element) => element instanceof HTMLElement,
+            ),
       updateThumb,
     )
   })
@@ -502,7 +505,10 @@ export function ScrollView(props: ScrollViewProps) {
         class="scroll-view__viewport"
         data-scrollable
         onScroll={(e) => {
-          if (typeof events.onScroll === "function") events.onScroll(e as any)
+          // SAFETY: a Solid event prop is a handler or a bound [handler, data] pair; `typeof` tells them apart.
+          // oxlint-disable-next-line anti-slop/no-runtime-typeof -- see SAFETY above
+          if (typeof events.onScroll === "function") events.onScroll(e)
+
           if (!local.verticalGeometry || horizontal()) updateThumb()
           markScrolling()
         }}
@@ -513,24 +519,32 @@ export function ScrollView(props: ScrollViewProps) {
             markScrolling()
             const handler = events.onWheel
 
-            if (typeof handler === "function") handler(e as any)
+            // SAFETY: the native listener's event is the wheel event on this viewport that Solid's own delegation
+            // would have passed.
+            const event = e as WheelEvent & { currentTarget: HTMLDivElement; target: Element }
 
-            if (Array.isArray(handler)) handler[0](handler[1], e as any)
+            // SAFETY: a Solid event prop is a handler or a bound [handler, data] pair; `typeof` tells them apart.
+            // oxlint-disable-next-line anti-slop/no-runtime-typeof -- see SAFETY above
+            if (typeof handler === "function") handler(event)
+
+            if (Array.isArray(handler)) handler[0](handler[1], event)
           },
         }}
-        onTouchStart={events.onTouchStart as any}
-        onTouchMove={events.onTouchMove as any}
-        onTouchEnd={events.onTouchEnd as any}
-        onTouchCancel={events.onTouchCancel as any}
-        onPointerDown={events.onPointerDown as any}
-        onClick={events.onClick as any}
+        onTouchStart={events.onTouchStart}
+        onTouchMove={events.onTouchMove}
+        onTouchEnd={events.onTouchEnd}
+        onTouchCancel={events.onTouchCancel}
+        onPointerDown={events.onPointerDown}
+        onClick={events.onClick}
         tabIndex={0}
         role="region"
         aria-label={i18n.t("ui.scrollView.ariaLabel")}
         onKeyDown={(e) => {
           onKeyDown(e)
 
-          if (typeof events.onKeyDown === "function") events.onKeyDown(e as any)
+          // SAFETY: a Solid event prop is a handler or a bound [handler, data] pair; `typeof` tells them apart.
+          // oxlint-disable-next-line anti-slop/no-runtime-typeof -- see SAFETY above
+          if (typeof events.onKeyDown === "function") events.onKeyDown(e)
         }}
       >
         {local.children}

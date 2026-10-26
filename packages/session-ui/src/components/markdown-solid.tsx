@@ -16,9 +16,11 @@ type MarkdownNode =
 
 export function createMarkdownRenderer(root: HTMLDivElement, html: string, words: boolean, animate = false) {
   const visible = () => root.isConnected && document.visibilityState !== "hidden"
+
   const [nodes, setNodes] = createStore(
     parseMarkdownNodes(html, words, animate && document.visibilityState !== "hidden"),
   )
+
   let ready = animate && document.visibilityState !== "hidden"
   let frontier = 0
   let observer: IntersectionObserver | undefined
@@ -27,9 +29,11 @@ export function createMarkdownRenderer(root: HTMLDivElement, html: string, words
     observer ??= new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         observer!.unobserve(entry.target)
+
         if (entry.isIntersecting) return
         // A clipped word is revealed by its container, not by an invisible opacity animation.
         entry.target.removeAttribute("data-markdown-enter")
+
         if (entry.target instanceof HTMLElement) entry.target.style.removeProperty("--markdown-word-delay")
       })
     })
@@ -44,18 +48,22 @@ export function createMarkdownRenderer(root: HTMLDivElement, html: string, words
       element.style.removeProperty("--markdown-word-delay")
     })
   }
+
   document.addEventListener("visibilitychange", settle)
 
   const delay = () => {
-    const now = typeof performance === "object" ? performance.now() : 0
+    const now = performance.now()
+
     const scale =
       typeof document !== "undefined"
         ? Number(document.documentElement?.style.getPropertyValue("--motion-time-scale")) || 1
         : 1
+
     const base = Math.max(now, frontier)
     const lead = (base - now) / scale
     const step = Math.max(5.5, Math.min(20, 20 - lead * 0.045)) * scale
     frontier = base + step
+
     return Math.max(0, Math.round(base - now))
   }
 
@@ -151,30 +159,33 @@ function parseNode(node: Node, key: string, words: boolean, animate: boolean, in
 
       if (/^\s+$/.test(text)) return [{ key: `${key}:${index}`, type: "text", text }]
 
-      return [{ key: `${key}:${index}`, type: "word", text, ...(animate ? { animate: true as const } : {}) }]
+      const word: MarkdownNode = { key: `${key}:${index}`, type: "word", text }
+
+      if (animate) word.animate = true
+
+      return [word]
     })
   }
 
   if (!(node instanceof Element)) return []
 
-  return [
-    {
-      key,
-      type: "element",
-      tag: node.tagName.toLowerCase(),
-      attributes: Object.fromEntries(Array.from(node.attributes).map((attribute) => [attribute.name, attribute.value])),
-      children: Array.from(node.childNodes).flatMap((child, index) =>
-        parseNode(
-          child,
-          `${key}.${index}`,
-          words,
-          animate,
-          inlineCode || (node.tagName === "CODE" && node.parentElement?.tagName !== "PRE"),
-        ),
+  const element: MarkdownNode = {
+    key,
+    type: "element",
+    tag: node.tagName.toLowerCase(),
+    attributes: Object.fromEntries(Array.from(node.attributes).map((attribute) => [attribute.name, attribute.value])),
+    children: Array.from(node.childNodes).flatMap((child, index) =>
+      parseNode(
+        child,
+        `${key}.${index}`,
+        words,
+        animate,
+        inlineCode || (node.tagName === "CODE" && node.parentElement?.tagName !== "PRE"),
       ),
-      ...(words && animate && node.tagName === "CODE" && node.parentElement?.tagName !== "PRE"
-        ? { animate: true as const }
-        : {}),
-    },
-  ]
+    ),
+  }
+
+  if (words && animate && node.tagName === "CODE" && node.parentElement?.tagName !== "PRE") element.animate = true
+
+  return [element]
 }

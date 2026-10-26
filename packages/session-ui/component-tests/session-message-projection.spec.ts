@@ -60,6 +60,7 @@ story("folds the Steering label on delivery while preserving the hovered footer"
 
   for (const hover of [true, false]) {
     await timeline.getByLabel("Delivery state").selectOption("steering")
+
     if (hover) await message.hover()
 
     if (!hover) await page.mouse.move(0, 0)
@@ -88,10 +89,13 @@ story("folds the Steering label on delivery while preserving the hovered footer"
   await page.clock.pauseAt(new Date(Date.now() + 1000))
   await timeline.getByLabel("Delivery state").selectOption("delivered")
   await page.clock.runFor(32)
+
   const opacity = await message.first().evaluate((element) => {
     const label = element.querySelector('[data-slot="user-message-pending-label"]')
+
     return label ? Number(getComputedStyle(label).opacity) : 0
   })
+
   // A folded footer must not make the run's Steering label disappear on its first delivery frame.
   expect(opacity).toBeGreaterThan(0)
   expect(opacity).toBeLessThan(1)
@@ -162,6 +166,7 @@ story("labels waiting prompts without badging delivered, starting, or queued pro
 
   const icon = await indicator.locator("svg").boundingBox()
   const bounds = await label.boundingBox()
+
   if (!icon || !bounds) throw new Error("Pending metadata geometry is unavailable")
   expect(Math.abs(icon.y + icon.height / 2 - bounds.y - bounds.height / 2)).toBeLessThan(0.5)
 

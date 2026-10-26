@@ -272,6 +272,7 @@ describe("createTimelineProjection", () => {
   test("gives every steer of a delivered batch the context of the reply that answers it", () => {
     const local = { id: "local", providerID: "local-provider" }
     const answer = { id: "answer", providerID: "answer-provider" }
+
     const steer = (id: string, created: number) => ({
       id,
       type: "user" as const,
@@ -279,6 +280,7 @@ describe("createTimelineProjection", () => {
       time: { created },
       metadata: { model: { providerID: local.providerID, id: local.id } },
     })
+
     const messages = [
       steer("user-1", 1),
       {

@@ -131,6 +131,7 @@ for (const device of ["Pixel 7", "iPhone 13"]) {
           .poll(() => row.evaluate((element) => element.getBoundingClientRect().height))
           .toBe(heights[index] + 600)
       }
+
       await settleMotion(reading.scroller)
       expect(movedFrames(await held(), before)).toEqual([])
 
@@ -769,7 +770,8 @@ for (const device of ["Pixel 7", "iPhone 13"]) {
             expect(
               await target.evaluate(
                 (element, part) =>
-                  !element?.isConnected || (!!part?.contains(element) && element.closest("p")?.textContent === "Heading text"),
+                  !element?.isConnected ||
+                  (!!part?.contains(element) && element.closest("p")?.textContent === "Heading text"),
                 part,
               ),
             ).toBe(true)
@@ -940,6 +942,7 @@ async function settleMotion(scroller: Locator) {
     for (;;) {
       await frame()
       await frame()
+
       const moving = root
         .getAnimations({ subtree: true })
         .filter(
@@ -959,12 +962,15 @@ async function settleMotion(scroller: Locator) {
 // Records the element's painted top every frame until the returned function stops it.
 async function sampleTops(locator: Locator) {
   const state = await locator.evaluateHandle((element) => {
+    // SAFETY: widens the empty initial list to its element type.
     const state = { on: true, tops: [] as number[] }
+
     const tick = () => {
       if (!state.on) return
       state.tops.push(element.getBoundingClientRect().top)
       requestAnimationFrame(tick)
     }
+
     requestAnimationFrame(tick)
 
     return state
@@ -976,6 +982,7 @@ async function sampleTops(locator: Locator) {
 
       return state.tops
     })
+
     await state.dispose()
 
     return tops

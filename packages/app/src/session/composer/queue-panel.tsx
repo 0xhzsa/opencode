@@ -40,16 +40,20 @@ export function SessionQueuePanel(props: { queue: SessionQueueView; hidden?: boo
       (next) => {
         const prevLive = lastLive
         lastLive = next
+
         if (next.length === 0) return
 
         // An in-place edit or reorder keeps the row count: a row whose ID it replaced swaps in place rather than closing,
         // while a row that was already closing keeps closing until its exit completes.
         const swap = next.length === prevLive.length && prevLive.length > 0
+
         if (!swap && prevLive.length > 0 && !props.hidden)
           next.forEach((row) => !prevLive.some((item) => item.id === row.id) && appearing.add(row.id))
+
         const kept = untrack(shown).filter(
           (row) => !swap || next.some((item) => item.id === row.id) || !prevLive.some((item) => item.id === row.id),
         )
+
         setShown(keepLeaving(kept, next))
       },
       { defer: true },
@@ -65,10 +69,14 @@ export function SessionQueuePanel(props: { queue: SessionQueueView; hidden?: boo
         stopCascade?.()
         stopCascade = undefined
         const step = queueStagger()
+
         if (!now || was !== false || step <= 0 || prefersReducedMotion()) return
         queueMicrotask(() => {
           if (!open()) return
-          stopCascade = cascade([...listRef.querySelectorAll<HTMLElement>('[data-component="session-queue-row"]')], step)
+          stopCascade = cascade(
+            [...listRef.querySelectorAll<HTMLElement>('[data-component="session-queue-row"]')],
+            step,
+          )
         })
       },
       { defer: true },
@@ -152,9 +160,10 @@ function keepLeaving<T extends { id: string }>(previous: T[], next: T[]) {
     (rows, row, index) => {
       if (rows.some((item) => item.id === row.id)) return rows
       const before = previous.slice(0, index).findLast((item) => rows.some((entry) => entry.id === item.id))
-      const at = before ? rows.findIndex((item) => item.id === before.id) + 1 : 0
 
-      return [...rows.slice(0, at), row, ...rows.slice(at)]
+      rows.splice(before ? rows.findIndex((item) => item.id === before.id) + 1 : 0, 0, row)
+
+      return rows
     },
     [...next],
   )

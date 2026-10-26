@@ -2,6 +2,7 @@ import { expect, sourceURL, story } from "../../stories/playwright/story"
 import { writeFile } from "node:fs/promises"
 
 const fixture = sourceURL(new URL("./timeline-virtualizer.fixture.tsx", import.meta.url))
+
 const pretextFixture = sourceURL(new URL("./timeline-pretext.fixture.tsx", import.meta.url))
 
 story("precomputes the full extent of 5000 rows before revealing or jumping", async ({ page }, testInfo) => {
@@ -19,11 +20,13 @@ story("precomputes the full extent of 5000 rows before revealing or jumping", as
   expect(Math.abs(initial.offset - (initial.extent - initial.viewport))).toBeLessThanOrEqual(1)
   expect(initial.mounted).toBeLessThan(30)
   expect(initial.mismatches).toEqual([])
+
   for (const index of [0, 900, 1799, 451]) {
     const immediate = await page.evaluate(async ({ url, index }) => (await import(url)).jumpLongTimeline(index), {
       url: pretextFixture,
       index,
     })
+
     await expect(root.locator(`[data-timeline-key="user-message:long-user-${index}"]`)).toBeVisible()
     const painted = await page.evaluate(async (url) => (await import(url)).longTimelineReport(), pretextFixture)
     await writeFile(testInfo.outputPath(`jump-${index}.json`), JSON.stringify({ immediate, painted }, null, 2))
@@ -65,14 +68,17 @@ story("animates only the final screen when resuming from deep history", async ({
   const root = page.getByTestId("timeline-virtualizer-fixture")
   await root.getByRole("button", { name: "Complete Markdown", exact: true }).click()
   await expect(root.locator("[data-timeline-virtual-content]")).toHaveCSS("visibility", "visible")
+
   const returnGap = await root.evaluate((host) => {
     const viewport = host.querySelector<HTMLElement>("[data-scrollable]")!
     viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -60000, bubbles: true }))
     viewport.scrollTop = 0
     viewport.dispatchEvent(new Event("scroll"))
     host.querySelector<HTMLButtonElement>('[data-testid="resume"]')!.click()
+
     return { gap: viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop, viewport: viewport.clientHeight }
   })
+
   expect(returnGap.gap).toBeGreaterThan(0)
   expect(returnGap.gap).toBeLessThanOrEqual(returnGap.viewport + 1)
   await expect
@@ -93,6 +99,7 @@ story("eases the followed end down when sending clears a long draft", async ({ p
   const root = page.getByTestId("timeline-virtualizer-fixture")
   await root.getByRole("button", { name: "Complete Markdown", exact: true }).click()
   await expect(root.locator("[data-timeline-virtual-content]")).toHaveCSS("visibility", "visible")
+
   const tops = await root.evaluate(async (host) => {
     const last = host.querySelector<HTMLElement>('[data-timeline-key="user-message:message-9"]')!.firstElementChild!
     const frame = () => new Promise((resolve) => requestAnimationFrame(resolve))
@@ -101,13 +108,17 @@ story("eases the followed end down when sending clears a long draft", async ({ p
     const before = last.getBoundingClientRect().top
     host.querySelector<HTMLButtonElement>('[data-testid="clear-draft"]')!.click()
     const frames: number[] = []
+
     for (let index = 0; index < 4; index++) {
       await frame()
       frames.push(last.getBoundingClientRect().top - before)
     }
+
     await Promise.all(host.getAnimations({ subtree: true }).map((animation) => animation.finished))
+
     return { frames, settled: last.getBoundingClientRect().top - before }
   })
+
   // The composer dropped 120 px in one step; the rows ease down after it instead of jumping in the same frame.
   expect(tops.settled).toBeCloseTo(120, 0)
   tops.frames.forEach((moved, index) => expect(moved).toBeLessThan(10 * (index + 1)))
@@ -134,14 +145,17 @@ for (const action of ["wheel", "resume", "resume-removal", "follow", "backlog", 
     await expect(root.locator("[data-timeline-virtual-content]")).toHaveCSS("visibility", "visible")
     const growing = root.locator('[data-timeline-key="user-message:message-8"]')
     await expect(growing).toHaveCSS("height", "64px")
+
     const change = await root.evaluate(async (host, action) => {
       const viewport = host.querySelector<HTMLElement>("[data-scrollable]")!
       const row = host.querySelector<HTMLElement>('[data-timeline-key="user-message:message-8"]')!
       const next = host.querySelector<HTMLElement>('[data-timeline-key="user-message:message-9"]')!
+
       const measure = () => {
         const clip = getComputedStyle(row)
           .clipPath.match(/^inset\((.*)\)$/)?.[1]
           ?.split(" ")
+
         return {
           // Layout already has its final height; the moving box and its clip expose only part of the content.
           height:
@@ -151,6 +165,7 @@ for (const action of ["wheel", "resume", "resume-removal", "follow", "backlog", 
           top: next.firstElementChild!.getBoundingClientRect().top,
         }
       }
+
       return new Promise<{
         before: { height: number; top: number }
         after: { height: number; top: number }
@@ -160,27 +175,38 @@ for (const action of ["wheel", "resume", "resume-removal", "follow", "backlog", 
           observer.disconnect()
           await Promise.resolve()
           const running = new Set(host.getAnimations({ subtree: true }))
+
           // Interrupt on a baked pose, so interpolation between keyframes is not mistaken for a discontinuity.
+          // SAFETY: Element.animate creates keyframe effects, the only kind on this page.
           const clock = [...running].find(
             (animation) => (animation.effect as KeyframeEffect).getKeyframes().length > 2,
           )!
+
+          // SAFETY: Element.animate creates keyframe effects, the only kind on this page.
           const time =
             Number(clock.effect!.getTiming().duration) *
             (clock.effect as KeyframeEffect).getKeyframes()[2]!.computedOffset!
+
           running.forEach((animation) => {
             animation.pause()
             animation.currentTime = time
           })
+
           if (action === "resume-removal" || action === "follow") {
             viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -90, bubbles: true }))
             viewport.scrollTop -= 90
             viewport.dispatchEvent(new Event("scroll"))
           }
+
           const before = measure()
+
           if (action !== "backlog" && action !== "resume-removal" && action !== "follow")
             viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -90, bubbles: true }))
+
           if (action.startsWith("resume")) host.querySelector<HTMLButtonElement>('[data-testid="resume"]')!.click()
+
           if (action === "follow") host.querySelector<HTMLButtonElement>('[data-testid="follow"]')!.click()
+
           if (action === "resume-removal") host.querySelector<HTMLButtonElement>('[data-testid="remove-row"]')!.click()
           await Promise.resolve()
           host
@@ -194,11 +220,14 @@ for (const action of ["wheel", "resume", "resume-removal", "follow", "backlog", 
           host.getAnimations({ subtree: true }).forEach((animation) => animation.play())
           resolve({ before, after })
         })
+
         observer.observe(row)
+
         if (action === "unpinned") viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -90, bubbles: true }))
         host.querySelector<HTMLButtonElement>('[data-testid="grow-row"]')!.click()
       })
     }, action)
+
     expect(change.before.height).toBeGreaterThan(64)
     expect(change.before.height).toBeLessThan(184)
     expect(Math.abs(change.after.height - change.before.height)).toBeLessThanOrEqual(1 / 64)
@@ -224,6 +253,7 @@ for (const height of [64, 512]) {
     const root = page.getByTestId("timeline-virtualizer-fixture")
     await root.getByRole("button", { name: "Complete Markdown", exact: true }).click()
     await expect(root.locator("[data-timeline-virtual-content]")).toHaveCSS("visibility", "visible")
+
     const first = await root.evaluate((host) => {
       const viewport = host.querySelector<HTMLElement>("[data-scrollable]")!
       viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true }))
@@ -231,8 +261,10 @@ for (const height of [64, 512]) {
       const top = next.getBoundingClientRect().top
       host.querySelector<HTMLButtonElement>('[data-testid="insert-row"]')!.click()
       const row = host.querySelector<HTMLElement>('[data-timeline-key="user-message:inserted"]')!
+
       return { height: row.getBoundingClientRect().height, travel: next.getBoundingClientRect().top - top }
     })
+
     expect(first.height).toBe(0)
     expect(Math.abs(first.travel)).toBeLessThanOrEqual(1 / 64)
     await expect(root.locator('[data-timeline-key="user-message:inserted"]')).toHaveCSS("height", `${height}px`)
@@ -249,14 +281,17 @@ story("revives Working mid-exit without changing its identity, position or opaci
   const root = page.getByTestId("timeline-virtualizer-fixture")
   await root.getByRole("button", { name: "Complete Markdown", exact: true }).click()
   await expect(root.locator("[data-timeline-virtual-content]")).toHaveCSS("visibility", "visible")
+
   const result = await root.evaluate(async (host) => {
     const row = host.querySelector<HTMLElement>('[data-timeline-key="activity"]')!
     const indicator = row.querySelector<HTMLElement>('[data-slot="session-working-indicator"]')!
+
     const freeze = () =>
       host.getAnimations({ subtree: true }).forEach((animation) => {
         animation.pause()
         animation.currentTime = 0
       })
+
     host.querySelector<HTMLButtonElement>('[data-testid="toggle-activity"]')!.click()
     await Promise.resolve()
     freeze()
@@ -266,22 +301,28 @@ story("revives Working mid-exit without changing its identity, position or opaci
     await Promise.resolve()
     freeze()
     indicator.getAnimations().forEach((animation) => (animation.currentTime = 170))
+
     const before = {
       top: row.firstElementChild!.getBoundingClientRect().top,
       opacity: Number(getComputedStyle(indicator).opacity),
     }
+
     host.querySelector<HTMLButtonElement>('[data-testid="toggle-activity"]')!.click()
     await Promise.resolve()
     freeze()
+
     const after = {
       top: row.firstElementChild!.getBoundingClientRect().top,
       opacity: Number(getComputedStyle(indicator).opacity),
     }
+
     const same = host.querySelector('[data-timeline-key="activity"]') === row
     const hidden = row.getAttribute("aria-hidden")
     host.getAnimations({ subtree: true }).forEach((animation) => animation.play())
+
     return { before, after, same, hidden }
   })
+
   await writeFile(testInfo.outputPath("revival.json"), JSON.stringify(result, null, 2))
   expect(result.same).toBe(true)
   expect(result.hidden).toBeNull()
@@ -303,6 +344,7 @@ story(
     const root = page.getByTestId("timeline-virtualizer-fixture")
     await root.getByRole("button", { name: "Complete Markdown", exact: true }).click()
     await expect(root.locator("[data-timeline-virtual-content]")).toHaveCSS("visibility", "visible")
+
     const result = await root.evaluate(async (host) => {
       host.querySelector<HTMLButtonElement>('[data-testid="insert-row"]')!.click()
       await Promise.resolve()
@@ -318,11 +360,14 @@ story(
         animation.pause()
         animation.currentTime = 0
       })
+
+      // SAFETY: Element.animate creates keyframe effects, the only kind on this page.
       const exit = row
         .getAnimations()
         .find((animation) =>
           (animation.effect as KeyframeEffect).getKeyframes().some((frame) => frame.opacity !== undefined),
         )!
+
       exit.currentTime = 55
       const leaving = Number(getComputedStyle(row).opacity)
       host.querySelector<HTMLButtonElement>('[data-testid="grow-row"]')!.click()
@@ -339,8 +384,10 @@ story(
       const ended = Number(getComputedStyle(row).opacity)
       const connected = row.isConnected
       host.getAnimations({ subtree: true }).forEach((animation) => animation.play())
+
       return { entering, leaving, retargeted, ended, connected }
     })
+
     await writeFile(testInfo.outputPath("enter-exit.json"), JSON.stringify(result, null, 2))
     expect(result.entering).toBeGreaterThan(0)
     expect(result.entering).toBeLessThan(1)

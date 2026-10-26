@@ -1,4 +1,5 @@
 import { TimelineRow } from "@opencode/session-ui/timeline/projection"
+import { Predicate } from "effect"
 import { createMemo, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { render } from "solid-js/web"
@@ -43,20 +44,25 @@ export function mountTimelineVirtualizer(input: {
 
     const inserted = new TimelineRow.UserMessage({ userMessageID: "inserted" })
     const activity = new TimelineRow.Activity({ userMessageID: `message-${input.count - 1}` })
+
     const rows = createMemo(() => [
       ...(state.inserted ? [...initial.slice(0, -1), inserted, initial.at(-1)!] : initial).filter(
         (row) => !state.removed || row.userMessageID !== `message-${input.count - 3}`,
       ),
       ...(state.activity ? [activity] : []),
     ])
+
     const rowByKey = createMemo(() => new Map(rows().map((row) => [TimelineRow.key(row), row])))
     const indexes = new Map([...initial, inserted].map((row, index) => [row.userMessageID, index]))
+
     const height = (id: string) =>
       (id === "inserted" ? (input.insertedHeight ?? input.rowHeight) : input.rowHeight) +
       (indexes.get(id)! >= input.count - 1 - (input.growthRows ?? 1) && indexes.get(id)! < input.count - 1
         ? state.growth
         : 0)
+
     let scrollToEnd = (_behavior?: ScrollBehavior) => {}
+
     let viewport!: HTMLDivElement
     let content!: HTMLDivElement
     let container!: HTMLDivElement
@@ -73,9 +79,9 @@ export function mountTimelineVirtualizer(input: {
       },
       showHeader: () => false,
       layout: (row) =>
-        row._tag === "Activity"
+        Predicate.isTagged(row, "Activity")
           ? { source: "fixed", height: 36 }
-          : row._tag === "UserMessage" && indexes.get(row.userMessageID)! < (input.modeled ?? 0)
+          : Predicate.isTagged(row, "UserMessage") && indexes.get(row.userMessageID)! < (input.modeled ?? 0)
             ? { source: "fixed", height: height(row.userMessageID) }
             : { source: "dom", reason: "deferred fixture content" },
       pinned: () => state.pinned,
@@ -205,9 +211,9 @@ export function mountTimelineVirtualizer(input: {
               <div
                 data-component="markdown"
                 data-markdown-ready={state.ready ? "" : undefined}
-                style={{ height: `${row()._tag === "Activity" ? 36 : height(row().userMessageID)}px` }}
+                style={{ height: `${Predicate.isTagged(row(), "Activity") ? 36 : height(row().userMessageID)}px` }}
               >
-                {row()._tag === "Activity" ? (
+                {Predicate.isTagged(row(), "Activity") ? (
                   <span data-slot="session-working-indicator">Working</span>
                 ) : (
                   row().userMessageID

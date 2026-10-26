@@ -263,6 +263,7 @@ function createPacedValue(getValue: () => string, live?: () => boolean) {
     clear()
     sync(getValue())
   }
+
   document.addEventListener("visibilitychange", settle)
   onCleanup(() => {
     document.removeEventListener("visibilitychange", settle)
@@ -400,6 +401,7 @@ export function CurrentUserMessageDisplay(props: {
     runPose,
     (el, value) => {
       el.style.setProperty("--user-run-label", `${value.label}`)
+
       if (value.label === 0 && !labelled()) setLabel("")
       el.style.setProperty("--user-run-top", `${value.top}`)
       el.style.setProperty("--user-run-bottom", `${value.bottom}`)

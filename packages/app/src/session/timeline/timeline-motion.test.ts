@@ -17,7 +17,9 @@ type Played = {
 
 // happy-dom has no Web Animations; record what would have been handed to the compositor.
 let played: Played[] = []
+
 const native = Object.getOwnPropertyDescriptor(Element.prototype, "animate")
+
 const timeline = Object.getOwnPropertyDescriptor(document, "timeline")
 
 beforeEach(() => {
@@ -33,7 +35,9 @@ beforeEach(() => {
         cancel: () => (animation.cancelled = true),
         finished: new Promise(() => {}),
       }
+
       played.push({ element: this, frames, easing: options?.easing, duration: options?.duration, animation })
+
       return animation
     },
   })
@@ -41,10 +45,16 @@ beforeEach(() => {
 
 afterEach(() => {
   if (timeline) Object.defineProperty(document, "timeline", timeline)
-  // SAFETY: the configurable own property was installed by beforeEach above.
-  else delete (document as { timeline?: DocumentTimeline }).timeline
+  else {
+    // SAFETY: the configurable own property was installed by beforeEach above.
+    delete (document as { timeline?: DocumentTimeline }).timeline
+  }
+
   if (native) Object.defineProperty(Element.prototype, "animate", native)
-  else delete (Element.prototype as Partial<Element>).animate
+  else {
+    // SAFETY: as above.
+    delete (Element.prototype as Partial<Element>).animate
+  }
 })
 
 const spring = { duration: 0.4, bounce: 0 }
@@ -54,6 +64,7 @@ function setup() {
   document.body.replaceChildren(layer)
   const reach: number[] = []
   const edges: [string, number][] = []
+
   const motion = createTimelineMotion({
     layer: () => layer,
     spring: () => spring,
@@ -61,33 +72,44 @@ function setup() {
     onReach: (px) => reach.push(px),
     onEdge: (key, px) => edges.push([key, px]),
   })
+
   const row = () => {
     const wrapper = document.createElement("div")
     const inner = document.createElement("div")
     wrapper.append(inner)
     layer.append(wrapper)
+
     return { wrapper, inner }
   }
+
   return { layer, motion, reach, edges, row }
 }
 
 const translateY = (frame: Keyframe) => Number(String(frame.transform).match(/translateY\(([-\d.e]+)px\)/)![1])
+
 // A move is two keyframes with its spring baked into a linear() easing; read it back as drawn offsets.
 const offsets = (item: Played) => {
   const curve = item.easing?.match(/^linear\((.*)\)$/)?.[1]
+
   if (!curve) return item.frames.map(translateY)
   const from = translateY(item.frames[0]!)
+
   return curve.split(",").map((point) => from * (1 - Number(point)) || 0)
 }
+
 // A move's drawn offset `ms` into it.
 const drawnAt = (item: Played, ms: number) => {
   const moves = offsets(item)
   const step = Number(item.duration) / (moves.length - 1)
   const index = Math.min(moves.length - 2, Math.floor(ms / step))
+
   return moves[index]! + (moves[index + 1]! - moves[index]!) * (ms / step - index)
 }
+
 const frame = 1000 / 60
+
 const live = () => played.filter((item) => !item.animation.cancelled)
+
 const on = (element: Element, property = "transform") =>
   live().find((item) => item.element === element && property in item.frames[0]!)
 
@@ -108,6 +130,7 @@ test("stretches moves and disclosures by slow motion once", () => {
   const base = Number(on(normal.layer)!.duration)
   const layer = document.createElement("div")
   document.body.replaceChildren(layer)
+
   // The growth spring arrives already stretched, as motion tuning hands it over.
   const motion = createTimelineMotion({
     layer: () => layer,
@@ -116,6 +139,7 @@ test("stretches moves and disclosures by slow motion once", () => {
     onReach: () => {},
     onEdge: () => {},
   })
+
   motion.kick(40, [])
   expect(Number(on(layer)!.duration) / base).toBeCloseTo(4, 1)
   motion.cancel()
@@ -169,11 +193,13 @@ test("reveals a grown row's new part under its box with the soft edge riding the
   // The content itself never moves; only how much of it shows.
   expect(box.every((y, index) => Math.abs(y + content[index]!) < 0.01)).toBe(true)
   expect([box.at(-1), content.at(-1)]).toEqual([0, 0])
+
   // The box reaches 28px past its slot meanwhile; a clip trims what the narrowing edge no longer covers, so the row is
   // never drawn past the reveal onto the row below.
   const tails = on(wrapper, "clipPath")!.frames.map((frame) =>
     Number(String(frame.clipPath).split(" ")[2]!.replace("px", "")),
   )
+
   expect([tails[0], tails.at(-1)]).toEqual([28, 28])
   expect(box.every((y, index) => y + 28 - tails[index]! <= 0.01)).toBe(true)
   expect(edges).toEqual([["a", 28]])

@@ -18,6 +18,7 @@ const prompts = [
   "Show the implementation.",
   "Explain the sequence.",
 ]
+
 const replies = [
   "A short response.",
   "Ordinary prose wraps at the same width before and after it is mounted. ".repeat(9),
@@ -26,6 +27,7 @@ const replies = [
   "Here is the code.\n\n```ts\nconst long = 'a deliberately long non-wrapping source line that must not change the row height when the column narrows';\nconsole.log(long)\n```\n\nThe result stays selectable.",
   "A list with nested items.\n\n- First item with **emphasis** and enough prose to wrap in the narrow column.\n- Second item\n  - Nested item with more detail.\n  - Another nested item.\n\n1. An ordered step.\n2. Another ordered step.\n\n> A quoted paragraph that should wrap and retain its ordinary paragraph height.\n\nA closing paragraph.",
 ]
+
 const documentFixture: SessionDocument = {
   sessionID: CURRENT_SESSION_ID,
   status: { type: "idle" },
@@ -83,9 +85,13 @@ const documentFixture: SessionDocument = {
   ]),
 }
 
+// SAFETY: widens the empty initial list to its element type.
 let inspect = () => [] as { key: string; source: string; expected?: number; actual: number }[]
+
 let resize = (_width: number) => {}
+
 let stream = (_text: string, _complete: boolean) => {}
+
 let reasoning = (_text: string) => {}
 
 export async function mountTimelineLayout(width: number) {
@@ -99,8 +105,10 @@ export async function mountTimelineLayout(width: number) {
     document.fonts.load(`${typography.medium} ${typography.size}px ${typography.family}`, text),
     document.fonts.load(`${typography.weight} ${typography.size}px ${typography.codeFamily}`, text),
   ])
+
   function Fixture() {
     const [state, setState] = createStore({ width, open: false, document: structuredClone(documentFixture) })
+
     const projection = createReactiveTimelineProjection({
       sessionMessages: () => state.document.messages,
       status: () => state.document.status,
@@ -108,6 +116,7 @@ export async function mountTimelineLayout(width: number) {
       shellToolDefaultOpen: () => false,
       editToolDefaultOpen: () => false,
     })
+
     const renderer = createSessionTimelineRowRenderer({
       sessionID: () => documentFixture.sessionID,
       status: () => state.document.status,
@@ -118,6 +127,7 @@ export async function mountTimelineLayout(width: number) {
       editToolDefaultOpen: () => false,
       disclosure: { value: () => (state.open ? true : undefined), set: () => {} },
     })
+
     // Calculate before constructing row DOM. The sample below never feeds a height back into the model.
     const sizes = createMemo(() =>
       projection.rows().map((row) =>
@@ -128,6 +138,7 @@ export async function mountTimelineLayout(width: number) {
         }),
       ),
     )
+
     resize = (width) => setState("width", width)
     stream = (text, complete) =>
       batch(() => {
@@ -162,6 +173,7 @@ export async function mountTimelineLayout(width: number) {
       projection.rows().map((row, index) => {
         const value = sizes()[index]!
         const element = host.querySelector<HTMLElement>(`[data-layout-row="${index}"]`)!
+
         return {
           key: TimelineRow.key(row),
           source: value.source,
@@ -174,6 +186,7 @@ export async function mountTimelineLayout(width: number) {
             ),
           ].map((block) => {
             const style = getComputedStyle(block)
+
             return {
               tag: block.tagName,
               width: block.getBoundingClientRect().width,
@@ -186,6 +199,7 @@ export async function mountTimelineLayout(width: number) {
           }),
         }
       })
+
     return (
       <div style={{ width: `${state.width}px` }}>
         <For each={projection.rows()}>
@@ -198,6 +212,7 @@ export async function mountTimelineLayout(width: number) {
       </div>
     )
   }
+
   render(
     () => (
       <DialogProvider>
@@ -212,15 +227,18 @@ export async function mountTimelineLayout(width: number) {
 
 export function timelineLayoutReport(width?: number) {
   if (width !== undefined) resize(width)
+
   return inspect()
 }
 
 export function streamTimelineLayout(text: string, complete: boolean) {
   stream(text, complete)
+
   return inspect()
 }
 
 export function reasonTimelineLayout(text: string) {
   reasoning(text)
+
   return inspect()
 }

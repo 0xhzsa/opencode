@@ -13,6 +13,7 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
   const parser = createMarkdownBase()
   const compiled = new WeakMap<Block, { block: PreparedMarkdownBlock; elements: HTMLElement[] } | null>()
   const lists = new WeakMap<HTMLElement, HTMLElement[]>()
+
   const elementMeasurements = new WeakMap<
     HTMLElement,
     {
@@ -22,6 +23,7 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
       box: Box
     }
   >()
+
   const measurements = new WeakMap<
     PreparedMarkdown,
     {
@@ -32,6 +34,7 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
       reasoning: boolean
     }
   >()
+
   const documents = new Map<
     string,
     {
@@ -47,18 +50,23 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
   function prepare(key: string, raw: string, streaming: boolean) {
     if (isServer) return
     const cached = documents.get(key)
+
     if (cached?.projection.text === raw && cached.streaming === streaming) return cached.prepared
     const project = cached?.project ?? createBlockProjection()
     const projection = project(raw, streaming)
+
     const blocks = projection.blocks.map((block) => {
       if (compiled.has(block)) return compiled.get(block)
       const value = compile(block)
       compiled.set(block, value ?? null)
+
       return value
     })
+
     const prepared = blocks.every((block) => block)
       ? { text: raw, blocks: blocks.map((value) => value!.block) }
       : undefined
+
     documents.set(key, {
       project,
       projection,
@@ -67,12 +75,14 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
       unsupported: blocks.flatMap((value, index) => (value ? [] : [index])),
       elements: blocks.map((value) => value?.elements ?? []),
     })
+
     return prepared
   }
 
   function compile(block: Block) {
     if (block.mode === "code") {
       if (block.language === "mermaid") return
+
       return {
         block: {
           mode: "code",
@@ -84,15 +94,19 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
         elements: [],
       }
     }
+
     // Keep math and raw HTML on their renderer-specific sizing path.
     if (block.src.includes("<") || block.src.includes("\\(") || block.src.indexOf("$") !== block.src.lastIndexOf("$"))
       return
     const html = sanitizeMarkdown(parser.parse(block.src, { async: false }))
     const template = document.createElement("template")
     template.innerHTML = html
+
     if ([...template.content.childNodes].some((node) => node instanceof Text && node.data.trim())) return
     const elements = [...template.content.children].filter((node): node is HTMLElement => node instanceof HTMLElement)
+
     if (elements.some((element) => !/^(P|H[1-6]|UL|OL|BLOCKQUOTE|HR)$/.test(element.tagName))) return
+
     if (
       elements.some((element) =>
         [...element.querySelectorAll("*")].some(
@@ -103,6 +117,7 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
       )
     )
       return
+
     return {
       block: {
         mode: block.mode,
@@ -126,6 +141,7 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
       reasoning = false,
     ) {
       const prepared = prepare(key, raw, streaming)
+
       if (!prepared)
         return {
           source: "dom" as const,
@@ -133,6 +149,7 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
           blocks: documents.get(key)?.unsupported ?? [],
         }
       const previous = measurements.get(prepared)
+
       if (previous?.width === width && previous.typography === typography && previous.reasoning === reasoning)
         return {
           source: "pretext" as const,
@@ -140,6 +157,7 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
           trailingMargin: previous.trailingMargin,
         }
       const entry = documents.get(key)!
+
       const blocks = prepared.blocks.flatMap((block, blockIndex) => {
         if (block.mode === "code")
           return [
@@ -155,10 +173,12 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
               edgeAfter: 24,
             },
           ]
+
         return entry.elements[blockIndex]!.map((element, index) =>
           measure(element, `${key}:${blockIndex}:${index}`, width, typography, reasoning),
         )
       })
+
       const measured = {
         width,
         typography,
@@ -166,7 +186,9 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
         height: flowHeight(blocks) + (blocks[0]?.edgeBefore ?? 0) + (blocks.at(-1)?.edgeAfter ?? 0),
         trailingMargin: blocks.at(-1)?.edgeAfter ?? 0,
       }
+
       measurements.set(prepared, measured)
+
       return {
         source: "pretext" as const,
         height: measured.height,
@@ -183,9 +205,11 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
     reasoning: boolean,
   ): Box {
     const cached = elementMeasurements.get(element)
+
     if (cached?.width === width && cached.typography === typography && cached.reasoning === reasoning) return cached.box
     const box = measureUncached(element, key, width, typography, reasoning)
     elementMeasurements.set(element, { width, typography, reasoning, box })
+
     return box
   }
 
@@ -197,9 +221,12 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
     reasoning: boolean,
   ): Box {
     const tag = element.tagName
+
     if (tag === "HR") return { height: 0, before: 32, after: 32 }
+
     if (tag === "UL" || tag === "OL" || tag === "BLOCKQUOTE") {
       const nested = element.parentElement?.tagName === "LI"
+
       const inset =
         tag === "BLOCKQUOTE"
           ? typography.rem * 0.5 + (typography.codeInset - 24) / 2
@@ -208,9 +235,12 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
             : nested
               ? typography.rem
               : 32
+
+      // SAFETY: rendered markdown holds only HTML elements.
       const children = [...element.children].map((child, index) =>
         measure(child as HTMLElement, `${key}:${index}`, width - inset, typography, reasoning),
       )
+
       return {
         height: flowHeight(children),
         edgeBefore: children[0]?.before ?? 0,
@@ -225,23 +255,31 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
         ),
       }
     }
+
     if (tag === "LI") {
       const children = lists.get(element) ?? listChildren(element)
       lists.set(element, children)
+
       const parts = children.map((child, index) => {
         const box = measure(child, `${key}:${index}`, width, typography, reasoning)
+
         if (child.tagName === "SPAN") return { ...box, before: 0, after: 0 }
+
         return child.tagName === "P" ? { ...box, before: typography.rem * 0.5 } : box
       })
+
       return { height: flowHeight(parts), before: parts[0]?.before ?? 0, after: Math.max(8, parts.at(-1)?.after ?? 0) }
     }
+
     const heading = /^H[1-6]$/.test(tag)
     const size = reasoning ? 13 : tag === "H1" ? 17 : tag === "H2" ? 15 : heading ? 13 : typography.size
+
     const style = {
       ...typography,
       size,
       weight: !heading || reasoning ? typography.weight : tag === "H1" || tag === "H2" ? 600 : typography.medium,
     }
+
     return {
       height: text.rich(
         key,
@@ -277,24 +315,31 @@ export function createTimelineMarkdownLayout(text: ReturnType<typeof createTimel
 function listChildren(element: HTMLElement) {
   const children: HTMLElement[] = []
   let line = document.createElement("span")
+
   const flush = () => {
     if (!line.textContent?.trim()) return
     children.push(line)
     line = document.createElement("span")
   }
+
   ;[...element.childNodes].forEach((child) => {
     if (!(child instanceof HTMLElement) || !/^(P|UL|OL|BLOCKQUOTE)$/.test(child.tagName)) {
       line.append(child.cloneNode(true))
+
       return
     }
+
     if (child.tagName === "P" && child === element.firstElementChild) {
       line.append(...[...child.childNodes].map((node) => node.cloneNode(true)))
+
       return
     }
+
     flush()
     children.push(child)
   })
   flush()
+
   return children
 }
 
@@ -317,9 +362,13 @@ function inline(element: HTMLElement, style: TimelineTypography, italic = false)
           letterSpacing: style.letterSpacing,
         },
       ]
+
     if (!(node instanceof HTMLElement)) return []
+
     if (node.tagName === "STRONG" || node.tagName === "B") return inline(node, { ...style, weight: style.bold }, italic)
+
     if (node.tagName === "EM" || node.tagName === "I") return inline(node, style, true)
+
     if (node.tagName === "CODE")
       return [
         {
@@ -329,6 +378,7 @@ function inline(element: HTMLElement, style: TimelineTypography, italic = false)
           extraWidth: inlineCodeKind(node.textContent ?? "") === "path" ? 4 : 8,
         },
       ]
+
     return inline(node, style, italic)
   })
 }

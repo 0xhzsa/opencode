@@ -38,8 +38,10 @@ export function projectHighlightedCode(
   language: string | undefined,
 ) {
   const requestedLanguage = language ?? "text"
+
   if (previous && previous.requestedLanguage === requestedLanguage && source.startsWith(previous.source)) {
     const suffix = source.slice(previous.source.length)
+
     return {
       language: previous.language,
       generation: previous.generation,
@@ -47,12 +49,11 @@ export function projectHighlightedCode(
       unstable: suffix ? [...previous.unstable, [suffix, ""] satisfies MarkdownToken] : previous.unstable,
     }
   }
-  return {
-    language: requestedLanguage,
-    generation: -1,
-    stable: [] as MarkdownToken[],
-    unstable: source ? ([[source, ""]] satisfies MarkdownToken[]) : ([] as MarkdownToken[]),
-  }
+
+  const stable: MarkdownToken[] = []
+  const unstable: MarkdownToken[] = source ? [[source, ""]] : []
+
+  return { language: requestedLanguage, generation: -1, stable, unstable }
 }
 
 export function diffCodeTokens(
@@ -71,25 +72,31 @@ export function diffCodeTokens(
     stableCount: next.stable.length,
     raw: next.raw,
   })
+
   if (!reset && previous) {
     const tail = [...next.stable.slice(previous.stableCount), ...next.unstable]
     const prefix = previous.unstable.findIndex((token, index) => !sameToken(token, tail[index]))
     const matched = prefix < 0 ? Math.min(previous.unstable.length, tail.length) : prefix
+
     return {
       keep: previous.stableCount + matched,
       append: tail.slice(matched),
     }
   }
+
   const all = [...next.stable, ...next.unstable]
+
   if (!previous || previous.language !== next.language || !previous.stable) {
     return {
       keep: 0,
       append: all,
     }
   }
+
   const prior = [...previous.stable, ...previous.unstable]
   const prefix = prior.findIndex((token, index) => !sameToken(token, all[index]))
   const keep = prefix < 0 ? Math.min(prior.length, all.length) : prefix
+
   return {
     keep,
     append: all.slice(keep),

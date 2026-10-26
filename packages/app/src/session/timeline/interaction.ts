@@ -59,6 +59,7 @@ export function createSessionTimelineInteraction(session: SessionModel) {
         : scroller
           ? scroller.scrollHeight - scroller.clientHeight
           : 0
+
     if (!scroller || max <= 1) return
     setState("follow", { sessionKey: session.identity.sessionKey(), pinned: false })
   }
@@ -146,16 +147,21 @@ export function createSessionTimelineInteraction(session: SessionModel) {
   ) => {
     if (geometry && element === scroller) scrollGeometry = geometry
     const known = element === scroller ? scrollGeometry : undefined
+
     if (known && known.viewport > 0) {
       if (scrollStateFrame) {
         scrollStateFrame()
         scrollStateFrame = undefined
       }
+
       scrollStateTarget = undefined
       const next = measureScrollState(element, known)
+
       if (state.scroll.overflow !== next.overflow || state.scroll.jump !== next.jump) setState("scroll", next)
+
       return
     }
+
     scrollStateTarget = element
 
     if (scrollStateFrame !== undefined) return
@@ -273,6 +279,7 @@ export function createSessionTimelineInteraction(session: SessionModel) {
     }
 
     if (!owner.current() || timeline.messages().length <= before) return
+
     const currentOffset =
       scrollGeometry && scrollGeometry.viewport > 0 ? scrollGeometry.offset : (scroller?.scrollTop ?? Infinity)
 
@@ -288,6 +295,7 @@ export function createSessionTimelineInteraction(session: SessionModel) {
   const onHistoryScroll = () => {
     const currentOffset =
       scrollGeometry && scrollGeometry.viewport > 0 ? scrollGeometry.offset : (scroller?.scrollTop ?? Infinity)
+
     if (
       historyRequests.has(session.ownership.key()) ||
       timeline.history.loading() ||
@@ -312,8 +320,10 @@ export function createSessionTimelineInteraction(session: SessionModel) {
         timeline.history.more()
       )
         void loadOlder()
+
       return
     }
+
     if (fillFrame !== undefined) return
     let short = false
     fillFrame = frameLoop.addMeasured(
@@ -412,6 +422,7 @@ export function createSessionTimelineInteraction(session: SessionModel) {
     // createResizeObserver deduplicates on rounded content-box dimensions,
     // dropping the subpixel updates at the tail of the composer's spring.
     let composerHeight: number | undefined
+
     const observer = new ResizeObserver(([entry]) => {
       // The activity pill floats above the region out of flow, so only the docks, queue and composer count here.
       const next = Math.round((entry.borderBoxSize[0]?.blockSize ?? 0) * 64) / 64

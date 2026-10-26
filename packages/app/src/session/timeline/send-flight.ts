@@ -107,12 +107,15 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined, s
 
   layer.append(text)
   const previous = waiting.get(id)
+
   if (previous) {
     clearTimeout(previous.expire)
     release(previous)
   }
+
   // The composer's placeholder waits while the copy lifts off over it.
   if (!source) editor.parentElement?.setAttribute("data-send-flight-launch", "")
+
   const flight: Flight = {
     at: performance.now(),
     origin: editor,
@@ -134,10 +137,12 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined, s
         .finished.finally(() => release(flight))
     }, 700),
   }
+
   waiting.set(id, flight)
 
   const early = unclaimed.get(id)
   unclaimed.delete(id)
+
   if (early && performance.now() - early.at < 400 && early.bubble.isConnected)
     landSendFlight(id, early.bubble, early.follow)
 }
@@ -165,6 +170,7 @@ export function landSendFlight(
 
     return false
   }
+
   unclaimed.delete(id)
   waiting.delete(id)
   clearTimeout(flight.expire)
@@ -176,9 +182,11 @@ export function landSendFlight(
   }
 
   const style = getComputedStyle(bubble)
+
   const viewport = bubble
     .closest('[data-slot="session-timeline-scroll"]')
     ?.parentElement?.querySelector<HTMLElement>('[data-slot="session-timeline-visible"]')
+
   const screen = bubble.getBoundingClientRect()
 
   if (!viewport || screen.width < 1) {
@@ -186,16 +194,19 @@ export function landSendFlight(
 
     return false
   }
+
   const box = flight.origin.isConnected ? sharedBox(viewport, flight.origin) : viewport
   box.append(flight.layer)
   // DOM rects include CSS zoom; compositor keyframes and the row follower use local CSS pixels.
   const zoom = cssZoom(box)
+
   const rect = {
     left: screen.left / zoom,
     top: screen.top / zoom,
     width: screen.width / zoom,
     height: screen.height / zoom,
   }
+
   const frame = flight.layer.getBoundingClientRect()
   const visible = viewport.getBoundingClientRect()
   flight.layer.style.clipPath = `inset(${(visible.top - frame.top) / zoom}px ${(frame.right - visible.right) / zoom}px 0 ${(visible.left - frame.left) / zoom}px)`
@@ -250,25 +261,31 @@ export function landSendFlight(
   const zeta = 1 - spring.bounce
   const settle = springSettle(1, 0, omega, zeta, 0.001)
   const count = Math.max(2, Math.ceil(settle * 60))
+
   const progress = Array.from({ length: count + 1 }, (_, index) =>
     index === count ? 1 : Math.min(1, Math.max(0, 1 - springAt(1, 0, omega, zeta, (settle * index) / count)[0])),
   )
+
   // Bent off the straight line, x leads and y trails: the copy slides across before it rises onto its bubble.
   const bend = sendFlightArc()
+
   const poses = progress.map((p) => {
     const arc = bend * p * (1 - p)
+
     const at = {
       x: start.x + (end.x - start.x) * (p + arc),
       y: start.y + (end.y - start.y) * (p - arc),
       w: start.w + (end.w - start.w) * p,
       h: start.h + (end.h - start.h) * p,
     }
+
     // The copy keeps its proportions, so its text never squishes: it scales with the width and shows as much of its
     // height as the flight has reached, from the part the composer had scrolled to.
     const scale = at.w / rect.width
     const shown = Math.min(rect.height, at.h / scale)
     const hidden = flight.reveal * (rect.height - shown)
     const round = from.map((corner, index) => `${(corner + (to[index]! - corner) * p) / scale}px`).join(" ")
+
     return {
       host: {
         transform: `translate(${at.x - frame.left / zoom}px, ${at.y - hidden * scale - frame.top / zoom}px) scale(${scale})`,
@@ -281,8 +298,10 @@ export function landSendFlight(
       },
     }
   })
+
   // The spring already carries the global speed.
   const timing = { duration: settle * 1000, easing: "linear", fill: "forwards" as const }
+
   // The clip runs apart from the moves, which stay on the compositor while the main thread is busy with the send.
   const animations = [
     host.animate(
@@ -298,6 +317,7 @@ export function landSendFlight(
       timing,
     ),
   ]
+
   // Sends can share their first paint after a busy frame. Preserve their distinct launch times instead of restarting
   // them together, which makes their copies collide along the same path out of the composer.
   const launched = Math.min(timing.duration, performance.now() - flight.at)
@@ -315,6 +335,7 @@ export function landSendFlight(
     if (!document.hidden) return
     animations.forEach((animation) => animation.cancel())
   }
+
   document.addEventListener("visibilitychange", onVisibilityChange)
   void Promise.all(animations.map((animation) => animation.finished)).then(land, land)
 
@@ -339,6 +360,7 @@ function release(flight: Flight) {
 // The nearest element holding both ends of the flight.
 function sharedBox(element: Element, other: Element) {
   for (let node = element.parentElement; node; node = node.parentElement) if (node.contains(other)) return node
+
   return document.body
 }
 
@@ -350,5 +372,6 @@ function cssZoom(element: Element): number {
 function scroller(editor: HTMLElement) {
   for (let node = editor.parentElement; node && node !== document.body; node = node.parentElement)
     if (node.scrollHeight > node.clientHeight + 1 && getComputedStyle(node).overflowY !== "visible") return node
+
   return undefined
 }

@@ -606,6 +606,7 @@ export function Markdown(
     "class",
     "classList",
   ])
+
   const i18n = useI18n()
   const markdown = useMarkdown()
   const previewImages = createImagePreview()
@@ -621,15 +622,18 @@ export function Markdown(
   let streamed = false
 
   const painted = new WeakMap<PreparedMarkdownBlock, RenderedBlock>()
+
   const paintedCode = new WeakMap<
     PreparedMarkdownBlock,
     { state: HighlightedCodeState | undefined; rendered: Extract<RenderedBlock, { mode: "code" }> }
   >()
+
   const highlighting = new WeakMap<PreparedMarkdownBlock, Promise<HighlightedCodeState | undefined>>()
 
   async function highlightCode(text: string, language: string | undefined, key: string, complete = false) {
     const requestedLanguage = language ?? "text"
     const existing = highlightedCode.get(key)
+
     if (
       existing &&
       existing.requestedLanguage === requestedLanguage &&
@@ -638,9 +642,11 @@ export function Markdown(
     ) {
       return existing
     }
+
     try {
       const result = await highlightStreamingCode(key, text, requestedLanguage, complete)
       const current = highlightedCode.get(key)
+
       if (
         current &&
         current.requestedLanguage === requestedLanguage &&
@@ -650,6 +656,7 @@ export function Markdown(
       ) {
         return current
       }
+
       const next: HighlightedCodeState = {
         requestedLanguage,
         language: result.language,
@@ -659,8 +666,11 @@ export function Markdown(
         stable: result.stable,
         unstable: result.unstable,
       }
+
       highlightedCode.set(key, next)
+
       if (!lifetime.signal.aborted) setHighlightVersion((version) => version + 1)
+
       return next
     } catch (error) {
       if (
@@ -676,27 +686,36 @@ export function Markdown(
 
   const preparedResult = createMemo((): RenderResult | undefined => {
     const prepared = local.prepared
+
     if (!prepared || prepared.text !== local.text) return
     highlightVersion()
+
     return {
       text: prepared.text,
       ready: true,
       blocks: prepared.blocks.map((block, index): RenderedBlock => {
         const key = markdownBlockKey(owner, local.cacheKey, index, block.mode)
+
         if (block.mode !== "code") {
           const previous = painted.get(block)
+
           if (previous) return previous
           const result = { ...block, key }
           painted.set(block, result)
+
           return result
         }
+
         if (!highlighting.has(block)) {
           highlighting.set(block, highlightCode(block.source, block.language, key, block.complete))
         }
+
         const state = highlightedCode.get(key)
         const cached = paintedCode.get(block)
+
         if (cached && cached.state === state) return cached.rendered
         const projected = projectHighlightedCode(state, block.source, block.language)
+
         const rendered: Extract<RenderedBlock, { mode: "code" }> = {
           key,
           mode: "code",
@@ -705,7 +724,9 @@ export function Markdown(
           complete: block.complete,
           ...projected,
         }
+
         paintedCode.set(block, { state, rendered })
+
         return rendered
       }),
     }
@@ -717,6 +738,7 @@ export function Markdown(
       const live = local.streaming ?? false
 
       if (live) streamed = true
+
       if (local.prepared) return
 
       if (!live && !streamed) return
@@ -749,6 +771,7 @@ export function Markdown(
   const [html] = createResource(
     () => {
       if (local.prepared) return
+
       if (isServer)
         return {
           text: local.text,
@@ -883,9 +906,11 @@ export function Markdown(
     const container = root()
     const prepared = preparedResult()
     const result = prepared ?? html.latest ?? html()
+
     // Changing measurement paths can restart async preparation. Keep the revision already painted
     // until the replacement renderer catches up, rather than painting its older cached response.
     if (!prepared && local.text && renderedBlocks.length && (!result?.ready || result.text !== local.text)) return
+
     const content =
       prepared?.blocks ??
       (local.text
@@ -1064,10 +1089,12 @@ function pendingBlocks(
     if (block.mode !== "code") {
       if (current && canReusePendingBlock(current, block)) return current
       const key = markdownBlockKey(owner, cacheKey, index, block.mode)
+
       return { key, mode: block.mode, raw: block.raw, hash: String(block.raw.length), html: fallback(block.src) }
     }
 
     const key = markdownBlockKey(owner, cacheKey, index, block.mode)
+
     if (current?.mode === "code" && current.raw === block.raw && current.complete === !!block.complete) return current
     const projected = projectHighlightedCode(highlightedCode.get(key), block.src, block.language)
 
@@ -1218,8 +1245,10 @@ function updateCodeBlock(
     if (wrapper instanceof HTMLElement) applyCodeMetadata(wrapper, block.language)
     code.className = `language-${block.language}`
     const previous = renderedCodeTokens.get(next)
+
     const validPrevious =
       previous && code.children.length === previous.stableCount + previous.unstable.length ? previous : undefined
+
     const diff = diffCodeTokens(validPrevious, block)
 
     while (code.children.length > diff.keep) code.lastElementChild?.remove()
@@ -1240,6 +1269,7 @@ function updateCodeBlock(
 
   const wrapper = document.createElement("div")
   wrapper.setAttribute("data-component", "markdown-code")
+
   if (!block.complete) wrapper.setAttribute("data-markdown-enter", "")
   applyCodeMetadata(wrapper, block.language)
   const pre = document.createElement("pre")

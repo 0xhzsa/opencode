@@ -674,12 +674,15 @@ function freeLimit(
 // OpenCode Console says when the budget resets in its refusal's metadata, which every protocol's envelope names `resetsAt`.
 function budgetLimit(message: Pick<SessionMessageAssistant, "error">) {
   const type = message.error?.type
+
   if (type !== "provider.budget-limit" && type !== "provider.model-budget-limit") return {}
   const at = Date.parse(/"resetsAt"\s*:\s*"([^"]+)"/.exec(message.error?.response?.body ?? "")?.[1] ?? "")
-  return {
-    kind: type === "provider.budget-limit" ? ("budget-limit" as const) : ("model-budget-limit" as const),
-    ...(Number.isNaN(at) ? {} : { resetAt: at }),
-  }
+
+  const kind = type === "provider.budget-limit" ? ("budget-limit" as const) : ("model-budget-limit" as const)
+
+  if (Number.isNaN(at)) return { kind }
+
+  return { kind, resetAt: at }
 }
 
 function isInterrupted(error: SessionMessageAssistant["error"]) {

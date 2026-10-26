@@ -320,9 +320,9 @@ story("shows a stable GitHub mark without changing link text or other sites", as
   expect(await mark.evaluate((icon) => getComputedStyle(icon, "::before").width)).toBe("14px")
   expect(await mark.evaluate((icon) => getComputedStyle(icon, "::before").maskImage)).toContain("data:image/svg+xml")
   await expect(mark.locator("img")).toHaveCount(0)
-  await expect(markdown.getByRole("link", { name: "GitHub" }).locator(".markdown-link-favicon[data-github]")).toHaveCount(
-    1,
-  )
+  await expect(
+    markdown.getByRole("link", { name: "GitHub" }).locator(".markdown-link-favicon[data-github]"),
+  ).toHaveCount(1)
 
   for (const name of ["other site", "lookalike"]) {
     await expect(markdown.getByRole("link", { name }).locator(".markdown-link-favicon[data-github]")).toHaveCount(0)
@@ -673,11 +673,13 @@ story("keeps live elements and selection when a stream completes and later chang
       synchronousFiles: true,
     })
     const markdown = document.querySelector('[data-testid="markdown-fixture"] [data-component="markdown"]')!
+
     return {
       words: markdown.querySelectorAll("[data-markdown-word]").length,
       entering: markdown.querySelectorAll("[data-markdown-enter]").length,
     }
   }, fixture)
+
   expect(initial).toEqual({ words: 2, entering: 0 })
   const harness = page.getByTestId("markdown-fixture")
   const markdown = harness.locator('[data-component="markdown"]')

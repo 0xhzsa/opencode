@@ -221,6 +221,7 @@ export function widthMorph(options: {
 
     if (!el || !content) {
       currentEl = undefined
+
       return
     }
 
@@ -264,6 +265,7 @@ export function widthMorph(options: {
 
     const write = (dt: number) => {
       if (options.spring) spring.tune(options.spring())
+
       if (first || reduced) spring.snap(spring.target)
       first = false
       el.style.width = `${spring.step(dt)}px`

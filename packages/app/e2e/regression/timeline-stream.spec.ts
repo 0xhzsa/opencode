@@ -688,13 +688,16 @@ test("keeps undelivered input right under live status while it comes and goes", 
 
   const notice = (description: string) =>
     page.locator('[data-slot="session-timeline-notice"]').filter({ hasText: description })
+
   const first = notice("Audit constraints")
+
   // The space between two rows' boxes, so a hidden or collapsing lane shows up as a gap or an overlap.
   const gap = (above: Locator, below: Locator) => async () => {
     const [top, bottom] = await Promise.all([above.boundingBox(), below.boundingBox()])
 
     return top && bottom ? Math.round(bottom.y - top.y - top.height) : undefined
   }
+
   const row = (content: Locator) => page.locator("[data-timeline-key]", { has: content })
 
   await expect(answer).toBeVisible()
@@ -1039,6 +1042,7 @@ test("fades in a whole long reply that arrives in one update instead of growing 
   const timeline = await setupTimeline(page, {
     messages: [userMessage(), assistantMessage([], { completed: false })],
   })
+
   await expect(page.locator('[data-component="session-working"]')).toBeVisible()
   await page.waitForTimeout(500)
   await page.evaluate(() => {
@@ -1048,11 +1052,13 @@ test("fades in a whole long reply that arrives in one update instead of growing 
     Element.prototype.animate = function (frames, options) {
       const list = Array.isArray(frames) ? frames : []
       const timeline = this.closest("[data-timeline-key]") || this.querySelector(":scope > [data-timeline-key]")
+
       if (timeline)
         played.push({
           moves: list.some((frame) => "transform" in frame || "clipPath" in frame),
-          duration: typeof options === "number" ? options : Number(options?.duration ?? 0),
+          duration: Number(options instanceof Object ? (options.duration ?? 0) : (options ?? 0)),
         })
+
       return animate.call(this, frames, options)
     }
   })
@@ -1080,7 +1086,9 @@ test("fades in a whole long reply that arrives in one update instead of growing 
   })
   await expect(page.locator(`[data-timeline-part-id="${assistantID}:text:0"]`)).toContainText("The harbor wakes")
   await page.waitForTimeout(500)
+
   const played = await page.evaluate(() =>
+    // SAFETY: the test stored this value on window itself, in this shape.
     "played" in window ? (window.played as { moves: boolean; duration: number }[]) : [],
   )
 
@@ -1174,6 +1182,7 @@ test.describe("background shortcut", () => {
   test("slides the background shortcut in beside Working without moving it", async ({ page }) => {
     // Quarter speed, so even a slow runner draws many frames of the fade.
     await seed(page, { storage: { "opencode.motion.v2": { speed: 0.25 } } })
+
     const timeline = await setupTimeline(page, {
       messages: [
         userMessage(),
@@ -1182,16 +1191,20 @@ test.describe("background shortcut", () => {
         }),
       ],
     })
+
     const working = page.locator('[data-component="session-working"]')
     await expect(working).toBeInViewport()
     const left = (await working.boundingBox())!.x
 
     // Every frame from the shell's start, the shortcut row's opacity and offset.
     const frames = await page.evaluateHandle(() => {
+      // SAFETY: widens the empty initial list to its element type.
       const state = { on: true, frames: [] as { opacity: number; x: number }[] }
+
       const tick = () => {
         if (!state.on) return
         const row = document.querySelector('[data-component="session-background-hint-row"]')
+
         if (row)
           state.frames.push({
             opacity: +getComputedStyle(row).opacity,
@@ -1199,9 +1212,12 @@ test.describe("background shortcut", () => {
           })
         requestAnimationFrame(tick)
       }
+
       requestAnimationFrame(tick)
+
       return state
     })
+
     await timeline.send(partUpdated(toolPart("prt_hint_shell", "shell", "running", { command: "sleep 10" })))
     await expect(backgroundHint(page)).toBeInViewport()
     await page.waitForTimeout(1500)
