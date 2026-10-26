@@ -273,6 +273,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
               onFileRemove={(file) => props.controller.removeContext(file.key)}
               editingQuote={props.controller.editingQuote()}
               onEditQuote={props.controller.editQuote}
+              quoteSource={props.controller.quoteSource}
               onQuoteComment={(quote, comment) => props.controller.commentQuote(quote.key, comment)}
               searchPaths={props.controller.searchPaths}
             />
@@ -689,6 +690,7 @@ function ComposerAttachments(props: {
   onFileRemove?: (file: Extract<ComposerComment, { type: "file" }>) => void
   editingQuote?: string
   onEditQuote?: (key?: string) => void
+  quoteSource?: ComposerEditorModel["quoteSource"]
   onQuoteComment?: (quote: Extract<ComposerComment, { type: "quote" }>, comment: string) => void
   searchPaths?: (query: string) => Promise<string[]>
 }) {
@@ -730,9 +732,31 @@ function ComposerAttachments(props: {
               <div
                 ref={(element) => {
                   setAnchors(comment.key, element)
-                  onCleanup(() => setAnchors(comment.key, undefined))
+                  onCleanup(() => {
+                    setAnchors(comment.key, undefined)
+
+                    if (comment.type !== "quote") return
+                    props.quoteSource?.hover(comment.key, false)
+                    props.quoteSource?.focus(comment.key, false)
+                  })
                 }}
                 class="relative group shrink-0"
+                onPointerEnter={(event) => {
+                  if (comment.type === "quote" && event.pointerType !== "touch")
+                    props.quoteSource?.hover(comment.key, true)
+                }}
+                onPointerLeave={() => {
+                  if (comment.type === "quote") props.quoteSource?.hover(comment.key, false)
+                }}
+                onFocusIn={() => {
+                  if (comment.type === "quote") props.quoteSource?.focus(comment.key, true)
+                }}
+                onFocusOut={(event) => {
+                  if (comment.type !== "quote") return
+
+                  if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
+                  props.quoteSource?.focus(comment.key, false)
+                }}
               >
                 <Tooltip
                   value={comment.comment}
@@ -747,11 +771,11 @@ function ComposerAttachments(props: {
                     title={quoteTitle(comment)}
                     tooltip={quoteHint(comment)}
                     active={commentActive(comment)}
-                    onClick={() =>
-                      comment.type === "quote"
-                        ? props.onEditQuote?.(props.editingQuote === comment.key ? undefined : comment.key)
-                        : props.onCommentClick?.(comment)
-                    }
+                    onClick={() => {
+                      if (comment.type !== "quote") return props.onCommentClick?.(comment)
+                      props.quoteSource?.reveal(comment.key)
+                      props.onEditQuote?.(props.editingQuote === comment.key ? undefined : comment.key)
+                    }}
                   />
                 </Tooltip>
                 <button
