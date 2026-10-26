@@ -1040,6 +1040,7 @@ export function createTimelineVirtualizer(input: Input) {
       set: (key: string, open: boolean) => setToolOpen(key, open),
     },
     revealPart,
+    unpin: () => input.onUnpin(),
     View,
   }
 }
