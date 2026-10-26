@@ -5,7 +5,7 @@ import type { Model } from "@opencode/schema/model"
 import type { RelativePath } from "@opencode/schema/schema"
 import type { Snapshot } from "@opencode/schema/snapshot"
 import type { TokenUsage } from "@opencode/schema/token-usage"
-import { Cause, Clock, Effect, Exit, Fiber, Iterable, type Scope, Semaphore } from "effect"
+import { Effect, Fiber, Iterable } from "effect"
 import { isReadonlyArrayNonEmpty } from "effect/Array"
 import type { Event } from "@opencode/schema/event"
 import { Bus } from "../../bus.js"
@@ -27,8 +27,6 @@ type Input = {
   readonly pendingSnapshot?: Effect.Effect<Snapshot.ID | undefined>
   readonly started: number
   readonly assistantMessageID: SessionMessage.ID
-  /** Owns the commit timer. Closing it cancels the timer, so callers `commit` first. */
-  readonly scope: Scope.Scope
 }
 
 const asRecord = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : { value })
@@ -84,86 +82,6 @@ const hostedContent = (result: ToolResultValue): NonEmptyContent => {
   return [{ type: "text", text: stringify(result.value) }]
 }
 
-type Publisher = Pick<Bus.Interface, "publish" | "publishAll">
-
-/**
- * Holds durable events for up to `interval` so neighbours commit in one transaction
- * instead of one each. A single lock keeps publication order: deferred events always
- * commit before anything published after them.
- *
- * A failed batch rolls back as a whole, so it is replayed one event at a time: only an
- * event that fails on its own is lost, as before batching, and its neighbours are never
- * dropped while later events commit. The first failure goes to whoever committed, or to
- * the next commit when the timer committed.
- */
-const batchedWriter = (bus: Publisher, interval: number, scope: Scope.Scope) => {
-  const lock = Semaphore.makeUnsafe(1)
-  let pending: Bus.PublishInput[] = []
-  let timer: Fiber.Fiber<void> | undefined
-  let failure: Cause.Cause<never> | undefined
-  const store = (batch: readonly [Bus.PublishInput, ...Bus.PublishInput[]]) =>
-    bus.publishAll(batch).pipe(
-      Effect.asVoid,
-      Effect.catchCause(() =>
-        Effect.forEach(batch, ([definition, data, options]) =>
-          Effect.exit(bus.publish(definition, data, options)),
-        ).pipe(
-          Effect.flatMap((exits) => {
-            const failed = exits.find(Exit.isFailure)
-            return failed ? Effect.failCause(failed.cause) : Effect.void
-          }),
-        ),
-      ),
-    )
-  const drain = Effect.suspend(() => {
-    const stale = timer
-    timer = undefined
-    const batch = pending
-    pending = []
-    const held = failure
-    failure = undefined
-    return (stale ? Fiber.interrupt(stale) : Effect.void).pipe(
-      Effect.andThen(isReadonlyArrayNonEmpty(batch) ? store(batch) : Effect.void),
-      Effect.andThen(held ? Effect.failCause(held) : Effect.void),
-    )
-  }).pipe(Effect.uninterruptible)
-  const commit = lock.withPermit(drain)
-  // The timer clears itself before draining, so `drain` never interrupts the fiber it runs on.
-  const tick = Effect.sleep(interval).pipe(
-    Effect.andThen(
-      lock.withPermit(
-        Effect.suspend(() => {
-          timer = undefined
-          return drain
-        }),
-      ),
-    ),
-    Effect.catchCauseIf(
-      (cause) => !Cause.hasInterrupts(cause),
-      (cause) =>
-        Effect.sync(() => {
-          failure = cause
-        }),
-    ),
-  )
-  return {
-    commit,
-    /** Publishes now, behind everything deferred so far. */
-    publish: <D extends Event.Definition>(definition: D, data: Event.Data<D>) =>
-      lock.withPermit(drain.pipe(Effect.andThen(bus.publish(definition, data)))).pipe(Effect.asVoid),
-    defer: <D extends Event.DurableDefinition>(definition: D, data: Event.Data<D>) =>
-      Effect.flatMap(Clock.currentTimeMillis, (created) => {
-        pending.push([definition, data, { created }] as Bus.PublishInput)
-        if (timer) return Effect.void
-        return Effect.forkIn(tick, scope, { startImmediately: true, uninterruptible: false }).pipe(
-          Effect.map((fiber) => {
-            timer = fiber
-          }),
-        )
-      }),
-  }
-}
-
 /**
  * Persist one step without executing tools or starting a continuation step.
  *
@@ -177,14 +95,28 @@ const batchedWriter = (bus: Publisher, interval: number, scope: Scope.Scope) => 
  * order: each publishing fiber is sequential, so per-source order holds by construction,
  * and consumers fold by id/ordinal rather than global position.
  *
- * Durable events are held for up to one delta interval and committed together. They
- * commit early where other work waits on them: a local tool call (so its execution
- * starts only after `Tool.Called` is stored), the end of the provider stream (`flush`),
- * the step's end or failure, and `startAssistant`. The step calls `commit` on every exit.
+ * The provider fiber, and the step's closeout after it, hold their durable events and
+ * store them in one transaction at the next boundary: a block, tool input or tool call
+ * starting (live deltas and tool execution depend on it), a hosted result or provider
+ * error, the end of the stream, and the step's end. Nothing is held across a wait on the
+ * model or a tool. Only that one fiber holds events, so the batch needs no lock. Tool
+ * fibers store their results directly, since the `Tool.Called` they follow is stored.
  */
-export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
+export const createLLMEventPublisher = (bus: Pick<Bus.Interface, "publish" | "publishAll">, input: Input) => {
   const deltaBatchInterval = 100
-  const writes = batchedWriter(bus, deltaBatchInterval, input.scope)
+  let held: Bus.PublishInput[] = []
+  type Write = <D extends Event.DurableDefinition>(definition: D, data: Event.Data<D>) => Effect.Effect<void>
+  const hold: Write = (definition, data) =>
+    Effect.sync(() => {
+      held.push([definition, data] as Bus.PublishInput)
+    })
+  const store: Write = (definition, data) => bus.publish(definition, data).pipe(Effect.asVoid)
+  /** Stores everything held in one transaction. A failure stores none of it and fails the caller. */
+  const commit = Effect.suspend(() => {
+    const batch = held
+    held = []
+    return isReadonlyArrayNonEmpty(batch) ? bus.publishAll(batch).pipe(Effect.asVoid) : Effect.void
+  }).pipe(Effect.uninterruptible)
   type ToolState = {
     readonly name: string
     called: boolean
@@ -213,7 +145,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
     // Check again after the await, so the check and the mark below never straddle a yield.
     if (stepStarted) return assistantMessageID
     stepStarted = true
-    yield* writes.defer(SessionEvent.Step.Started, {
+    yield* hold(SessionEvent.Step.Started, {
       sessionID: input.sessionID,
       agent: input.agent,
       model: input.model,
@@ -226,13 +158,10 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
   const currentAssistantMessageID = () =>
     stepStarted ? Effect.succeed(assistantMessageID) : Effect.die(new Error("Tool event before assistant step start"))
   const streamed = Effect.fnUntraced(function* () {
-    yield* writes.defer(SessionEvent.Step.Streamed, {
+    yield* hold(SessionEvent.Step.Streamed, {
       sessionID: input.sessionID,
       assistantMessageID: yield* startAssistant(),
     })
-    // Store the step before a long wait on local tools; otherwise it commits with the step's end.
-    for (const tool of tools.values())
-      if (tool.called && !tool.settled && !tool.providerExecuted) return yield* writes.commit
   })
   const native = (metadata: ProviderMetadata | undefined) => metadata?.[input.providerMetadataKey]
   const fragments = (
@@ -324,7 +253,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
     "text",
     (_textID, value, ordinal, native) =>
       Effect.gen(function* () {
-        yield* writes.defer(SessionEvent.Text.Ended, {
+        yield* hold(SessionEvent.Text.Ended, {
           sessionID: input.sessionID,
           assistantMessageID: yield* currentAssistantMessageID(),
           ordinal,
@@ -334,7 +263,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
       }),
     (_textID, value, ordinal) =>
       Effect.gen(function* () {
-        yield* writes.publish(SessionEvent.Text.Delta, {
+        yield* bus.publish(SessionEvent.Text.Delta, {
           sessionID: input.sessionID,
           assistantMessageID: yield* currentAssistantMessageID(),
           ordinal,
@@ -347,7 +276,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
     "reasoning",
     (_reasoningID, value, ordinal, native) =>
       Effect.gen(function* () {
-        yield* writes.defer(SessionEvent.Reasoning.Ended, {
+        yield* hold(SessionEvent.Reasoning.Ended, {
           sessionID: input.sessionID,
           assistantMessageID: yield* currentAssistantMessageID(),
           ordinal,
@@ -357,7 +286,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
       }),
     (_reasoningID, value, ordinal) =>
       Effect.gen(function* () {
-        yield* writes.publish(SessionEvent.Reasoning.Delta, {
+        yield* bus.publish(SessionEvent.Reasoning.Delta, {
           sessionID: input.sessionID,
           assistantMessageID: yield* currentAssistantMessageID(),
           ordinal,
@@ -372,7 +301,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
       if (!tool) return yield* Effect.die(new Error(`Tool input end before start: ${id}`))
       // Keep a bounded excerpt for recovery errors; the full argument text is persisted below.
       tool.input = inputExcerpt(value)
-      yield* writes.defer(SessionEvent.Tool.Input.Ended, {
+      yield* hold(SessionEvent.Tool.Input.Ended, {
         sessionID: input.sessionID,
         assistantMessageID,
         id,
@@ -410,7 +339,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
     tools.set(event.id, tool)
     yield* toolInput.start(event.id)
     yield* publishPendingDeltas()
-    yield* writes.defer(SessionEvent.Tool.Input.Started, {
+    yield* hold(SessionEvent.Tool.Input.Started, {
       sessionID: input.sessionID,
       assistantMessageID,
       id: event.id,
@@ -459,11 +388,16 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
     }
   })
 
-  const failTool = Effect.fnUntraced(function* (id: string, error: SessionError.Error, metadata?: Tool.Metadata) {
+  const failTool = Effect.fnUntraced(function* (
+    id: string,
+    error: SessionError.Error,
+    metadata?: Tool.Metadata,
+    write: Write = hold,
+  ) {
     const tool = tools.get(id)
     if (!tool || tool.settled) return false
     tool.settled = true
-    yield* writes.defer(SessionEvent.Tool.Failed, {
+    yield* write(SessionEvent.Tool.Failed, {
       sessionID: input.sessionID,
       assistantMessageID,
       id,
@@ -509,7 +443,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
   }) {
     if (stepFailure === undefined) return
     const assistantMessageID = yield* startAssistant()
-    yield* writes.defer(SessionEvent.Step.Failed, {
+    yield* hold(SessionEvent.Step.Failed, {
       sessionID: input.sessionID,
       assistantMessageID,
       error: stepFailure,
@@ -518,16 +452,18 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
       native: stepSettlement?.native,
       ...details,
     })
+    yield* commit
   })
 
   const endStep = Effect.fnUntraced(function* (
     details: Omit<Event.Data<typeof SessionEvent.Step.Ended>, "sessionID" | "assistantMessageID">,
   ) {
-    yield* writes.defer(SessionEvent.Step.Ended, {
+    yield* hold(SessionEvent.Step.Ended, {
       ...details,
       sessionID: input.sessionID,
       assistantMessageID: yield* startAssistant(),
     })
+    yield* commit
   })
 
   const failUnsettledTools = Effect.fn("SessionRunner.failUnsettledTools")(
@@ -543,7 +479,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
         outputStarted = true
         const startedTextOrdinal = yield* text.start(event.id, native(event.providerMetadata))
         yield* publishPendingDeltas()
-        yield* writes.defer(SessionEvent.Text.Started, {
+        yield* hold(SessionEvent.Text.Started, {
           sessionID: input.sessionID,
           assistantMessageID: yield* startAssistant(),
           ordinal: startedTextOrdinal,
@@ -559,7 +495,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
         outputStarted = true
         const startedReasoningOrdinal = yield* reasoning.start(event.id, native(event.providerMetadata))
         yield* publishPendingDeltas()
-        yield* writes.defer(SessionEvent.Reasoning.Started, {
+        yield* hold(SessionEvent.Reasoning.Started, {
           sessionID: input.sessionID,
           assistantMessageID: yield* startAssistant(),
           ordinal: startedReasoningOrdinal,
@@ -601,7 +537,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
         if (tool.called) return yield* Effect.die(new Error(`Duplicate tool call: ${event.id}`))
         tool.called = true
         tool.providerExecuted = event.providerExecuted === true
-        yield* writes.defer(SessionEvent.Tool.Called, {
+        yield* hold(SessionEvent.Tool.Called, {
           sessionID: input.sessionID,
           assistantMessageID,
           id: event.id,
@@ -626,7 +562,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
         tool.settled = true
         const executed = event.providerExecuted === true || tool.providerExecuted
         if (event.result.type === "error") {
-          yield* writes.defer(SessionEvent.Tool.Failed, {
+          yield* hold(SessionEvent.Tool.Failed, {
             sessionID: input.sessionID,
             assistantMessageID,
             id: event.id,
@@ -637,7 +573,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
           })
           return
         }
-        yield* writes.defer(SessionEvent.Tool.Success, {
+        yield* hold(SessionEvent.Tool.Success, {
           sessionID: input.sessionID,
           assistantMessageID,
           id: event.id,
@@ -654,7 +590,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
           return yield* Effect.die(new Error(`Tool error name changed for ${event.id}: ${tool.name} -> ${event.name}`))
         if (tool.settled) return yield* Effect.die(new Error(`Duplicate tool error: ${event.id}`))
         tool.settled = true
-        yield* writes.defer(SessionEvent.Tool.Failed, {
+        yield* hold(SessionEvent.Tool.Failed, {
           sessionID: input.sessionID,
           assistantMessageID,
           id: event.id,
@@ -692,13 +628,16 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
     }
   }, Effect.uninterruptible)
 
-  const publishTraced = Effect.fn("SessionRunner.publishLLMEvent")(publish)
+  const publishTraced = Effect.fn("SessionRunner.publishLLMEvent")(function* (event: LLMEvent) {
+    yield* publish(event)
+    if (COMMIT_POINTS.has(event.type)) yield* commit
+  }, Effect.uninterruptible)
 
   const progress = Effect.fnUntraced(function* (id: string, update: Tool.Metadata) {
     const tool = tools.get(id)
     if (!tool?.called || tool.settled) return yield* Effect.die(new Error(`Tool progress outside running call: ${id}`))
     tool.progress = update
-    yield* writes.publish(SessionEvent.Tool.Progress, {
+    yield* bus.publish(SessionEvent.Tool.Progress, {
       sessionID: input.sessionID,
       assistantMessageID,
       id,
@@ -716,7 +655,7 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
     tool.settled = true
     const content = result.content
     if (!isReadonlyArrayNonEmpty(content)) return yield* Effect.die(new Error(`Tool execution has no content: ${id}`))
-    yield* writes.defer(SessionEvent.Tool.Success, {
+    yield* bus.publish(SessionEvent.Tool.Success, {
       sessionID: input.sessionID,
       assistantMessageID,
       id,
@@ -726,29 +665,25 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
     })
   })
 
-  const committed =
-    <Args extends ReadonlyArray<unknown>, A, E>(method: (...args: Args) => Effect.Effect<A, E>) =>
-    (...args: Args) =>
-      method(...args).pipe(Effect.ensuring(writes.commit))
-
   return {
     publish: (event: LLMEvent) => {
       if (event.type === "text-delta" || event.type === "reasoning-delta" || event.type === "tool-input-delta")
         return publish(event)
-      const commitPoint = event.type === "tool-call" ? !event.providerExecuted : COMMIT_POINTS.has(event.type)
-      return commitPoint ? committed(publishTraced)(event) : publishTraced(event)
+      return publishTraced(event)
     },
     progress,
     toolExecution,
-    flush: committed(flush),
+    flush,
     failAssistant,
-    failTool,
-    publishStepFailure: committed(publishStepFailure),
-    endStep: committed(endStep),
+    /** Stores a called tool's failure before returning, outside the held batch, like `toolExecution`. */
+    failTool: (id: string, error: SessionError.Error, metadata?: Tool.Metadata) =>
+      failTool(id, error, metadata, store),
+    publishStepFailure,
+    endStep,
+    /** Stores everything held so far. The step calls it at the end of the stream and on every exit. */
+    commit,
     failUnsettledTools,
     failIncompleteTools,
-    /** Stores everything deferred so far. The step calls it on every exit. */
-    commit: writes.commit,
     hasProviderError: () => providerFailed,
     hasStarted: () => stepStarted,
     /** Immutable snapshot of everything recorded for this step so far. */
@@ -762,14 +697,21 @@ export const createLLMEventPublisher = (bus: Publisher, input: Input) => {
         (tool) => !tool.providerExecuted && (tool.called || tool.settled),
       ),
     }),
-    // Retry state is published straight to the bus, so the assistant must already be stored.
-    startAssistant: committed(startAssistant),
+    startAssistant,
     streamed,
   }
 }
 
-/** Provider events committed before `publish` returns. Local tool calls commit too (see `publish`). */
-const COMMIT_POINTS = new Set<LLMEvent["type"]>(["tool-result", "tool-error", "provider-error"])
+/** Provider events after which held events are stored: what follows them waits on that write. */
+const COMMIT_POINTS = new Set<LLMEvent["type"]>([
+  "text-start",
+  "reasoning-start",
+  "tool-input-start",
+  "tool-call",
+  "tool-result",
+  "tool-error",
+  "provider-error",
+])
 
 function inputExcerpt(value: string): InputExcerpt {
   return { text: value.slice(0, INPUT_EXCERPT_LIMIT), length: value.length }

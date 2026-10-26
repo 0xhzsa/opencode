@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
-import { Cause, Clock, Deferred, Effect, Exit, Fiber, Schema, Scope } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Schema } from "effect"
 import { eq } from "drizzle-orm"
-import { LLMEvent } from "@opencode/ai/effect"
+import { LLMEvent, Usage } from "@opencode/ai/effect"
 import { Money } from "@opencode/schema/money"
 import { Bus } from "@opencode/core/bus"
 import { Database } from "@opencode/core/database/database"
@@ -39,8 +39,6 @@ const capture = (
     readonly poison?: string
   },
 ) => {
-  const poisoned = (definition: Event.Definition) => definition.type === options?.poison
-  const scope = Scope.makeUnsafe()
   const published: Array<{ readonly type: string; readonly data: unknown }> = []
   // One entry per durable transaction, listing the event types it stored.
   const commits: Array<readonly string[]> = []
@@ -49,50 +47,43 @@ const capture = (
     published.push({ type, data })
     return type
   }
-  const publish = ((definition: Event.Definition, data: unknown) => {
-    if (poisoned(definition)) return Effect.die(new Error("projection failed"))
-    const publish = Effect.sync(() => {
-      const type = record(definition, data)
-      if (definition.durable) commits.push([type])
-      return { id: Event.ID.create(), type: definition.type, data } as Event.Payload
-    })
-    if (definition.type === SessionEvent.Text.Delta.type && options?.beforeTextDelta)
-      return options.beforeTextDelta.pipe(Effect.andThen(publish))
-    return definition.type === SessionEvent.Tool.Progress.type && options?.interruptProgress
-      ? publish.pipe(Effect.andThen(Effect.interrupt))
-      : publish
-  }) as Bus.Interface["publish"]
-  // When each stored event happened, and when its transaction committed.
-  const times: Array<{ readonly type: string; readonly created?: number; readonly committed: number }> = []
-  const publishAll = ((events: readonly Bus.PublishInput[]) =>
-    Effect.gen(function* () {
-      if (events.some(([definition]) => poisoned(definition))) return yield* Effect.die(new Error("projection failed"))
-      const committed = yield* Clock.currentTimeMillis
-      commits.push(events.map(([definition, data]) => record(definition, data)))
-      for (const [definition, , publishOptions] of events)
-        times.push({ type: definition.type, created: publishOptions?.created, committed })
-      return events.map(([definition, data]) => ({ id: Event.ID.create(), type: definition.type, data }))
-    })) as unknown as Bus.Interface["publishAll"]
+  const bus: Pick<Bus.Interface, "publish" | "publishAll"> = {
+    publish: (definition, data) => {
+      const publish = Effect.sync(() => {
+        const type = record(definition, data)
+        if (definition.durable) commits.push([type])
+        return { id: Event.ID.create(), type: definition.type, data } as Event.Payload<typeof definition>
+      })
+      if (definition.type === SessionEvent.Text.Delta.type && options?.beforeTextDelta)
+        return options.beforeTextDelta.pipe(Effect.andThen(publish))
+      return definition.type === SessionEvent.Tool.Progress.type && options?.interruptProgress
+        ? publish.pipe(Effect.andThen(Effect.interrupt))
+        : publish
+    },
+    publishAll: ((events: readonly Bus.PublishInput[]) => {
+      if (events.some(([definition]) => definition.type === options?.poison))
+        return Effect.die(new Error("projection failed"))
+      return Effect.sync(() => {
+        commits.push(events.map(([definition, data]) => record(definition, data)))
+        return events.map(([definition, data]) => ({ id: Event.ID.create(), type: definition.type, data }))
+      })
+    }) as unknown as Bus.Interface["publishAll"],
+  }
   return {
     published,
     commits,
-    times,
-    publisher: createLLMEventPublisher(
-      { publish, publishAll },
-      {
-        sessionID,
-        agent: Agent.ID.make("build"),
-        model: {
-          id: Model.ID.make("model"),
-          providerID: Provider.ID.opencode,
-        },
-        providerMetadataKey,
-        pendingSnapshot: options?.pendingSnapshot,
-        started: 0,
-        assistantMessageID: SessionMessage.ID.create(),
-        scope,
+    publisher: createLLMEventPublisher(bus, {
+      sessionID,
+      agent: Agent.ID.make("build"),
+      model: {
+        id: Model.ID.make("model"),
+        providerID: Provider.ID.opencode,
       },
-    ),
+      providerMetadataKey,
+      pendingSnapshot: options?.pendingSnapshot,
+      started: 0,
+      assistantMessageID: SessionMessage.ID.create(),
+    }),
   }
 }
 
@@ -121,7 +112,6 @@ test("local tool success serializes media base64 once through canonical content"
       ],
     }),
   )
-  await Effect.runPromise(publisher.commit)
 
   const success = published.find((event) => event.type === "session.tool.success.2")
   expect(success).toBeDefined()
@@ -201,7 +191,6 @@ testEffect(
         model: { id: Model.ID.make("test-model"), providerID: Provider.ID.opencode },
         providerMetadataKey: "openai",
         started: 0,
-        scope: yield* Effect.scope,
       },
     )
     yield* publisher.publish(LLMEvent.toolCall({ ...call, providerExecuted: true }))
@@ -302,7 +291,6 @@ test("local failure metadata completes the progress snapshot", async () => {
   await Effect.runPromise(
     publisher.failTool(call.id, { type: "tool.execution", message: "failed" }, { provider: "exa" }),
   )
-  await Effect.runPromise(publisher.commit)
 
   expect(published.find((event) => event.type === "session.tool.failed.2")?.data).toMatchObject({
     metadata: { phase: "running", provider: "exa" },
@@ -329,6 +317,7 @@ test("failure before progress omits partial output fields", async () => {
   await Effect.runPromise(publisher.commit)
 
   const failed = published.find((event) => event.type === "session.tool.failed.2")?.data
+  expect(failed).toBeDefined()
   expect(failed).not.toHaveProperty("content")
   expect(failed).not.toHaveProperty("metadata")
 })
@@ -340,7 +329,6 @@ test("provider metadata is flattened using the route key", async () => {
       LLMEvent.reasoningStart({ id: "reasoning", providerMetadata: { anthropic: { signature: "signed" } } }),
     ),
   )
-  await Effect.runPromise(publisher.flush())
 
   expect(published.find((event) => event.type === "session.reasoning.started.1")?.data).toMatchObject({
     native: { signature: "signed" },
@@ -368,7 +356,7 @@ test("reasoning state from start, empty delta, and end is merged", async () => {
       LLMEvent.reasoningEnd({ id: "reasoning", providerMetadata: { anthropic: { stopReason: "tool_use" } } }),
     ),
   )
-  await Effect.runPromise(publisher.flush())
+  await Effect.runPromise(publisher.commit)
 
   expect(published.find((event) => event.type === "session.reasoning.ended.1")?.data).toMatchObject({
     native: { blockType: "thinking", signature: "signed", stopReason: "tool_use" },
@@ -424,7 +412,7 @@ it.effect("batches text deltas and flushes pending text before the terminal even
     yield* publisher.publish(LLMEvent.textDelta({ id: "text", text: " four" }))
     yield* publisher.publish(LLMEvent.textDelta({ id: "text", text: " five" }))
     yield* publisher.publish(LLMEvent.textEnd({ id: "text" }))
-    yield* publisher.flush()
+    yield* publisher.commit
     expect(published.slice(-2).map((event) => event.type)).toEqual(["session.text.delta", "session.text.ended.1"])
     expect(published.at(-2)?.data).toMatchObject({ delta: " four five" })
     const count = published.length
@@ -451,7 +439,6 @@ it.effect("publishes batched deltas before the next block starts", () =>
       publisher.publish,
       { discard: true },
     )
-    yield* TestClock.adjust("100 millis")
     expect(types()).toEqual([
       "session.reasoning.started.1",
       "session.reasoning.delta",
@@ -464,7 +451,7 @@ it.effect("publishes batched deltas before the next block starts", () =>
     yield* publisher.publish(LLMEvent.textDelta({ id: "text", text: " more" }))
     yield* TestClock.adjust("1 second")
     yield* publisher.publish(LLMEvent.textEnd({ id: "text" }))
-    yield* TestClock.adjust("100 millis")
+    yield* publisher.commit
     expect(published.filter((event) => event.type === "session.text.delta").map((event) => event.data)).toMatchObject([
       { delta: "Now the edits:" },
       { delta: " more" },
@@ -493,7 +480,7 @@ it.effect("retains new chunks and orders text-end behind an in-flight timer publ
     expect(published.some((event) => event.type === "session.text.ended.1")).toBe(false)
     yield* Deferred.succeed(release, undefined)
     yield* Fiber.join(ending)
-    yield* publisher.flush()
+    yield* publisher.commit
     expect(published.slice(-3)).toMatchObject([
       { type: "session.text.delta", data: { delta: "comm" } },
       { type: "session.text.delta", data: { delta: "and." } },
@@ -516,7 +503,7 @@ it.effect("batches reasoning deltas and flushes pending reasoning before the ter
       publisher.publish,
       { discard: true },
     )
-    yield* publisher.flush()
+    yield* publisher.commit
 
     expect(
       published.filter((event) => event.type === "session.reasoning.delta").map((event) => event.data),
@@ -525,67 +512,6 @@ it.effect("batches reasoning deltas and flushes pending reasoning before the ter
       "session.reasoning.delta",
       "session.reasoning.ended.1",
     ])
-  }),
-)
-
-it.effect("commits neighbouring durable events together and stores the tool call before returning", () =>
-  Effect.gen(function* () {
-    const { commits, publisher } = capture()
-    yield* Effect.forEach(
-      [
-        LLMEvent.stepStart({ index: 0 }),
-        LLMEvent.textStart({ id: "text" }),
-        LLMEvent.textDelta({ id: "text", text: "Reading" }),
-        LLMEvent.textEnd({ id: "text" }),
-        LLMEvent.toolInputStart({ id: call.id, name: call.name }),
-        LLMEvent.toolInputEnd({ id: call.id, name: call.name }),
-        call,
-      ],
-      publisher.publish,
-      { discard: true },
-    )
-    expect(commits).toEqual([
-      ["session.step.started.1", "session.text.started.1"],
-      ["session.text.ended.1", "session.tool.input.started.1", "session.tool.input.ended.1", "session.tool.called.1"],
-    ])
-  }),
-)
-
-it.effect("a timer commit keeps each deferred event's own time", () =>
-  Effect.gen(function* () {
-    const { times, publisher } = capture()
-    const start = yield* Clock.currentTimeMillis
-    yield* publisher.publish(LLMEvent.stepStart({ index: 0 }))
-    yield* TestClock.adjust("40 millis")
-    yield* publisher.publish(LLMEvent.textStart({ id: "text" }))
-    expect(times).toEqual([])
-    yield* TestClock.adjust("60 millis")
-    expect(times).toEqual([
-      { type: "session.step.started", created: start, committed: start + 100 },
-      { type: "session.text.started", created: start + 40, committed: start + 100 },
-    ])
-  }),
-)
-
-it.effect("a failed timer commit loses only the failing event and fails the next commit", () =>
-  Effect.gen(function* () {
-    const { published, publisher } = capture("anthropic", { poison: SessionEvent.Text.Started.type })
-    yield* publisher.publish(LLMEvent.stepStart({ index: 0 }))
-    yield* publisher.publish(LLMEvent.textStart({ id: "text" }))
-    yield* TestClock.adjust("100 millis")
-    expect(published.map((event) => event.type)).toEqual(["session.step.started.1"])
-
-    const publication = yield* publisher.publish(call).pipe(Effect.exit)
-    expect(Exit.isFailure(publication) && Cause.squash(publication.cause)).toMatchObject({
-      message: "projection failed",
-    })
-    expect(published.map((event) => event.type)).toEqual([
-      "session.step.started.1",
-      "session.tool.input.started.1",
-      "session.tool.input.ended.1",
-      "session.tool.called.1",
-    ])
-    expect(Exit.isSuccess(yield* publisher.flush().pipe(Effect.exit))).toBe(true)
   }),
 )
 
@@ -605,7 +531,7 @@ test("authoritative end values replace accumulated deltas in the durable ended e
       { discard: true },
     ),
   )
-  await Effect.runPromise(publisher.flush())
+  await Effect.runPromise(publisher.commit)
 
   expect(published.find((event) => event.type === "session.text.ended.1")?.data).toMatchObject({ text: "Hello!" })
   expect(published.find((event) => event.type === "session.reasoning.ended.1")?.data).toMatchObject({
@@ -627,7 +553,7 @@ test("tool input deltas are accumulated without being published", async () => {
       { discard: true },
     ),
   )
-  await Effect.runPromise(publisher.flush())
+  await Effect.runPromise(publisher.commit)
 
   expect(published.some((event) => event.type === "session.tool.input.delta")).toBe(false)
   expect(published.find((event) => event.type === "session.tool.input.ended.1")?.data).toMatchObject({
@@ -672,7 +598,6 @@ test("binary failure emits no success event", async () => {
   const { published, publisher } = capture()
   await Effect.runPromise(publisher.publish(call))
   await Effect.runPromise(publisher.failTool(call.id, { type: "tool.execution", message: "Cannot read binary file" }))
-  await Effect.runPromise(publisher.commit)
   expect(published.some((event) => event.type === "session.tool.success.2")).toBe(false)
   expect(published.some((event) => event.type === "session.tool.failed.2")).toBe(true)
 })
@@ -703,7 +628,7 @@ test("step start waits for the pending start snapshot", async () => {
 
   Effect.runSync(Deferred.succeed(snapshot, Snapshot.ID.make("tree-start")))
   await Effect.runPromise(Fiber.join(started))
-  await Effect.runPromise(publisher.flush())
+  await Effect.runPromise(publisher.commit)
   expect(published.map((event) => [event.type, (event.data as { snapshot?: string }).snapshot])).toEqual([
     ["session.step.started.1", "tree-start"],
   ])
@@ -824,3 +749,114 @@ test("content-filter failure explains the refusal when the provider gives a reas
     },
   })
 })
+
+it.effect("stores a step's durable events in one transaction per boundary", () =>
+  Effect.gen(function* () {
+    const { commits, publisher } = capture()
+    yield* Effect.forEach(
+      [
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.reasoningStart({ id: "reasoning" }),
+        LLMEvent.reasoningDelta({ id: "reasoning", text: "Plan." }),
+        LLMEvent.reasoningEnd({ id: "reasoning" }),
+        LLMEvent.textStart({ id: "text" }),
+        LLMEvent.textDelta({ id: "text", text: "Reading." }),
+        LLMEvent.textEnd({ id: "text" }),
+        LLMEvent.toolInputStart({ id: call.id, name: call.name }),
+        LLMEvent.toolInputDelta({ id: call.id, name: call.name, text: '{"path":"pixel.png"}' }),
+        LLMEvent.toolInputEnd({ id: call.id, name: call.name }),
+        call,
+      ],
+      publisher.publish,
+      { discard: true },
+    )
+    yield* publisher.toolExecution(call.id, call.name, {
+      output: { type: "text" },
+      content: [{ type: "text", text: "read" }],
+    })
+    yield* publisher.publish(LLMEvent.stepFinish({ index: 0, reason: { normalized: "tool-calls" } }))
+    yield* publisher.streamed()
+    yield* publisher.commit
+    yield* publisher.endStep({
+      finish: "tool-calls",
+      cost: Money.USD.make(0),
+      tokens: SessionUsage.tokens(Usage.from({ nonCachedInputTokens: 1, outputTokens: 1 })),
+    })
+
+    expect(commits).toEqual([
+      ["session.step.started.1", "session.reasoning.started.1"],
+      ["session.reasoning.ended.1", "session.text.started.1"],
+      ["session.text.ended.1", "session.tool.input.started.1"],
+      ["session.tool.input.ended.1", "session.tool.called.1"],
+      ["session.tool.success.2"],
+      ["session.step.streamed.1"],
+      ["session.step.ended.1"],
+    ])
+  }),
+)
+
+test("a failed commit stores none of its batch and fails the caller", async () => {
+  const { commits, publisher } = capture("anthropic", { poison: SessionEvent.Text.Ended.type })
+  await Effect.runPromise(publisher.publish(LLMEvent.textStart({ id: "text" })))
+  await Effect.runPromise(publisher.publish(LLMEvent.textEnd({ id: "text", text: "lost" })))
+  await Effect.runPromise(publisher.publish(LLMEvent.stepFinish({ index: 0, reason: { normalized: "stop" } })))
+  await Effect.runPromise(publisher.streamed())
+
+  const exit = await Effect.runPromiseExit(publisher.commit)
+  expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toMatchObject({ message: "projection failed" })
+  // Nothing is replayed into a later transaction.
+  await Effect.runPromise(publisher.commit)
+  expect(commits).toEqual([["session.step.started.1", "session.text.started.1"]])
+})
+
+testEffect(
+  AppNodeBuilder.build(LayerNode.group([Database.node, Bus.node, SessionProjector.node]), [
+    Bus.node.replace(Bus.configured({ persist: true })),
+  ]),
+).effect("a local tool's result is stored before its fiber returns", () =>
+  Effect.gen(function* () {
+    const database = yield* Database.Service
+    const bus = yield* Bus.Service
+    const assistantMessageID = SessionMessage.ID.create()
+    yield* database.db
+      .insert(ProjectTable)
+      .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+      .run()
+    yield* database.db
+      .insert(SessionTable)
+      .values({ id: sessionID, project_id: Project.ID.global, slug: "publish", directory: "/project", version: "test" })
+      .run()
+    const publisher = createLLMEventPublisher(bus, {
+      sessionID,
+      assistantMessageID,
+      agent: Agent.defaultID,
+      model: { id: Model.ID.make("test-model"), providerID: Provider.ID.opencode },
+      providerMetadataKey: "anthropic",
+      started: 0,
+    })
+    const failing = LLMEvent.toolCall({ id: "call-failing", name: "read", input: { path: "missing.png" } })
+    yield* publisher.publish(LLMEvent.textStart({ id: "text" }))
+    yield* publisher.publish(LLMEvent.textEnd({ id: "text", text: "Reading both." }))
+    yield* publisher.publish(call)
+    yield* publisher.publish(failing)
+    yield* publisher.toolExecution(call.id, call.name, {
+      output: { type: "text" },
+      content: [{ type: "text", text: "read" }],
+    })
+    yield* publisher.failTool(failing.id, { type: "tool.execution", message: "not found" })
+
+    // No commit: the stream is still open, yet both results and everything before them are stored.
+    const message = yield* database.db
+      .select()
+      .from(SessionMessageTable)
+      .where(eq(SessionMessageTable.id, assistantMessageID))
+      .get()
+    expect(message?.data).toMatchObject({
+      content: [
+        { type: "text", text: "Reading both." },
+        { type: "tool", id: call.id, state: { status: "completed" } },
+        { type: "tool", id: failing.id, state: { status: "error" } },
+      ],
+    })
+  }),
+)

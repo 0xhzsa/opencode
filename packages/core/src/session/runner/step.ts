@@ -81,7 +81,6 @@ export const make = Effect.gen(function* () {
       providerMetadataKey: input.model.model.route.providerMetadataKey ?? input.model.model.provider,
       pendingSnapshot: Fiber.join(pendingStartSnapshot),
       started: yield* Clock.currentTimeMillis,
-      scope: yield* Effect.scope,
     })
     const toolRuns: Array<{
       readonly call: ToolCall
@@ -147,6 +146,8 @@ export const make = Effect.gen(function* () {
         if (streamInterrupted && !publisher.hasStarted() && !pendingStartSnapshot.pollUnsafe())
           return yield* Effect.failCause(stream.cause)
         if (!overflowFailure && publisher.hasStarted()) yield* publisher.streamed()
+        // Store the stream's tail before waiting on tools, retries or compaction.
+        yield* publisher.commit
         if (streamInterrupted) yield* interruptTools
         const joined = yield* restore(Fiber.awaitAll(toolRuns.map((run) => run.fiber))).pipe(Effect.exit)
         if (Exit.isFailure(joined)) yield* interruptTools

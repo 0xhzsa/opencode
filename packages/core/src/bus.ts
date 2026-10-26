@@ -98,8 +98,6 @@ export interface PublishOptions {
   readonly metadata?: Record<string, unknown>
   readonly location?: Location.Ref
   readonly global?: boolean
-  /** When the event happened, if earlier than its publication. Defaults to now. */
-  readonly created?: number
   /** Local operational projection committed atomically with a new durable event. Not replayed or serialized. */
   readonly commit?: (seq: number) => Effect.Effect<void>
 }
@@ -523,7 +521,7 @@ export function configured(options?: Options) {
               definition,
               {
                 id: options?.id ?? Event.ID.create(),
-                created: options?.created ?? (yield* Clock.currentTimeMillis),
+                created: yield* Clock.currentTimeMillis,
                 ...(options?.metadata ? { metadata: options.metadata } : {}),
                 type: definition.type,
                 ...(location ? { location } : {}),
@@ -560,7 +558,7 @@ export function configured(options?: Options) {
                   commit: options?.commit,
                   event: {
                     id: options?.id ?? Event.ID.create(),
-                    created: options?.created ?? (yield* Clock.currentTimeMillis),
+                    created: yield* Clock.currentTimeMillis,
                     ...(options?.metadata ? { metadata: options.metadata } : {}),
                     type: definition.type,
                     ...(location ? { location } : {}),
