@@ -543,7 +543,16 @@ const layer = Layer.effect(
       const result = yield* repositoryOperation(
         "refresh",
         repository,
-        ["-c", "status.showUntrackedFiles=all", "status", "--porcelain=v2", "-z", "--no-renames"],
+        [
+          // On Windows, status missed a file created in a directory it had cached, so it walks every directory there.
+          ...(process.platform === "win32" ? ["-c", "core.untrackedCache=false"] : []),
+          "-c",
+          "status.showUntrackedFiles=all",
+          "status",
+          "--porcelain=v2",
+          "-z",
+          "--no-renames",
+        ],
         { index },
       )
       const entries = nuls(result.text).flatMap((record) => {
