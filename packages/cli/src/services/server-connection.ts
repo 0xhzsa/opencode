@@ -1,7 +1,7 @@
 import { Service, type Endpoint, type EnsureOptions } from "@opencode/client/effect/service"
 import { ClientError, isUnauthorizedError, OpenCode } from "@opencode/client/promise"
 import { OPENCODE_VERSION } from "../version"
-import { Effect, Option, Redacted } from "effect"
+import { Effect, FileSystem, Option, Redacted } from "effect"
 import { Server as ServerFlag, Standalone as StandaloneFlag } from "../commands/commands"
 import { Env } from "../env"
 import { ServiceConfig } from "./service-config"
@@ -66,11 +66,24 @@ function managedService(options: EnsureOptions) {
     reconnect,
     restart: () =>
       Effect.gen(function* () {
+        const unowned = yield* unownedServer(options)
+        if (unowned !== undefined)
+          return yield* Effect.fail(
+            new Error(`The server at ${unowned.url} wasn't started by OpenCode, so it can't be restarted from here`),
+          )
         yield* Service.stop({ file: options.file, pty: "handoff" })
         yield* reconnect()
       }),
   }
 }
+
+// A configured server with no registration was started outside OpenCode, so stopping it is not ours to do.
+const unownedServer = Effect.fnUntraced(function* (options: EnsureOptions) {
+  if (options.file === undefined) return undefined
+  const fs = yield* FileSystem.FileSystem
+  if (yield* fs.exists(options.file).pipe(Effect.orElseSucceed(() => false))) return undefined
+  return (yield* ServiceConfig.discover(options.file))?.endpoint
+})
 
 export const shutdownPersistentPty = Effect.fn("cli.server-connection.shutdown-persistent-pty")(function* (
   options: EnsureOptions,
