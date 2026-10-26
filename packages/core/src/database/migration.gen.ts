@@ -53,7 +53,7 @@ import m50 from "./migration/20261024002554_session_allowance.js"
 import m51 from "./migration/20261024175301_drop_session_allowance.js"
 import m52 from "./migration/20261025123711_blob.js"
 import m53 from "./migration/20261025154125_drop_session_pending.js"
-import m54 from "./migration/20261026194333_schedule.js"
+import m54 from "./migration/20261026223005_schedule.js"
 
 export const migrations = [
   m00,

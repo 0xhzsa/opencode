@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import type { FileSystem } from "@opencode/core/filesystem"
-import { DateTime, Effect, Fiber, Layer, LayerMap } from "effect"
+import { DateTime, Effect, Fiber, Layer, LayerMap, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { eq } from "drizzle-orm"
 import { Database } from "@opencode/core/database/database"
@@ -34,6 +34,7 @@ import { testEffect } from "./lib/effect"
 
 const enabledDirectory = "/enabled"
 const disabledDirectory = "/disabled"
+const toggleDirectory = "/toggle"
 
 const wakes: Session.ID[] = []
 /** Runs inside the next wake, which happens while a schedule is firing. */
@@ -55,7 +56,7 @@ const execution = Layer.succeed(
     awaitIdle: () => Effect.void,
   }),
 )
-const enabled = Config.testLayer([
+const enabledEntries = [
   new Document({
     type: "document",
     info: new Info({
@@ -63,7 +64,21 @@ const enabled = Config.testLayer([
       experimental: new ConfigExperimental.Info({ schedules: true }),
     }),
   }),
-])
+]
+const enabled = Config.testLayer(enabledEntries)
+/** A location whose flag the test turns on, counting every config read. */
+const toggle = { on: false, reads: 0 }
+const toggled = Layer.succeed(
+  Config.Service,
+  Config.Service.of({
+    entries: () =>
+      Effect.sync(() => {
+        toggle.reads++
+        return toggle.on ? enabledEntries : []
+      }),
+    changes: () => Stream.empty,
+  }),
+)
 const locations = makeGlobalNode({
   service: LocationServiceMap.Service,
   layer: Layer.effect(
@@ -74,7 +89,7 @@ const locations = makeGlobalNode({
         (ref: Location.Ref) =>
           // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
           Layer.mergeAll(
-            ref.directory === enabledDirectory ? enabled : Layer.empty,
+            ref.directory === enabledDirectory ? enabled : ref.directory === toggleDirectory ? toggled : Layer.empty,
             LayerNode.compile(LayerNode.group([PluginHooks.node, Skill.node]), {
               replacements: [Bus.node.replace(Layer.succeed(Bus.Service, bus))],
             }),
@@ -115,6 +130,8 @@ const setup = (directory = enabledDirectory) =>
       .pipe(Effect.orDie)
     wakes.length = 0
     duringWake = Effect.void
+    toggle.on = false
+    toggle.reads = 0
     return yield* Schedule.Service
   })
 
@@ -373,9 +390,9 @@ describe("Schedule", () => {
     }),
   )
 
-  it.effect("pauses a due schedule when its location has the flag off, so later ticks skip it", () =>
+  it.effect("rechecks a schedule hourly while its location has the flag off, then catches up once it is on", () =>
     Effect.gen(function* () {
-      const schedules = yield* setup(disabledDirectory)
+      const schedules = yield* setup(toggleDirectory)
       const { db } = yield* Database.Service
       const id = Schedule.ID.create()
       yield* db
@@ -394,13 +411,32 @@ describe("Schedule", () => {
         .pipe(Effect.orDie)
       yield* TestClock.adjust("1 minute")
       yield* schedules.tick
-      const paused = yield* schedules.get(id)
-      expect(paused).toMatchObject({ status: "paused", runCount: 0, nextDueAt: DateTime.makeUnsafe(60_000) })
+      expect(yield* schedules.get(id)).toMatchObject({
+        status: "active",
+        runCount: 0,
+        lastOutcome: "disabled",
+        nextDueAt: DateTime.makeUnsafe(60_000),
+      })
+      const reads = toggle.reads
+      expect(reads).toBeGreaterThan(0)
 
-      yield* TestClock.adjust("5 minutes")
+      // Within the hour the location is not booted to read the flag again.
+      yield* TestClock.adjust("59 minutes")
       yield* schedules.tick
-      expect(yield* schedules.get(id)).toEqual(paused)
+      expect(toggle.reads).toBe(reads)
       expect(yield* pending).toEqual([])
+
+      // Once the flag is on and the hour has passed, the missed slot fires once, late, and keeps the phase.
+      toggle.on = true
+      yield* TestClock.adjust("2 minutes")
+      yield* schedules.tick
+      expect(yield* pending).toEqual([SessionMessage.ID.make(`msg_${id}_1`)])
+      expect(yield* schedules.get(id)).toMatchObject({
+        status: "active",
+        runCount: 1,
+        lastOutcome: "late",
+        nextDueAt: DateTime.makeUnsafe(63 * 60_000),
+      })
     }),
   )
 

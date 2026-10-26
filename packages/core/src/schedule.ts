@@ -1,6 +1,6 @@
 export * as Schedule from "./schedule.js"
 
-import { and, asc, eq, gt, lte, min } from "drizzle-orm"
+import { and, asc, eq, gt, isNull, lte, min, or } from "drizzle-orm"
 import { Clock, Context, Cron, DateTime, Effect, Latch, Layer, Option, Result, Schema } from "effect"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { Schedule as ScheduleSchema } from "@opencode/schema/schedule"
@@ -67,6 +67,8 @@ const MIN_INTERVAL = MINUTE
 const LATE_AFTER = 60_000
 /** The loop re-reads the table at least this often, so clock jumps and missed doorbells are caught. */
 const MAX_SLEEP = 30_000
+/** How long a due schedule waits before its location's flag is read again, while schedules are off there. */
+const DISABLED_RETRY = HOUR
 
 const duration = (value: string) =>
   Option.match(ScheduleSchema.durationMillis(value), {
@@ -240,6 +242,7 @@ const layer = Layer.effect(
         last_message_id: id,
         last_fired_at: now,
         last_outcome: late ? "late" : "fired",
+        retry_at: null,
         remaining_runs: remaining,
         status: done ? "done" : "active",
         next_due_at: done ? null : next,
@@ -263,8 +266,9 @@ const layer = Layer.effect(
       if (due === null || row.session_id === null) return
       const session = yield* sessions.get(row.session_id)
       if (!(yield* settings(session)).enabled) {
-        // Reading the flag boots the Session's location, so pause instead of checking again every tick.
-        yield* update(row, { status: "paused", time_updated: now })
+        // Reading the flag boots the Session's location, so check again in an hour rather than every tick. The row
+        // keeps its due time, so once the flag is back on it catches up like any missed slot.
+        yield* update(row, { last_outcome: "disabled", retry_at: now + DISABLED_RETRY, time_updated: now })
         return
       }
       if (row.last_message_id !== null && (yield* pending(row.last_message_id))) {
@@ -274,6 +278,7 @@ const layer = Layer.effect(
         const done = finished(row, next, row.remaining_runs)
         yield* update(row, {
           last_outcome: "skipped",
+          retry_at: null,
           status: done ? "done" : "active",
           next_due_at: done ? null : next,
           time_updated: now,
@@ -289,7 +294,13 @@ const layer = Layer.effect(
       const due = yield* db
         .select()
         .from(ScheduleTable)
-        .where(and(eq(ScheduleTable.status, "active"), lte(ScheduleTable.next_due_at, now)))
+        .where(
+          and(
+            eq(ScheduleTable.status, "active"),
+            lte(ScheduleTable.next_due_at, now),
+            or(isNull(ScheduleTable.retry_at), lte(ScheduleTable.retry_at, now)),
+          ),
+        )
         .orderBy(asc(ScheduleTable.next_due_at))
         .all()
         .pipe(Effect.orDie)
@@ -305,7 +316,8 @@ const layer = Layer.effect(
 
     const tick = Effect.flatMap(Clock.currentTimeMillis, tickAt)
 
-    // Rows due by `from` that could not fire (a failed prompt) are retried after MAX_SLEEP, not in a spin.
+    // Rows due by `from` that could not fire (a failed prompt, a retry_at not yet reached) are rechecked after at most
+    // MAX_SLEEP, not in a spin.
     const nextWake = Effect.fnUntraced(function* (from: number) {
       const row = yield* db
         .select({ at: min(ScheduleTable.next_due_at) })
@@ -455,7 +467,7 @@ const layer = Layer.effect(
         const done = next === null || finished(row, next, row.remaining_runs)
         yield* db
           .update(ScheduleTable)
-          .set({ status: done ? "done" : "active", next_due_at: done ? null : next, time_updated: now })
+          .set({ status: done ? "done" : "active", next_due_at: done ? null : next, retry_at: null, time_updated: now })
           .where(and(eq(ScheduleTable.id, id), eq(ScheduleTable.status, "paused")))
           .run()
           .pipe(Effect.orDie)

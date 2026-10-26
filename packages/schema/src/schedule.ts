@@ -76,7 +76,7 @@ export type Action = typeof Action.Type
 export const Status = Schema.Literals(["active", "paused", "done"]).annotate({ identifier: "Schedule.Status" })
 export type Status = typeof Status.Type
 
-export const Outcome = Schema.Literals(["fired", "late", "skipped", "expired"]).annotate({
+export const Outcome = Schema.Literals(["fired", "late", "skipped", "disabled", "expired"]).annotate({
   identifier: "Schedule.Outcome",
 })
 export type Outcome = typeof Outcome.Type

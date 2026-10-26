@@ -132,6 +132,7 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
           \`last_fired_at\` integer,
           \`last_message_id\` text,
           \`last_outcome\` text,
+          \`retry_at\` integer,
           \`time_created\` integer NOT NULL,
           \`time_updated\` integer NOT NULL,
           CONSTRAINT \`fk_schedule_session_id_session_v2_id_fk\` FOREIGN KEY (\`session_id\`) REFERENCES \`session_v2\`(\`id\`) ON DELETE CASCADE

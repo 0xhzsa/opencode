@@ -2,7 +2,7 @@ import { Effect } from "effect"
 import type { DatabaseMigration } from "../migration.js"
 
 const migration: DatabaseMigration.Migration = {
-  id: "20261026194333_schedule",
+  id: "20261026223005_schedule",
   up(tx) {
     return Effect.gen(function* () {
       yield* tx.run(`
@@ -21,6 +21,7 @@ const migration: DatabaseMigration.Migration = {
           \`last_fired_at\` integer,
           \`last_message_id\` text,
           \`last_outcome\` text,
+          \`retry_at\` integer,
           \`time_created\` integer NOT NULL,
           \`time_updated\` integer NOT NULL,
           CONSTRAINT \`fk_schedule_session_id_session_v2_id_fk\` FOREIGN KEY (\`session_id\`) REFERENCES \`session_v2\`(\`id\`) ON DELETE CASCADE

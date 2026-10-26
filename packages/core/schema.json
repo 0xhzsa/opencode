@@ -1,7 +1,7 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "454e6e48-70ba-4fab-9d5b-27da3f0cf4ff",
+  "id": "23940db2-8b4e-4a5e-a404-70d785bd788c",
   "prevIds": ["44bd8ca5-689a-410e-a46a-958eb5accd97"],
   "ddl": [
     {
@@ -885,6 +885,16 @@
       "default": null,
       "generated": null,
       "name": "last_outcome",
+      "entityType": "columns",
+      "table": "schedule"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "retry_at",
       "entityType": "columns",
       "table": "schedule"
     },
