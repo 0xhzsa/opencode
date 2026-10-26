@@ -786,8 +786,10 @@ test("folds a prompt past 12 lines to its first 8 and keeps it open after scroll
   })
 
   const scroller = page.locator(".scroll-view__viewport", { has: page.locator("[data-timeline-row]") })
+
   const row = (id: string) =>
     page.locator(`[data-timeline-virtual-content] [data-timeline-row="UserMessage"][data-message-id="${id}"]`)
+
   const edge = row("msg_0001_fold_edge")
   const long = row("msg_0003_fold_long")
   const bubble = long.locator('[data-slot="user-message-text"]')
@@ -819,6 +821,21 @@ test("folds a prompt past 12 lines to its first 8 and keeps it open after scroll
     }),
   ).toContain("Long line 13")
 
+  // A cached tab's timeline is detached while hidden; the message stays folded rather than measuring 0 lines.
+  expect(
+    await bubble.evaluate(async (element) => {
+      const parent = element.parentElement!
+      const next = element.nextSibling
+      element.remove()
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      const folded = element.querySelector('[data-slot="user-message-fold"]')!.hasAttribute("data-folded")
+      parent.insertBefore(element, next)
+
+      return folded
+    }),
+  ).toBe(true)
+  await expect(toggle).toHaveAttribute("aria-expanded", "false")
+
   // Opening grows the bubble downward, and the virtual row takes its new height.
   await bubble.evaluate((element) => element.scrollIntoView({ block: "center" }))
   const top = (await bubble.boundingBox())!.y
@@ -845,4 +862,41 @@ test("folds a prompt past 12 lines to its first 8 and keeps it open after scroll
   await page.mouse.wheel(0, -100_000)
   await expect(long.getByRole("button", { name: "Show less" })).toHaveAttribute("aria-expanded", "true")
   await expect.poll(async () => Math.round((await fold.boundingBox())!.height / lineHeight)).toBe(13)
+
+  // Closing a message whose top is on screen shrinks it in place, without scrolling the timeline.
+  await scroller.evaluate(
+    (element, target) => {
+      element.scrollTop += target!.y - element.getBoundingClientRect().top - 100
+    },
+    await bubble.boundingBox(),
+  )
+
+  const closing = {
+    top: (await bubble.boundingBox())!.y,
+    scroll: await scroller.evaluate((element) => element.scrollTop),
+  }
+
+  expect(closing.scroll).toBeGreaterThan(150)
+  await toggle.click()
+  await expect(toggle).toHaveAttribute("aria-expanded", "false")
+  expect(Math.abs((await bubble.boundingBox())!.y - closing.top)).toBeLessThanOrEqual(1)
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBe(closing.scroll)
+
+  // Find skips the Read more button, and a match hidden in the fold opens the message.
+  const highlights = () =>
+    page.evaluate(() =>
+      ["timeline-search-hit", "timeline-search-hit-active"].reduce(
+        (count, name) => count + (CSS.highlights.get(name)?.size ?? 0),
+        0,
+      ),
+    )
+
+  await page.keyboard.press("ControlOrMeta+f")
+  const search = page.locator('[data-component="timeline-search-bar"] input')
+  await expect(search).toBeFocused()
+  await search.fill("more")
+  await expect.poll(highlights).toBe(0)
+  await search.fill("Long line 13")
+  await expect(toggle).toHaveAttribute("aria-expanded", "true")
+  await expect.poll(highlights).toBe(1)
 })

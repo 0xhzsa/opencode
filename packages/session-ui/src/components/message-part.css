@@ -231,6 +231,11 @@
   [data-slot="user-message-fold"] {
     overflow: hidden;
 
+    /* unicode-bidi isn't inherited, and each paragraph of mixed LTR and RTL text takes its own direction. */
+    > div {
+      unicode-bidi: plaintext;
+    }
+
     &[data-folded] {
       mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
     }

@@ -1039,7 +1039,7 @@ export function createTimelineVirtualizer(input: Input) {
       value: (key: string) => toolOpen[key],
       set: (key: string, open: boolean) => {
         // Following the end would scroll an opened user message's top away; it stays where it was pressed.
-        if (key.startsWith("user-expanded:")) input.onUnpin()
+        if (open && key.startsWith("user-expanded:")) input.onUnpin()
         setToolOpen(key, open)
       },
     },

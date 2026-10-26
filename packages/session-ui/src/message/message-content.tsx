@@ -662,7 +662,12 @@ export function CurrentUserMessageDisplay(props: {
               when={props.fold}
               fallback={<CurrentHighlightedText text={props.text} files={inlineFiles()} agents={agents()} />}
             >
-              <UserMessageFold id={`${props.message.id}-text`} expanded={expanded()} onExpandedChange={setExpanded}>
+              <UserMessageFold
+                id={`${props.message.id}-text`}
+                text={props.text}
+                expanded={expanded()}
+                onExpandedChange={setExpanded}
+              >
                 <CurrentHighlightedText text={props.text} files={inlineFiles()} agents={agents()} />
               </UserMessageFold>
             </Show>
@@ -732,13 +737,15 @@ const USER_MESSAGE_FOLD = { over: 12, show: 8 }
 
 function UserMessageFold(props: {
   id: string
+  text: string
   expanded: boolean
   onExpandedChange: (expanded: boolean) => void
   children: JSX.Element
 }) {
   const i18n = useI18n()
-  const [size, setSize] = createStore({ lines: 0, lineHeight: 20 })
-  const long = () => size.lines > USER_MESSAGE_FOLD.over
+  // Hard line breaks are a floor on the laid-out lines, so most long messages fold before the row is first measured.
+  const [lines, setLines] = createSignal(props.text.trimEnd().split("\n").length)
+  const long = () => lines() > USER_MESSAGE_FOLD.over
   const folded = () => long() && !props.expanded
 
   let content: HTMLDivElement | undefined
@@ -746,9 +753,10 @@ function UserMessageFold(props: {
 
   // The text is laid out whole and clipped, so its own height is the measure at any width.
   const measure = () => {
-    if (!content) return
+    // A cached tab's timeline is detached while hidden and measures 0.
+    if (!content?.isConnected || content.offsetHeight === 0) return
     const lineHeight = parseFloat(getComputedStyle(content).lineHeight) || 20
-    setSize({ lineHeight, lines: Math.round(content.offsetHeight / lineHeight) })
+    setLines(Math.round(content.offsetHeight / lineHeight))
   }
 
   onMount(() => {
@@ -758,18 +766,19 @@ function UserMessageFold(props: {
     onCleanup(() => observer.disconnect())
   })
 
-  // Opening grows the row downward, so its top stays put. Closing a message taller than the screen would leave the
-  // reader past its end, so the toggle stays where it was pressed.
+  // Opening grows the row downward, so its top stays put. Closing a message whose top is scrolled above the screen
+  // would leave the reader past its end, so then the toggle stays where it was pressed.
   const flip = () => {
     const opening = !props.expanded
+    const scroller = toggle ? scrollParent(toggle) : undefined
+    const above = !!content && !!scroller && content.getBoundingClientRect().top < viewportTop(scroller)
     const before = toggle?.getBoundingClientRect().top
     props.onExpandedChange(opening)
 
-    if (opening || before === undefined || !toggle) return
+    if (opening || !above || before === undefined || !toggle || !scroller) return
     const moved = before - toggle.getBoundingClientRect().top
-    const scroller = scrollParent(toggle)
 
-    if (scroller && moved > 1) scroller.scrollTop -= moved
+    if (moved > 1) scroller.scrollTop -= moved
   }
 
   return (
@@ -778,7 +787,7 @@ function UserMessageFold(props: {
         id={props.id}
         data-slot="user-message-fold"
         data-folded={folded() ? "" : undefined}
-        style={{ "max-height": folded() ? `${USER_MESSAGE_FOLD.show * size.lineHeight}px` : undefined }}
+        style={{ "max-height": folded() ? `${USER_MESSAGE_FOLD.show}lh` : undefined }}
       >
         <div ref={content}>{props.children}</div>
       </div>
@@ -799,9 +808,14 @@ function UserMessageFold(props: {
   )
 }
 
+function viewportTop(scroller: Element) {
+  return scroller === document.scrollingElement ? 0 : scroller.getBoundingClientRect().top
+}
+
 function scrollParent(element: HTMLElement) {
   for (let node = element.parentElement; node; node = node.parentElement) {
     const overflow = getComputedStyle(node).overflowY
+
     if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight) return node
   }
 
