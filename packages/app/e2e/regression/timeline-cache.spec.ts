@@ -177,6 +177,7 @@ test("keeps verified inline paths across a workspace tab switch", async ({ page 
   const queries: { query: string; directory: string }[] = []
   const existing = new Set([directory])
   await page.clock.setFixedTime(new Date("2026-10-21T00:00:00Z"))
+
   const workspace = await mockWorkspace(page, {
     name: "InlinePaths",
     directory,
@@ -204,6 +205,7 @@ test("keeps verified inline paths across a workspace tab switch", async ({ page 
       return existing.has(input.directory) ? ["src/file.ts"] : []
     },
   })
+
   await page.goto(sessionHref(sourceID))
   const source = part(page, sourceID).locator("code")
   await expect(source).toHaveAttribute("data-inline-code-kind", "path")
