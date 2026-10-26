@@ -1479,7 +1479,10 @@ for (const delivery of ["steer", "queue"] as const) {
           return [Math.round(label.height), Math.round(below.y - label.y - label.height)]
         })
         .toEqual([16, 4])
-      await expect(pending.locator('[data-slot="user-message-meta"]')).toHaveText(/^Queue Model$/)
+      // The time waits, hidden, until delivery.
+      await expect(pending.locator('[data-slot="user-message-meta"]')).toHaveText(/^Queue Model$/, {
+        useInnerText: true,
+      })
       await bubble.evaluate((element) => (element.dataset.deliveryMarker = "pending"))
     }
 

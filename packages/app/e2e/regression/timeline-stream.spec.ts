@@ -1614,9 +1614,10 @@ test.describe("background shortcut", () => {
           .poll(async () => {
             const [header, shell] = await Promise.all([group.boundingBox(), shellTrigger.boundingBox()])
 
-            return header && shell ? Math.round(shell.y - (header.y + header.height)) : undefined
+            return header && shell ? Math.abs(shell.y - (header.y + header.height)) : Infinity
           })
-          .toBe(0)
+          // Rows sit on a 1/64 px grid and the scroll offset on whole pixels.
+          .toBeLessThanOrEqual(0.5)
 
       await expect(
         fixture.after ? page.getByText(`Follow-up note ${fixture.after}.`, { exact: true }) : group,
@@ -2271,6 +2272,20 @@ test("quotes table rows and diff lines selected across a diff viewer", async ({ 
   const removed = page.locator('[data-line-type="change-deletion"][data-line]')
   const added = page.locator('[data-line-type="change-addition"][data-line]')
   await expect(added).toHaveText("export const value = 'after'")
+  // Rows spring to their measured heights after they render; drag across lines that rest.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document
+            .getAnimations()
+            .filter(
+              (animation) =>
+                animation.playState === "running" && animation.effect?.getComputedTiming().endTime !== Infinity,
+            ).length,
+      ),
+    )
+    .toBe(0)
 
   const drag = async (from: Locator, to: Locator) => {
     const start = await from.boundingBox()

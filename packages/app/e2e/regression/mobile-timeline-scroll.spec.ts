@@ -736,12 +736,21 @@ for (const device of ["Pixel 7", "iPhone 13"]) {
               timestamp: restingTimestamp(),
             })
 
-            for (let step = 1; step <= 23; step++)
+            // Drag on until the row with the delayed image mounts just above the screen, so its load resizes a row
+            // above the resting anchor.
+            const imagePart = page.getByText("Part 46.", { exact: true })
+
+            for (let step = 1; step <= 23 || !(await imagePart.count()); step++) {
+              expect(step).toBeLessThanOrEqual(40)
+
               await devtools.send("Input.dispatchTouchEvent", {
                 type: "touchMove",
                 touchPoints: [{ x: point.x, y: point.y + step * 30 }],
                 timestamp: restingTimestamp(),
               })
+              await page.evaluate(() => new Promise(requestAnimationFrame))
+            }
+
             await expect(touched).not.toBeInViewport()
             await devtools.send("Input.dispatchTouchEvent", {
               type: release,
@@ -781,7 +790,21 @@ for (const device of ["Pixel 7", "iPhone 13"]) {
             await expect(hidden).toHaveCount(1)
           }
 
-          const anchor = page.getByText(detach === "scroll" ? "Part 48." : "Reading 20.", { exact: true })
+          // The first part below the delayed image that rests wholly in view anchors the measurement.
+          const resting = await scroller.evaluate((element) => {
+            const view = element.getBoundingClientRect()
+
+            return [...element.querySelectorAll("p")]
+              .map((paragraph) => ({ text: paragraph.textContent ?? "", box: paragraph.getBoundingClientRect() }))
+              .find(
+                (part) =>
+                  Number(/^Part (\d+)\.$/.exec(part.text)?.[1]) > 46 &&
+                  part.box.top >= view.top &&
+                  part.box.bottom <= view.bottom,
+              )?.text
+          })
+
+          const anchor = page.getByText(detach === "scroll" ? resting! : "Reading 20.", { exact: true })
           await expect(anchor).toBeInViewport()
           // The streamed paragraph is drawn growing in; measure where the anchor rests.
           await settleMotion(scroller)

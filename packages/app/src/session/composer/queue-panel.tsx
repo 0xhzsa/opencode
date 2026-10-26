@@ -13,8 +13,7 @@ import { Tooltip } from "@opencode/ui/tooltip"
 import { prefersReducedMotion } from "@opencode/ui/motion"
 import { useLanguage } from "@/runtime/i18n/language"
 import type { SessionQueueView } from "./queue"
-import { cascade, Grow, queueStagger } from "./spring-height"
-import { growthSpring } from "@/session/timeline/row-growth"
+import { cascade, Grow, queueRowClose, queueStagger } from "./spring-height"
 import { prepareSendFlight } from "@/session/timeline/send-flight"
 import "./queue-panel.css"
 
@@ -141,7 +140,7 @@ export function SessionQueuePanel(props: { queue: SessionQueueView; hidden?: boo
                   when={!open() || live().includes(id)}
                   appear={appearing.delete(id)}
                   fade
-                  close={growthSpring}
+                  close={queueRowClose}
                   onClosed={() => setShown((rows) => rows.filter((row) => row.id !== id))}
                 >
                   <SessionQueueRow queue={props.queue} id={id} index={live().indexOf(id)} />

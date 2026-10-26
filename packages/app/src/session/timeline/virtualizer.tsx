@@ -596,30 +596,44 @@ export function createTimelineVirtualizer(input: Input) {
       return
     }
 
-    capture()
     const sizes = [...pendingSizes]
     pendingSizes.clear()
+
+    const apply = (entries: [string, number][]) => {
+      // The hidden pinned mount needs one bottom write after the whole batch,
+      // not a layout-forcing scroll adjustment for every measured row.
+      batchingColdSizes = coldPending && input.pinned()
+      batch(() =>
+        entries.forEach(([key, size]) => {
+          const index = rowIndexes().get(key)
+
+          if (index === undefined) return
+          commitSize(index, key, size)
+          applyTouchAdjustment()
+        }),
+      )
+      batchingColdSizes = false
+    }
+
+    // A DOM row's first measurement corrects the estimate it mounted at, which never painted, so it lands before the
+    // snapshot and nothing is drawn moving from it. Arrivals mount empty on purpose; their measurement reveals them.
+    const corrections = sizes.filter(
+      ([key]) => !virtualizer.itemSizeCache.has(key) && !arrivals.has(key) && modelHeight(key) === undefined,
+    )
+
+    const changes = sizes.filter((entry) => !corrections.includes(entry))
+
+    apply(corrections)
+    capture()
     // An uncached row's size is its estimate, which is its model. Once the first resize below remeasures, every other
     // row would take its new model height silently, with no delta to anchor. Pin what each shows first.
-    sizes.forEach(([key]) => {
+    changes.forEach(([key]) => {
       const index = rowIndexes().get(key)
       const shown = index === undefined ? undefined : virtualizer.measurementsCache[index]?.size
 
       if (shown !== undefined && !virtualizer.itemSizeCache.has(key)) virtualizer.itemSizeCache.set(key, shown)
     })
-    // The hidden pinned mount needs one bottom write after the whole batch,
-    // not a layout-forcing scroll adjustment for every measured row.
-    batchingColdSizes = coldPending && input.pinned()
-    batch(() =>
-      sizes.forEach(([key, size]) => {
-        const index = rowIndexes().get(key)
-
-        if (index === undefined) return
-        commitSize(index, key, size)
-        applyTouchAdjustment()
-      }),
-    )
-    batchingColdSizes = false
+    apply(changes)
     pinAnchor()
 
     if (coldPending) pinColdBottom()
@@ -1138,14 +1152,19 @@ export function createTimelineVirtualizer(input: Input) {
     // Following the end is a different position to hold.
     if (!element || !active() || input.pinned()) return releaseAnchor()
 
+    // The element's box includes the drawn remainder, so it is measured from the drawn offset, not the whole one. Headers
+    // stuck above it move with any remainder too, so the pin lands on a whole pixel: they stay on theirs, and the tool
+    // sits within half a pixel below them.
     const offset = Math.min(
       endOffset(),
       Math.max(
         0,
-        layoutState.offset +
-          element.getBoundingClientRect().top -
-          root.getBoundingClientRect().top -
-          parseFloat(getComputedStyle(element).scrollMarginTop),
+        Math.round(
+          drawnTop +
+            element.getBoundingClientRect().top -
+            root.getBoundingClientRect().top -
+            parseFloat(getComputedStyle(element).scrollMarginTop),
+        ),
       ),
     )
 

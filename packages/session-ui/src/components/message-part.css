@@ -422,7 +422,7 @@
   }
 
   /* Sized to its buttons: anchored on its end edge, it would otherwise shrink to the bubble's side and spill its
-     buttons over the text. Its padding meets the bubble, so the pointer can cross to it without losing the hover. */
+     buttons over the text. Like the meta line, it shows while the pointer is anywhere over its message. */
   [data-slot="user-message-run-actions"] {
     position: absolute;
     /* Centered on the bubble's last line. */
@@ -440,7 +440,7 @@
     }
   }
 
-  [data-slot="user-message-body"]:hover [data-slot="user-message-run-actions"],
+  &:hover [data-slot="user-message-run-actions"],
   &:focus-within [data-slot="user-message-run-actions"],
   [data-slot="user-message-run-actions"]:has([data-expanded]) {
     opacity: 1;
