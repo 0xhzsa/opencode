@@ -161,7 +161,7 @@ export function createComposerEditor(input: {
     )
   }
 
-  const [found, setFound] = createStore<{ files: ComposerSuggestion[] }>({ files: [] })
+  const [found, setFound] = createStore<{ query?: string; files: ComposerSuggestion[] }>({ files: [] })
   let fileQuery: string | undefined
   let fileAbort = new AbortController()
   onCleanup(() => abort(fileAbort))
@@ -176,7 +176,7 @@ export function createComposerEditor(input: {
     fileAbort = controller
 
     if (query === undefined || !query.trim() || /\s/.test(query)) {
-      if (found.files.length) setFound("files", [])
+      if (found.files.length) setFound({ query: undefined, files: [] })
 
       return
     }
@@ -184,7 +184,7 @@ export function createComposerEditor(input: {
     const timer = setTimeout(
       () =>
         void Promise.resolve(input.searchContextFiles(query, controller.signal)).then(
-          (files) => !controller.signal.aborted && setFound("files", files),
+          (files) => !controller.signal.aborted && setFound({ query, files }),
           () => undefined,
         ),
       150,
@@ -258,6 +258,12 @@ export function createComposerEditor(input: {
     })),
   )
 
+  // Files from the previous query stay listed while the next search runs, but the keyboard can't highlight or pick them.
+  const stale = (item: ComposerSuggestion) =>
+    state.popover.type === "context" && item.kind === "file" && !item.recent && found.query !== state.popover.query
+
+  const selectable = () => suggestions().flatMap((item) => (stale(item) ? [] : [item.id]))
+
   const suggestions = () => {
     if (state.popover.type !== "history") return list().flat()
     const query = state.popover.query.trim().toLowerCase()
@@ -322,6 +328,8 @@ export function createComposerEditor(input: {
   }
 
   function dispatch(event: ComposerInteractionEvent) {
+    if (event.type === "popover.active" && !selectable().includes(event.id)) return false
+
     if (event.type === "history.search" || event.type === "popover.close") cancelFocus()
 
     if (
@@ -411,7 +419,7 @@ export function createComposerEditor(input: {
       key: event.key,
       ctrl: event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey,
       composing: event.isComposing,
-      ids: suggestions().map((item) => item.id),
+      ids: selectable(),
       empty: draft.state.prompt.every((part) => !("content" in part) || part.content.length === 0),
     })
 
@@ -465,9 +473,9 @@ export function createComposerEditor(input: {
 
   createEffect(() => {
     if (state.popover.type === "closed") return
-    const ids = suggestions().map((item) => item.id)
+    const ids = selectable()
 
-    if (state.popover.activeID ? ids.includes(state.popover.activeID) : ids.length === 0) return
+    if (state.popover.activeID ? state.popover.chosen && ids.includes(state.popover.activeID) : ids.length === 0) return
     dispatch({ type: "popover.results", ids })
   })
 
