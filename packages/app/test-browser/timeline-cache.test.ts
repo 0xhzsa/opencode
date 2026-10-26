@@ -19,14 +19,19 @@ import { useWorkspaceLocation, WorkspaceLocationContext } from "../src/workspace
 
 function setup() {
   return createRoot((dispose) => {
-    const [state, setState] = createStore({
+    const [state, setState] = createStore<{
+      id: string
+      directory: string
+      visible: boolean
+      messages: Partial<Record<string, SessionMessageInfo[]>>
+    }>({
       id: "ses_a",
       directory: "/repo",
       visible: true,
       messages: {
         ses_a: [{ id: "msg_a", type: "user", text: "First session", time: { created: 1 } }],
         ses_b: [{ id: "msg_b", type: "user", text: "Second session", time: { created: 2 } }],
-      } as Record<string, SessionMessageInfo[]>,
+      },
     })
 
     const views = new Map<
