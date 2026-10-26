@@ -1,4 +1,5 @@
 import type { SessionUserActions } from "@opencode/session-ui/message"
+import { SessionGoal } from "@opencode/schema/session-goal"
 import { getFilename, sameDirectory } from "@opencode/util/path"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { isScrollKeyTarget, scrollKey, scrollKeyOwner } from "@opencode/ui/scroll-view"
@@ -37,6 +38,7 @@ import { SessionQueuePanel } from "./queue-panel"
 import { SessionActivityChips, type SessionActivityItem } from "./activity-chips"
 import { SessionComposerLane } from "./composer-lane"
 import { SessionTodoPill } from "./todo-pill"
+import { SessionGoalPill, type GoalAction } from "./goal-pill"
 import { sessionTodos, todoFinished } from "./todos"
 import { useOpenSessionRoute } from "../session-identity-header"
 import { resolveSessionComposerSelection } from "./selection"
@@ -411,9 +413,11 @@ export function ActiveSessionComposerRegion(props: {
   )
 
   const todos = createMemo(() => sessionTodos(props.session.history.messages(), props.session.data.revertMessageID()))
+
   // Like the old dock: the plan shows while the turn runs and still has work left, so stale todos never linger.
   const todosVisible = () =>
     todoEnabled() && props.session.data.working() && todos().length > 0 && !todos().every(todoFinished)
+
   // Matches the server: the highest-priority document that sets `experimental` decides. Migrated V1 sessions keep their
   // old `todowrite` calls, so without this check their last plan would come back.
   const todoEnabled = () =>
@@ -421,6 +425,26 @@ export function ActiveSessionComposerRegion(props: {
       .list({ directory: location().directory })
       ?.flatMap((entry) => (entry.type === "document" && entry.info.experimental ? [entry.info.experimental] : []))
       .at(-1)?.todo === true
+
+  // A goal copied from the parent belongs to the parent, so only the Session's own goal shows.
+  const goal = createMemo(() => {
+    const info = props.session.data.info()
+
+    return info ? SessionGoal.fromMetadata(info.id, info.metadata) : undefined
+  })
+
+  const updateGoal = (action: GoalAction) => {
+    const sessionID = props.session.data.info()?.id
+
+    if (!sessionID) return
+
+    void server.api.session.command({ sessionID, name: "goal", text: action }).catch((error) =>
+      showToast({
+        title: language.t("common.requestFailed"),
+        description: errorMessage(error, language.t("common.requestFailed")),
+      }),
+    )
+  }
 
   const open = (item: SessionActivityItem) => {
     const current = props.session.identity.params.id
@@ -496,6 +520,7 @@ export function ActiveSessionComposerRegion(props: {
             <Show when={todosVisible()}>
               <SessionTodoPill todos={todos()} />
             </Show>
+            <Show when={goal()}>{(current) => <SessionGoalPill goal={current()} onAction={updateGoal} />}</Show>
           </SessionComposerLane>
           <SessionQueuePanel queue={props.model.queue} hidden={props.model.region.state.blocked()} />
         </Show>
