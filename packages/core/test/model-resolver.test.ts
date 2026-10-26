@@ -627,14 +627,17 @@ describe("ModelResolver", () => {
 
   it.effect("sends Bedrock Converse reasoning variants and AI SDK settings in each model family's fields", () =>
     Effect.gen(function* () {
-      const converse = (modelID: string, settings: Info["settings"] = {}) =>
-        model(Provider.aisdk("@ai-sdk/amazon-bedrock"), {
+      const converse = (modelID: string, settings: Info["settings"] = {}, supports: Variant.Support[] = []) => {
+        const options = {
           modelID,
           settings: { region: "us-east-1", ...settings },
           headers: {},
           body: {},
           limit: { context: 200_000, output: 64_000 },
-        })
+        }
+        const base = model(Provider.aisdk("@ai-sdk/amazon-bedrock"), options)
+        return model(Provider.aisdk("@ai-sdk/amazon-bedrock"), { ...options, variants: Variant.resolve(base, supports) })
+      }
       const wire = Effect.fn(function* (catalog: Info, variant?: string) {
         const resolved = yield* ModelResolver.resolveModel(
           catalog,
@@ -647,10 +650,8 @@ describe("ModelResolver", () => {
         const body = mergeJsonRecords(prepared.body, resolved.route.defaults.http?.body) ?? {}
         return Struct.omit(body, ["modelId", "messages"])
       })
-      const variant = (modelID: string, supports: Variant.Support[], id: string) => {
-        const base = converse(modelID)
-        return wire(Info.make({ ...base, variants: Variant.resolve(base, supports) }), id)
-      }
+      const variant = (modelID: string, supports: Variant.Support[], id: string, settings: Info["settings"] = {}) =>
+        wire(converse(modelID, settings, supports), id)
       const limit = { inferenceConfig: { maxTokens: 32_000 } }
       const adaptive = { type: "adaptive", display: "summarized" }
       const binding = {
@@ -728,12 +729,31 @@ describe("ModelResolver", () => {
           ),
           { reasoning: { effort: "high", summary: "auto" } },
         ],
+        [
+          variant("us.anthropic.claude-opus-4-8", [{ type: "effort" }], "high", {
+            reasoningConfig: { maxReasoningEffort: "low" },
+          }),
+          { thinking: adaptive, output_config: { effort: "high" } },
+        ],
+        [
+          variant("us.anthropic.claude-opus-4-8", [{ type: "effort" }], "high", {
+            additionalModelRequestFields: { output_config: { effort: "low" } },
+          }),
+          { thinking: adaptive, output_config: { effort: "high" } },
+        ],
+        [
+          variant("us.amazon.nova-2-lite-v1:0", [{ type: "effort" }], "medium", {
+            reasoningConfig: { maxReasoningEffort: "high" },
+          }),
+          { reasoningConfig: { type: "enabled", maxReasoningEffort: "medium" } },
+        ],
       ] as const
       for (const [body, fields] of cases) expect(yield* body).toEqual({ ...limit, additionalModelRequestFields: fields })
 
-      expect(yield* variant("us.amazon.nova-2-lite-v1:0", [{ type: "effort" }], "high")).toEqual({
-        additionalModelRequestFields: { reasoningConfig: { type: "enabled", maxReasoningEffort: "high" } },
-      })
+      for (const settings of [{}, { reasoningConfig: { maxReasoningEffort: "low" } }])
+        expect(yield* variant("us.amazon.nova-2-lite-v1:0", [{ type: "effort" }], "high", settings)).toEqual({
+          additionalModelRequestFields: { reasoningConfig: { type: "enabled", maxReasoningEffort: "high" } },
+        })
       expect(
         yield* wire(
           converse("openai.gpt-oss-120b-1:0", {

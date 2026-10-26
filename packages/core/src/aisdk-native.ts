@@ -1,6 +1,7 @@
 export * as AISDKNative from "./aisdk-native.js"
 
 import { Effect, Option, Schema, Struct } from "effect"
+import { isRecord } from "@opencode/ai/utils/record"
 import { Provider } from "./provider.js"
 
 type Overlays = {
@@ -43,7 +44,13 @@ export function rewrite<ID extends string>(
   target.variants = target.variants?.map((variant) => {
     const overlay = options(replacement, input.modelID, decode(variant.settings ?? {}))
     const headers = Provider.mergeHeaders(overlay.headers, variant.headers)
-    const body = Provider.mergeOverlay(overlay.body, variant.body)
+    const effort = overlay.settings.effort
+    const body = Provider.mergeOverlay(
+      replacement === "@opencode/ai/providers/amazon-bedrock" && typeof effort === "string"
+        ? Provider.mergeOverlay(overlay.body, converseEffort(target.body, effort))
+        : overlay.body,
+      variant.body,
+    )
     return {
       id: variant.id,
       ...(variant.settings === undefined ? {} : { settings: overlay.settings }),
@@ -51,6 +58,20 @@ export function rewrite<ID extends string>(
       ...(body === undefined ? {} : { body }),
     }
   })
+}
+
+// The model body overlays typed options, so a variant's typed `effort` re-sends the raw effort fields the model body
+// sets (from AI SDK settings or raw config) to keep the variant's choice.
+function converseEffort(body: Record<string, unknown> | undefined, effort: string) {
+  const fields = body?.additionalModelRequestFields
+  if (!isRecord(fields)) return
+  const overlay = {
+    ...(isRecord(fields.output_config) && fields.output_config.effort !== undefined ? { output_config: { effort } } : {}),
+    ...(isRecord(fields.reasoningConfig) && fields.reasoningConfig.maxReasoningEffort !== undefined
+      ? { reasoningConfig: { maxReasoningEffort: effort } }
+      : {}),
+  }
+  return Object.keys(overlay).length === 0 ? undefined : { additionalModelRequestFields: overlay }
 }
 
 const PACKAGES: Readonly<Record<string, string>> = {
