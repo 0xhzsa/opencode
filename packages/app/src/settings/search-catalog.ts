@@ -99,13 +99,6 @@ export const clientSettings: Entry<SettingsRootTab>[] = [
   },
   {
     tab: "experimental",
-    label: "settings.experimental.row.generatedUI.title",
-    target: "settings-generated-ui",
-    description: "settings.experimental.row.generatedUI.description",
-    keywords: "genui generative interface dashboards charts forms",
-  },
-  {
-    tab: "experimental",
     label: "settings.experimental.row.newIcons.title",
     target: "settings-new-icons",
     description: "settings.experimental.row.newIcons.description",

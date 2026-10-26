@@ -11867,6 +11867,68 @@
         "x-websocket": true
       }
     },
+    "/api/experimental/media/{hash}": {
+      "get": {
+        "tags": ["experimental"],
+        "operationId": "experimental.media.get",
+        "parameters": [
+          {
+            "name": "hash",
+            "in": "path",
+            "schema": {
+              "$ref": "#/components/schemas/MediaHash"
+            },
+            "required": true
+          }
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "FileNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileNotFoundErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Read a content-addressed media blob by SHA-256 hash with immutable Cache-Control, ETag, and 304 Not Modified support. Only blobs a stored message or inbox item still references are served. Experimental: may change without compatibility guarantees.",
+        "summary": "Read media blob"
+      }
+    },
     "/api/shell": {
       "get": {
         "tags": ["shell"],
@@ -15194,6 +15256,9 @@
           "compaction": {
             "$ref": "#/components/schemas/Provider.Compaction"
           },
+          "cache": {
+            "$ref": "#/components/schemas/Provider.Cache"
+          },
           "encoding": {
             "$ref": "#/components/schemas/Provider.Encoding"
           }
@@ -15377,6 +15442,9 @@
           },
           "compaction": {
             "$ref": "#/components/schemas/Provider.Compaction"
+          },
+          "cache": {
+            "$ref": "#/components/schemas/Provider.Cache"
           },
           "transport": {
             "$ref": "#/components/schemas/Provider.Transport"
@@ -17592,6 +17660,10 @@
         "required": ["_tag", "server", "message"],
         "additionalProperties": false
       },
+      "MediaHash": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
       "MessageNotFoundErrorEncoded": {
         "type": "object",
         "properties": {
@@ -17856,6 +17928,9 @@
         "properties": {
           "compaction": {
             "$ref": "#/components/schemas/Provider.Compaction"
+          },
+          "cache": {
+            "$ref": "#/components/schemas/Provider.Cache"
           },
           "encoding": {
             "$ref": "#/components/schemas/Provider.Encoding"
@@ -18740,6 +18815,19 @@
         "required": ["id"],
         "additionalProperties": false
       },
+      "Provider.Cache": {
+        "type": "object",
+        "properties": {
+          "ttl": {
+            "$ref": "#/components/schemas/Provider.CacheTTL"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Provider.CacheTTL": {
+        "type": "string",
+        "pattern": "^[+-]?\\d*\\.?\\d+(?:[Ee][+-]?\\d+)?(?:ms|s|m|h|d)$"
+      },
       "Provider.Compaction": {
         "anyOf": [
           {
@@ -18901,6 +18989,9 @@
           },
           "compaction": {
             "$ref": "#/components/schemas/Provider.Compaction"
+          },
+          "cache": {
+            "$ref": "#/components/schemas/Provider.Cache"
           },
           "transport": {
             "$ref": "#/components/schemas/Provider.Transport"

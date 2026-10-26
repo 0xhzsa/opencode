@@ -274,30 +274,19 @@ export const createLLMEventPublisher = (bus: Pick<Bus.Interface, "publish">, inp
       }),
     true,
   )
-  const toolInput = fragments(
-    "tool input",
-    (id, value) =>
-      Effect.gen(function* () {
-        const tool = tools.get(id)
-        if (!tool) return yield* Effect.die(new Error(`Tool input end before start: ${id}`))
-        // Keep a bounded excerpt for recovery errors; the full argument text is persisted below.
-        tool.input = inputExcerpt(value)
-        yield* bus.publish(SessionEvent.Tool.Input.Ended, {
-          sessionID: input.sessionID,
-          assistantMessageID,
-          id,
-          text: value,
-        })
-      }),
-    (id, value) =>
-      Effect.gen(function* () {
-        yield* bus.publish(SessionEvent.Tool.Input.Delta, {
-          sessionID: input.sessionID,
-          assistantMessageID,
-          id,
-          delta: value,
-        })
-      }),
+  const toolInput = fragments("tool input", (id, value) =>
+    Effect.gen(function* () {
+      const tool = tools.get(id)
+      if (!tool) return yield* Effect.die(new Error(`Tool input end before start: ${id}`))
+      // Keep a bounded excerpt for recovery errors; the full argument text is persisted below.
+      tool.input = inputExcerpt(value)
+      yield* bus.publish(SessionEvent.Tool.Input.Ended, {
+        sessionID: input.sessionID,
+        assistantMessageID,
+        id,
+        text: value,
+      })
+    }),
   )
 
   // Deltas are batched, but block starts are not. Publishing held deltas first keeps each
@@ -305,7 +294,6 @@ export const createLLMEventPublisher = (bus: Pick<Bus.Interface, "publish">, inp
   const publishPendingDeltas = Effect.fnUntraced(function* () {
     yield* text.publishPending()
     yield* reasoning.publishPending()
-    yield* toolInput.publishPending()
   })
 
   const flushFragments = Effect.fnUntraced(function* () {

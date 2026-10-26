@@ -851,7 +851,7 @@ for (const delivery of ["queue", "steer"] as const) {
   })
 }
 
-test("reverting to another prompt replaces the file chips of an earlier restore @quarantine", async ({ page }) => {
+test("reverting to another prompt replaces the file chips of an earlier restore", async ({ page }) => {
   const mock = createQueueMock(
     [],
     [
@@ -1346,7 +1346,7 @@ test("/undo returns a pending steer's review comment to the composer", async ({ 
 })
 
 for (const delivery of ["steer", "queue"] as const) {
-  test(`keeps finished tools above a pending ${delivery === "queue" ? "queue-to-steer" : "steer"} follow-up${delivery === "steer" ? " @quarantine" : ""}`, async ({
+  test(`keeps finished tools above a pending ${delivery === "queue" ? "queue-to-steer" : "steer"} follow-up`, async ({
     page,
   }, testInfo) => {
     const model = { id: "queue-model", providerID: "opencode" }
@@ -1523,7 +1523,9 @@ for (const delivery of ["steer", "queue"] as const) {
 
     if (colors) {
       await expect(bubble).toHaveAttribute("data-delivery-marker", "pending")
-      await expect(pending.locator('[data-slot="user-message-meta"]')).toHaveText("Queue Model")
+      await expect(pending.locator('[data-slot="user-message-meta"]')).toHaveText(/^Queue Model\s*·\s*Just now$/, {
+        useInnerText: true,
+      })
       await expect(bubble).toHaveCSS("background-color", colors.delivered.background)
       await expect(bubble).toHaveCSS("color", colors.delivered.text)
       // Only delivery animates the colour; reduced motion switches instantly.
