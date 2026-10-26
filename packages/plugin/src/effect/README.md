@@ -130,7 +130,8 @@ run after interruption, failure, or control-only work such as a manual compactio
 plugin that always admits input must bound its own loop.
 
 `event.background` lists background shells and subagents still running for the Session or its descendants. When one
-finishes, its notice wakes the Session and the hook runs again, so a plugin that waits for background work can return:
+finishes, its notice wakes the Session and the hook runs again, so a plugin that waits for background work can return.
+Notices admitted with `resume: false`, such as those recovered after a restart, wait for the next wake instead:
 
 ```ts
 yield *
@@ -142,6 +143,11 @@ yield *
           .pipe(Effect.ignore),
   )
 ```
+
+A continuation runs inside the same execution, so a loop that is still going when the server restarts is resumed by
+restart recovery and the hook keeps running. Persist your own state if the loop should come back paused. A hook that
+fails, fails the execution like any other session hook, so handle errors from slow or remote work such as a judge model
+call.
 
 ## Reloading A Domain
 

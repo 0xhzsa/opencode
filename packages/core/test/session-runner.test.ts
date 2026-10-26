@@ -1256,6 +1256,35 @@ describe("SessionRunnerLLM", () => {
     ])
   })
 
+  scenario("runs the idle hook again when a background notice wakes the session", function* (s) {
+    const jobs = yield* Job.Service
+    const hooks = yield* PluginHooks.Service
+    const done = yield* Deferred.make<string>()
+    yield* jobs.start({
+      id: "shell-own",
+      type: "shell",
+      recovery: { kind: "shell", sessionID, shellID: "shell-own", command: "bun test" },
+      run: Deferred.await(done),
+    })
+    yield* jobs.background("shell-own")
+    const background: number[] = []
+    yield* hooks.register("session", "idle", (event) => Effect.sync(() => background.push(event.background.length)))
+    yield* s.llm.push(
+      TestLLM.text("Waiting for the tests", "text-waiting"),
+      TestLLM.text("Tests passed", "text-passed"),
+    )
+
+    yield* s.runPrompt("Start")
+    yield* Deferred.succeed(done, "ok")
+    yield* jobs.wait({ id: "shell-own" })
+    // Admitted the way the shell tool delivers a background notice: the default resume wakes the Session.
+    yield* s.session.synthetic({ sessionID, text: "Command finished" }).pipe(Effect.orDie)
+    yield* s.session.wait(sessionID)
+
+    expect(background).toEqual([1, 0])
+    expect(s.requests).toHaveLength(2)
+  })
+
   scenario("runs the idle hook after a move delivered at the idle boundary", function* (s) {
     const runner = yield* SessionRunner.Service
     const hooks = yield* PluginHooks.Service
