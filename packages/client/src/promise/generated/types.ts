@@ -4037,6 +4037,7 @@ export type EventSubscribeInput = {
         | "session.execution.succeeded"
         | "session.execution.failed"
         | "session.execution.interrupted"
+        | "session.settled"
         | "session.instructions.updated"
         | "session.synthetic"
         | "session.skill.activated"
