@@ -12,7 +12,6 @@ import { LayerNode } from "@opencode/util/effect/layer-node"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Global } from "@opencode/util/global"
 import { Bus } from "../src/bus.js"
-import { Config } from "../src/config.js"
 import { Database } from "../src/database/database.js"
 import { EventTable } from "../src/event/sql.js"
 import { Image } from "../src/image.js"
@@ -127,7 +126,6 @@ const setup = Effect.fnUntraced(function* (options?: {
   const services = Layer.mergeAll(
     Layer.succeed(PluginHooks.Service, hooks),
     Layer.mock(Image.Service, {}),
-    Layer.mock(Config.Service, { entries: () => Effect.succeed([]) }),
     options?.shell ?? Layer.mock(Shell.Service, {}),
   )
   const servicesFor = (ref: Location.Ref) => {

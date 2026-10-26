@@ -4,7 +4,6 @@ import type { Provider } from "@opencode/schema/provider"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { Context, Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/http"
-import { Config } from "./config.js"
 import type { ModelResolver } from "./model-resolver.js"
 import type { SessionSchema } from "./session/schema.js"
 
@@ -31,10 +30,6 @@ export interface Interface {
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ModelPreconnect") {}
-
-/** Whether a location's config turns preconnect on. */
-export const enabled = (config: Config.Interface) =>
-  config.entries().pipe(Effect.map((entries) => Config.latest(entries, "experimental")?.preconnect === true))
 
 /** The origin worth warming for a resolved model, or undefined when a warm-up would not be reused. */
 export const target = (resolved: ModelResolver.Resolved, env: Record<string, string | undefined> = process.env) => {

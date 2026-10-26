@@ -327,7 +327,8 @@ export const layer = Layer.effect(
       const warmable =
         kind === "primary"
           ? yield* Effect.gen(function* () {
-              if (!(yield* ModelPreconnect.enabled(config))) return yield* preconnect.forget(session.location)
+              const enabled = Config.latest(yield* config.entries(), "experimental")?.preconnect === true
+              if (!enabled) return yield* preconnect.forget(session.location)
               // HTTP hooks may send the request anywhere, so only an unhooked route is worth warming.
               const url = hasHttpHooks ? undefined : ModelPreconnect.target({ ...model, model: request.model })
               yield* preconnect.remember(session, model.ref.providerID, url)
