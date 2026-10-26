@@ -50,6 +50,8 @@ const temporaryIndexPrefix = "index.opencode-"
 const argumentBudget = process.platform === "win32" ? 24_000 : 128 * 1024
 const looseObjectLimit = 2048
 const packCountLimit = 16
+// Index entries that may differ from the store's HEAD before HEAD moves to the latest snapshot tree.
+const headDriftLimit = 1024
 
 export interface CaptureInput {
   readonly repository: Repository
@@ -528,23 +530,59 @@ const layer = Layer.effect(
     })
 
     /**
-     * Both commands only read the index, so they never take `index.lock`. Two parallel processes beat one combined
-     * `ls-files -m -o`, whose lstat pass is not threaded like diff-files'.
+     * One status lists tracked files that differ from the index and untracked files, and keeps the untracked cache in
+     * the index it scans. Git only uses that cache when untracked files are shown individually by configuration and
+     * no pathspec is given, so scopes are filtered here. `staged` counts index entries that differ from HEAD, which
+     * status compares as well; the caller keeps that count small.
      */
-    const listChanges = Effect.fnUntraced(function* (repository: Repository, scope: RelativePath, index?: string) {
-      const list = (args: string[]) =>
-        repositoryOperation("refresh", repository, args, { index }).pipe(
-          // Embedded repositories are listed as `dir/`; update-index records them as gitlinks.
-          Effect.map((result) => nuls(result.text).map((file) => RelativePath.make(file.replace(/\/$/, "")))),
-        )
-      const [tracked, untracked] = yield* Effect.all(
-        [
-          list(["diff-files", "--name-only", "-z", "--", literalPathspec(scope)]),
-          list(["ls-files", "--others", "--exclude-standard", "-z", "--", literalPathspec(scope)]),
-        ],
-        { concurrency: 2 },
+    const listChanges = Effect.fnUntraced(function* (
+      repository: Repository,
+      scopes: readonly RelativePath[],
+      index?: string,
+    ) {
+      const result = yield* repositoryOperation(
+        "refresh",
+        repository,
+        ["-c", "status.showUntrackedFiles=all", "status", "--porcelain=v2", "-z", "--no-renames"],
+        { index },
       )
-      return { tracked, untracked }
+      const entries = nuls(result.text).flatMap((record) => {
+        const entry = statusEntry(record)
+        return entry ? [entry] : []
+      })
+      const changed = entries.filter(
+        (entry) =>
+          entry.changed &&
+          scopes.some((scope) => scope === "." || entry.path === scope || entry.path.startsWith(`${scope}/`)),
+      )
+      return {
+        tracked: changed.filter((entry) => !entry.untracked).map((entry) => entry.path),
+        untracked: changed.filter((entry) => entry.untracked).map((entry) => entry.path),
+        staged: entries.filter((entry) => entry.staged).length,
+      }
+    })
+
+    /**
+     * Status compares HEAD with the index on every scan, so HEAD points at a commit for a recent snapshot tree once
+     * they drift apart. The commit is built without identity or signing config, and HEAD's reflog is skipped.
+     */
+    const updateHead = Effect.fnUntraced(function* (repository: Repository, tree: TreeID) {
+      const commit = (yield* repositoryOperation(
+        "refresh",
+        repository,
+        ["hash-object", "-w", "-t", "commit", "--stdin"],
+        {
+          stdin: `tree ${tree}\nauthor opencode <opencode> 0 +0000\ncommitter opencode <opencode> 0 +0000\n\nsnapshot\n`,
+        },
+      )).text.trim()
+      yield* repositoryOperation("refresh", repository, [
+        "-c",
+        "core.logAllRefUpdates=false",
+        "update-ref",
+        "--no-deref",
+        "HEAD",
+        commit,
+      ])
     })
 
     const updateIndex = Effect.fnUntraced(function* (input: {
@@ -610,7 +648,7 @@ const layer = Layer.effect(
       ignores?: Repository
       maximumUntrackedFileBytes?: number
     }) {
-      return yield* updateIndex({ ...input, changes: yield* listChanges(input.repository, input.scope) })
+      return yield* updateIndex({ ...input, changes: yield* listChanges(input.repository, [input.scope]) })
     })
 
     const ignored = Effect.fn("Git.index.ignored")(function* (input: {
@@ -755,29 +793,29 @@ const layer = Layer.effect(
       const result = yield* withTemporaryIndex(input.repository, (index) =>
         Effect.gen(function* () {
           const scanned = yield* indexFingerprint(index)
-          const changes = yield* Effect.forEach(input.scopes, (scope) => listChanges(input.repository, scope, index), {
-            concurrency: "unbounded",
-          })
+          const changes = yield* listChanges(input.repository, input.scopes, index)
           const last = lastCaptures.get(input.repository.gitDirectory)
-          const untracked = changes.flatMap((change) => change.untracked)
           // Paths the source ignores are listed as untracked on every scan; they leave the index unchanged.
           const excluded =
-            scanned && last?.fingerprint === scanned && changes.every((change) => !change.tracked.length)
+            scanned && last?.fingerprint === scanned && !changes.tracked.length
               ? input.ignores
-                ? yield* ignored({ repository: input.ignores, paths: untracked })
+                ? yield* ignored({ repository: input.ignores, paths: changes.untracked })
                 : new Set<RelativePath>()
               : undefined
-          if (last && excluded && untracked.every((file) => excluded.has(file))) return last.tree
-          yield* Effect.forEach(changes, (change) => updateIndex({ ...input, changes: change, index, excluded }), {
-            discard: true,
-          })
-          return yield* writeTree(input.repository, index)
+          if (last && excluded && changes.untracked.every((file) => excluded.has(file)))
+            return { tree: last.tree, staged: changes.staged }
+          yield* updateIndex({ ...input, changes, index, excluded })
+          return { tree: yield* writeTree(input.repository, index), staged: changes.staged }
         }),
       )
       if (result.installed)
-        lastCaptures.set(input.repository.gitDirectory, { fingerprint: result.installed, tree: result.value })
+        lastCaptures.set(input.repository.gitDirectory, { fingerprint: result.installed, tree: result.value.tree })
       if (!result.installed) lastCaptures.delete(input.repository.gitDirectory)
-      return result.value
+      if (result.value.staged > headDriftLimit)
+        yield* updateHead(input.repository, result.value.tree).pipe(
+          Effect.catch((cause) => Effect.logWarning("failed to update snapshot HEAD", { cause })),
+        )
+      return result.value.tree
     })
 
     const captureTree = Effect.fn("Git.tree.capture")((input: CaptureInput) =>
@@ -1417,6 +1455,29 @@ function execute(cwd: string, proc: AppProcess.Interface, args: string[]) {
 /** Split NUL-terminated git output into its records. */
 function nuls(text: string) {
   return text.split("\0").filter(Boolean)
+}
+
+/**
+ * A `git status --porcelain=v2 -z --no-renames` record. Ordinary entries carry 8 fields before the path and
+ * unmerged ones 10; paths are verbatim and may contain spaces. Embedded repositories are listed as `dir/`, and
+ * update-index records them as gitlinks.
+ */
+function statusEntry(record: string) {
+  if (record.startsWith("? "))
+    return {
+      path: RelativePath.make(record.slice(2).replace(/\/$/, "")),
+      untracked: true,
+      changed: true,
+      staged: false,
+    }
+  const fields = record.startsWith("1 ") ? 8 : record.startsWith("u ") ? 10 : undefined
+  if (!fields) return undefined
+  return {
+    path: RelativePath.make(record.split(" ").slice(fields).join(" ")),
+    untracked: false,
+    changed: fields === 10 || record[3] !== ".",
+    staged: record[2] !== ".",
+  }
 }
 
 /** Pathspec magic that matches exactly one path, so names with `*`, `?`, `[`, or a leading `:` are not patterns. */
