@@ -1,6 +1,7 @@
 export * as GenUISession from "./session.js"
 
 import type { Context } from "@opencode/plugin/effect/plugin"
+import type { SessionContext } from "@opencode/plugin/effect/session"
 import { InstructionEntry } from "@opencode/schema/instruction-entry"
 import type { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
@@ -48,13 +49,14 @@ export const register = Effect.fn("GenUISession.register")(function* (ctx: {
     }),
   )
 
-  yield* ctx.session.hook(
-    "context",
-    Effect.fnUntraced(function* (event) {
-      // The tool list is the head of the cached prompt, so it must not flip with each prompt's source (app, phone,
-      // scheduled prompt) or reset on restart. Once a session has been offered generated UI it keeps the tool, and the
-      // instruction entry says whether it can be used.
-      if ((yield* state(event.sessionID)) === undefined) delete event.tools[GenUI.RENDER_TOOL]
-    }),
-  )
+  // The tool list is the head of the cached prompt, so it must not flip with each prompt's source (app, phone,
+  // scheduled prompt) or reset on restart. Once a session has been offered generated UI it keeps the tool, and the
+  // instruction entry says whether it can be used. Summary and generate requests reuse the session's cached prompt,
+  // so they get the same tool list.
+  const tools = Effect.fnUntraced(function* (event: SessionContext) {
+    if ((yield* state(event.sessionID)) === undefined) delete event.tools[GenUI.RENDER_TOOL]
+  })
+  yield* ctx.session.hook("context", tools)
+  yield* ctx.session.hook("compaction", tools)
+  yield* ctx.session.hook("generate", tools)
 })

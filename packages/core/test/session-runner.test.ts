@@ -600,6 +600,29 @@ const scenario = (
     }),
   )
 
+const registerGenUI = Effect.gen(function* () {
+  const hooks = yield* PluginHooks.Service
+  const tools = yield* Tool.Service
+  const entries = yield* InstructionEntry.Service
+  const registered = Effect.succeed({ dispose: Effect.void })
+  yield* GenUIPlugin.effect(
+    host({
+      session: {
+        hook: (name, callback) => hooks.register("session", name, callback),
+        instructions: {
+          entry: {
+            list: (input) => entries.list(input.sessionID),
+            put: entries.put,
+            remove: entries.remove,
+          },
+        },
+      },
+      tool: { ...host().tool, transform: tools.transform },
+      skill: { ...host().skill, transform: () => registered },
+    }),
+  )
+})
+
 // Nominal retry gaps: exponential from 2s capped at 10s, for 10 retries.
 const RETRY_GAPS = [2_000, 4_000, 8_000, ...Array<number>(7).fill(10_000)]
 // Longest possible gap per retry (+20% jitter); advancing the clock by these always fires the retry.
@@ -1208,26 +1231,7 @@ describe("SessionRunnerLLM", () => {
   scenario(
     "toggles GenUI through instruction entries without extra turns or changing the cached request prefix",
     function* (s) {
-      const hooks = yield* PluginHooks.Service
-      const tools = yield* Tool.Service
-      const entries = yield* InstructionEntry.Service
-      const registered = Effect.succeed({ dispose: Effect.void })
-      yield* GenUIPlugin.effect(
-        host({
-          session: {
-            hook: (name, callback) => hooks.register("session", name, callback),
-            instructions: {
-              entry: {
-                list: (input) => entries.list(input.sessionID),
-                put: entries.put,
-                remove: entries.remove,
-              },
-            },
-          },
-          tool: { ...host().tool, transform: tools.transform },
-          skill: { ...host().skill, transform: () => registered },
-        }),
-      )
+      yield* registerGenUI
 
       yield* s.session.prompt({ sessionID, text: "Show me the build", metadata: { genui: true } })
       yield* s.session.wait(sessionID)
@@ -1285,6 +1289,27 @@ describe("SessionRunnerLLM", () => {
       )
     },
   )
+
+  for (const offered of [true, false]) {
+    scenario(`sends summary requests the same GenUI tool list as the session (offered=${offered})`, function* (s) {
+      yield* registerGenUI
+
+      yield* s.session.prompt({
+        sessionID,
+        text: "Show me the build",
+        metadata: offered ? { genui: true } : undefined,
+        resume: false,
+      })
+      yield* s.resume
+      yield* s.llm.push(TestLLM.text("## Objective\n- summary", "genui-summary"))
+      yield* s.session.compact({ sessionID })
+      yield* s.resume
+
+      expect(s.requests).toHaveLength(2)
+      expect(s.requests[0]?.tools.some((tool) => tool.name === "genui_render")).toBe(offered)
+      expect(s.requests[1]?.tools).toEqual(s.requests[0]?.tools)
+    })
+  }
 
   scenario("runs a follow-up when synthetic input arrives during an active continuation", function* (s) {
     const secondStarted = yield* Deferred.make<void>()

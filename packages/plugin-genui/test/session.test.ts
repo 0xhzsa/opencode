@@ -20,12 +20,16 @@ const run = async (store = new Map<InstructionEntry.Key, Schema.Json>()) => {
   const hooks: {
     prompt?: (input: SessionPrompt) => Effect.Effect<void>
     context?: (input: SessionContext) => Effect.Effect<void>
+    compaction?: (input: SessionContext) => Effect.Effect<void>
+    generate?: (input: SessionContext) => Effect.Effect<void>
   } = {}
   const session: Pick<Context["session"], "hook" | "instructions"> = {
     hook: (name, callback) => {
       // Hook names and callbacks are correlated, but TypeScript does not narrow this generic registration API.
       if (name === "prompt") hooks.prompt = callback as (input: SessionPrompt) => Effect.Effect<void>
       if (name === "context") hooks.context = callback as (input: SessionContext) => Effect.Effect<void>
+      if (name === "compaction") hooks.compaction = callback as (input: SessionContext) => Effect.Effect<void>
+      if (name === "generate") hooks.generate = callback as (input: SessionContext) => Effect.Effect<void>
       return Effect.succeed({ dispose: Effect.void })
     },
     instructions: {
@@ -54,7 +58,7 @@ const run = async (store = new Map<InstructionEntry.Key, Schema.Json>()) => {
         delivery: "steer",
       }) ?? Effect.void,
     )
-  const context = async (messages: Message[]) => {
+  const context = async (messages: Message[], hook: "context" | "compaction" | "generate" = "context") => {
     const request: SessionContext = {
       sessionID,
       agent: Agent.ID.make("build"),
@@ -64,7 +68,7 @@ const run = async (store = new Map<InstructionEntry.Key, Schema.Json>()) => {
       tools: { [GenUI.RENDER_TOOL]: { description: "", input: {} }, read: { description: "", input: {} } },
       options: {},
     }
-    await Effect.runPromise(hooks.context?.(request) ?? Effect.void)
+    await Effect.runPromise(hooks[hook]?.(request) ?? Effect.void)
     return request
   }
   return { puts, store, prompt, context }
@@ -135,4 +139,17 @@ describe("GenUISession", () => {
     expect(plugin.puts).toEqual([])
     expect(plugin.store.size).toBe(0)
   })
+
+  for (const offered of [true, false]) {
+    test(`gives summary and generate requests the same tool list as the session's requests (offered=${offered})`, async () => {
+      const plugin = await run()
+      await plugin.prompt(offered ? { genui: true } : undefined)
+      const messages = [Message.user("hi")]
+      const expected = offered ? [GenUI.RENDER_TOOL, "read"] : ["read"]
+
+      expect(Object.keys((await plugin.context(messages)).tools)).toEqual(expected)
+      expect(Object.keys((await plugin.context(messages, "compaction")).tools)).toEqual(expected)
+      expect(Object.keys((await plugin.context(messages, "generate")).tools)).toEqual(expected)
+    })
+  }
 })
