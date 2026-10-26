@@ -532,7 +532,8 @@ const layer = Layer.effect(
     /**
      * One status lists tracked files that differ from the index and untracked files, and keeps the untracked cache in
      * the index it scans. Git only uses that cache when untracked files are shown individually by configuration and
-     * no pathspec is given, so scopes are filtered here. `staged` counts index entries that differ from HEAD, which
+     * no pathspec is given. A subdirectory scope still passes its pathspec: walking only that directory beats a cached
+     * check of every directory in a large repository. `staged` counts index entries that differ from HEAD, which
      * status compares as well; the caller keeps that count small.
      */
     const listChanges = Effect.fnUntraced(function* (
@@ -552,6 +553,7 @@ const layer = Layer.effect(
           "--porcelain=v2",
           "-z",
           "--no-renames",
+          ...(scopes.includes(RelativePath.make(".")) ? [] : ["--", ...scopes.map(literalPathspec)]),
         ],
         { index },
       )
@@ -559,11 +561,7 @@ const layer = Layer.effect(
         const entry = statusEntry(record)
         return entry ? [entry] : []
       })
-      const changed = entries.filter(
-        (entry) =>
-          entry.changed &&
-          scopes.some((scope) => scope === "." || entry.path === scope || entry.path.startsWith(`${scope}/`)),
-      )
+      const changed = entries.filter((entry) => entry.changed)
       return {
         tracked: changed.filter((entry) => !entry.untracked).map((entry) => entry.path),
         untracked: changed.filter((entry) => entry.untracked).map((entry) => entry.path),
