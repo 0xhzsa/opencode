@@ -169,13 +169,11 @@
       background-color: var(--v2-background-bg-accent);
       transform: scaleX(0);
       transform-origin: left;
-      transition: transform var(--question-settle) var(--question-spring);
     }
 
     &::after {
       background-color: var(--v2-icon-icon-muted);
       opacity: 0;
-      transition: opacity var(--question-quick) var(--question-spring);
     }
 
     &:dir(rtl)::before {
@@ -283,9 +281,6 @@
     font-weight: 530;
     line-height: 1;
     font-variant-numeric: tabular-nums;
-    transition:
-      color var(--question-pick) var(--question-spring),
-      box-shadow var(--question-pick) var(--question-spring);
 
     &::before {
       content: "";
@@ -295,7 +290,6 @@
       border-radius: inherit;
       background-color: var(--v2-background-bg-accent);
       opacity: 0;
-      transition: opacity var(--question-pick) var(--question-spring);
     }
 
     &[data-type="checkbox"] {
@@ -475,16 +469,26 @@
     }
   }
 
-  /* Reduced motion keeps the fades and drops the movement. */
-  :root[data-motion="reduce"] & {
-    [data-slot="question-progress-bar"]::before {
-      transform: none;
-      opacity: 0;
-      transition: opacity var(--question-quick) linear;
+  /* Picks and dashes ease only while the dock's motion is on; otherwise they change on the same frame. */
+  [data-component="session-question-dock"][data-animated="true"] & {
+    [data-slot="question-progress-bar"] {
+      &::before {
+        transition: transform var(--question-settle) var(--question-spring);
+      }
+
+      &::after {
+        transition: opacity var(--question-quick) var(--question-spring);
+      }
     }
 
-    [data-slot="question-progress-segment"][data-answered="true"] [data-slot="question-progress-bar"]::before {
-      opacity: 1;
+    [data-slot="question-option-key"] {
+      transition:
+        color var(--question-pick) var(--question-spring),
+        box-shadow var(--question-pick) var(--question-spring);
+
+      &::before {
+        transition: opacity var(--question-pick) var(--question-spring);
+      }
     }
   }
 }

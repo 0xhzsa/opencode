@@ -1,3 +1,4 @@
+import type { Locator } from "@playwright/test"
 import { expect, story } from "../../stories/playwright/story"
 
 story("resizes the dock to fit different answer counts", async ({ mount }) => {
@@ -451,4 +452,105 @@ story("toggles a lone many-answer question and sends it with Enter", async ({ mo
   await expect(terminal.locator('[data-slot="question-option-key"]')).toHaveAttribute("data-picked", "true")
   await page.keyboard.press("Enter")
   await expect(question).toBeHidden()
+})
+
+// Runs one action in the page, then samples the next frames: what the user sees, and whether anything is animating.
+const act = (question: Locator, action: string) =>
+  question.evaluate(async (root, action) => {
+    const options = root.querySelector<HTMLElement>('[data-slot="question-options"]')!
+    const list = root.querySelector<HTMLElement>('[data-slot="question-options-list"]')!
+    const details = root.querySelector<HTMLElement>('[data-slot="question-details"]')!
+
+    const sample = () => ({
+      title: root.querySelector('[data-slot="question-header-title"]')!.textContent,
+      height: Math.round(options.getBoundingClientRect().height),
+      list: Math.round(list.getBoundingClientRect().height),
+      shown: getComputedStyle(options).visibility !== "hidden" && getComputedStyle(options).opacity === "1",
+      still: getComputedStyle(details).transform === "none" && getComputedStyle(details).opacity === "1",
+      animations: document.getAnimations().length,
+    })
+
+    if (action.startsWith("key:"))
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: action.slice(4), bubbles: true, cancelable: true }),
+      )
+
+    if (action.startsWith("dash:"))
+      root.querySelectorAll<HTMLElement>('[data-slot="question-progress-segment"]')[Number(action.slice(5))]!.click()
+
+    if (action.startsWith("button:"))
+      root.querySelector<HTMLElement>(`button[aria-label="${action.slice(7)}"]`)!.click()
+    const frames = [sample()]
+
+    for (let i = 0; i < 4; i++) {
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      frames.push(sample())
+    }
+
+    return frames
+  }, action)
+
+story("switches questions, folds and submits on the same frame with the dock's motion off", async ({ mount, page }) => {
+  const component = await mount("app-current-session-surface--question-request")
+  const question = component.locator('[data-component="dock-prompt"][data-kind="question"]')
+  await expect(question.getByRole("radio", { name: /Focused/ })).toBeFocused()
+  await expect(component.locator('[data-component="session-question-dock"]')).toHaveAttribute("data-animated", "false")
+
+  // The new question shows at its final size, unmoved and unfaded, as soon as the key or click lands.
+  for (const [action, title] of [
+    ["key:ArrowRight", "2 of 2 questions"],
+    ["dash:0", "1 of 2 questions"],
+    ["key:ArrowRight", "2 of 2 questions"],
+  ] as const) {
+    const frames = await act(question, action)
+    expect(frames[0]!.title, action).toBe(title)
+    expect(
+      frames.every((frame) => frame.still && frame.shown && frame.animations === 0),
+      action,
+    ).toBe(true)
+    expect(
+      frames.every((frame) => frame.height > 0 && frame.height === frame.list),
+      action,
+    ).toBe(true)
+  }
+
+  // Minimizing and restoring fold the answers away and back at once.
+  const folded = await act(question, "button:Minimize question")
+  expect(folded.every((frame) => frame.height === 0 && !frame.shown && frame.animations === 0)).toBe(true)
+  const restored = await act(question, "button:Restore question")
+  expect(
+    restored.every((frame) => frame.height > 0 && frame.height === frame.list && frame.shown && frame.animations === 0),
+  ).toBe(true)
+
+  // Submitting swaps the dock for the composer with no closing flight.
+  const submitted = await page.evaluate(async () => {
+    const dock = () => document.querySelector('[data-component="dock-prompt"][data-kind="question"]')
+    const moving = () => !!document.querySelector("[data-moving]")
+    const buttons = [...dock()!.querySelectorAll<HTMLElement>('[data-slot="question-footer-actions"] button')]
+
+    buttons.find((button) => button.textContent?.startsWith("Submit"))!.click()
+
+    for (let i = 0; i < 120 && dock() && !moving(); i++) await new Promise((resolve) => requestAnimationFrame(resolve))
+    const frames = []
+
+    for (let i = 0; i < 3; i++) {
+      frames.push({ dock: !!dock(), moving: moving(), animations: document.getAnimations().length })
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+    }
+
+    return frames
+  })
+
+  expect(submitted).toEqual(Array(3).fill({ dock: false, moving: false, animations: 0 }))
+})
+
+story("brings the question switch motion back with the Question dock motion knob", async ({ mount, page }) => {
+  await page.addInitScript(() => localStorage.setItem("opencode.motion.v2", JSON.stringify({ "question.motion": 1 })))
+  const component = await mount("app-current-session-surface--question-request")
+  const question = component.locator('[data-component="dock-prompt"][data-kind="question"]')
+  await expect(question.getByRole("radio", { name: /Focused/ })).toBeFocused()
+  await expect(component.locator('[data-component="session-question-dock"]')).toHaveAttribute("data-animated", "true")
+
+  const frames = await act(question, "key:ArrowRight")
+  expect(frames.some((frame) => !frame.still && frame.animations > 0)).toBe(true)
 })

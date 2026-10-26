@@ -8,7 +8,6 @@ import { DockPrompt } from "@opencode/session-ui/dock-prompt"
 import { Icon } from "@opencode/ui/icon"
 import { TextInput } from "@opencode/ui/text-input"
 import { useSpring } from "@opencode/ui/motion-spring"
-import { prefersReducedMotion } from "@opencode/ui/motion"
 import { showToast } from "@/shell/notifications/toast"
 import type { FormAnswer, FormInfo, FormMultiselectField, FormStringField } from "@opencode/client/promise"
 import { useLanguage } from "@/runtime/i18n/language"
@@ -18,6 +17,7 @@ import { useServerSDK } from "@/runtime/server/client"
 import { ScopedKey } from "@/runtime/server/scope"
 import { useCommand } from "@/shell/commands/command"
 import { questionKey, type QuestionKeyZone } from "./question-keys"
+import { questionMotion } from "./question-motion"
 
 const cache = new Map<string, { tab: number; answers: string[][]; custom: string[]; customOn: boolean[] }>()
 
@@ -149,16 +149,22 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
   const customLabel = () => language.t("ui.question.custom.answerPlaceholder")
 
   const last = createMemo(() => store.tab >= total() - 1)
-  const collapse = useSpring(() => (store.minimized ? 1 : 0), { visualDuration: 0.3, bounce: 0 })
+
+  // Without the dock's motion each spring is keyed by its own target, so every change jumps straight there.
+  const collapse = useSpring(
+    () => (store.minimized ? 1 : 0),
+    { visualDuration: 0.3, bounce: 0 },
+    () => (questionMotion() ? "motion" : store.minimized),
+  )
+
   const hidden = createMemo(() => Math.max(0, Math.min(1, collapse())))
   const optionsOff = createMemo(() => hidden() > 0.98)
-  // The answers box follows its list's measured height, so the dock grows and shrinks with each question. Under
-  // reduced motion it lands at once while the content fades.
 
+  // The answers box follows its list's measured height, so the dock grows and shrinks with each question.
   const listHeight = useSpring(
     () => store.listHeight,
-    () => ({ visualDuration: prefersReducedMotion() ? 0.01 : 0.4, bounce: 0 }),
-    () => store.listHeight > 0,
+    { visualDuration: 0.4, bounce: 0 },
+    () => (questionMotion() ? store.listHeight > 0 : store.listHeight),
   )
 
   const customUpdate = (value: string, selected: boolean = on()) => {
@@ -276,9 +282,7 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
     onCleanup(() => observer.disconnect())
   })
 
-  // One highlight card jumps between answers by its clip, so only one answer ever looks highlighted. Under reduced
-  // motion it fades in at its new answer.
-  let placed = { tab: -1, index: -1 }
+  // One highlight card jumps between answers by its clip, so only one answer ever looks highlighted.
   createEffect(() => {
     const el = highlightRef
     const index = store.focus
@@ -287,13 +291,6 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
 
     if (!el || !row || !listRef) return
     el.style.clipPath = `inset(${row.offsetTop}px 0 ${listRef.offsetHeight - row.offsetTop - row.offsetHeight}px round 6px)`
-
-    if (lit() === "none") return
-    const moved = placed.tab !== store.tab || placed.index !== index
-    placed = { tab: store.tab, index }
-
-    if (prefersReducedMotion() && moved && el.animate)
-      el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: "linear" })
   })
 
   onCleanup(() => {
@@ -565,23 +562,21 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
     jump(store.tab - 1)
   }
 
-  // The new question's text and answers slide in from the side they come from and fade up; under reduced motion they
-  // only fade.
+  // With the dock's motion on, the new question's text and answers slide in from the side they come from and fade up.
   const arrive = (step: number) => {
     arrivals.forEach((animation) => animation.cancel())
     arrivals.length = 0
-    const reduced = prefersReducedMotion()
+
+    if (!questionMotion()) return
     const x = (root?.matches(":dir(rtl)") ? -step : step) * 12
 
-    const frames = reduced
-      ? [{ opacity: 0 }, { opacity: 1 }]
-      : [
-          { opacity: 0, transform: `translate3d(${x}px,0,0)` },
-          { opacity: 1, transform: "none" },
-        ]
+    const frames = [
+      { opacity: 0, transform: `translate3d(${x}px,0,0)` },
+      { opacity: 1, transform: "none" },
+    ]
 
     ;[detailsRef, optionsRef].forEach((el) => {
-      if (el?.animate) arrivals.push(el.animate(frames, { duration: reduced ? 150 : 300, easing: SPRING_EASE }))
+      if (el?.animate) arrivals.push(el.animate(frames, { duration: 300, easing: SPRING_EASE }))
     })
   }
 
@@ -628,7 +623,7 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
   }
 
   return (
-    <div data-component="session-question-dock">
+    <div data-component="session-question-dock" data-animated={questionMotion()}>
       <DockPrompt
         kind="question"
         ref={(el) => (root = el)}
@@ -751,7 +746,14 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
           aria-hidden={store.minimized || optionsOff() ? "true" : undefined}
           classList={{ "pointer-events-none": hidden() > 0.1 }}
           style={{
-            height: store.listHeight > 0 ? `${Math.max(0, listHeight() * (1 - hidden()))}px` : undefined,
+            // Without motion the box keeps its natural height, so a new question lays out at its size on the same frame.
+            height: !questionMotion()
+              ? store.minimized
+                ? "0px"
+                : undefined
+              : store.listHeight > 0
+                ? `${Math.max(0, listHeight() * (1 - hidden()))}px`
+                : undefined,
             opacity: `${Math.max(0, Math.min(1, 1 - hidden()))}`,
             visibility: optionsOff() ? "hidden" : "visible",
           }}
