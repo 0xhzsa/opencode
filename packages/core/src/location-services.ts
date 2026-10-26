@@ -9,6 +9,8 @@ export { LocationServiceMap } from "./location-service-map.js"
 
 export type LocationServices = Instance.Services
 
+const HELD_WARNING_AFTER = "30 seconds"
+
 export function buildLocationServiceMap(
   replacements: LayerNode.Replacements = [],
 ): Layer.Layer<LocationServiceMap.Service> {
@@ -77,10 +79,34 @@ export function buildLocationServiceMap(
             const key = LocationServiceMap.canonical(ref)
             const build = Option.getOrUndefined(MutableHashMap.get(builds, key))
             MutableHashMap.remove(builds, key)
+            const state = inner.rcMap.state
+            const held = state._tag === "Open" ? Option.getOrUndefined(MutableHashMap.get(state.map, key)) : undefined
             // Detach routing first, then cancel interactions and notify clients. Running
             // steps retain their borrowed graph until they can hand off at a boundary.
             // Do not await a boot here: failed/in-flight builds have their own cleanup path.
-            return inner.invalidate(key).pipe(Effect.andThen(build?.close ?? Effect.void))
+            return inner.invalidate(key).pipe(
+              Effect.andThen(build?.close ?? Effect.void),
+              Effect.andThen(
+                // Borrowers release on shutdown; one that does not keeps every service of this Location running.
+                held && held.refCount > 0
+                  ? Effect.sleep(HELD_WARNING_AFTER).pipe(
+                      Effect.andThen(
+                        Effect.suspend(() =>
+                          held.scope.state._tag === "Closed"
+                            ? Effect.void
+                            : Effect.logWarning("location still held after shutdown", {
+                                directory: key.directory,
+                                workspaceID: key.workspaceID,
+                                holders: held.refCount,
+                              }),
+                        ),
+                      ),
+                      Effect.forkIn(owner),
+                      Effect.asVoid,
+                    )
+                  : Effect.void,
+              ),
+            )
           }).pipe(Effect.uninterruptible),
       }
       // Cached instances borrow their owner instead of retaining its Layer scope.
