@@ -272,7 +272,8 @@ const layer = Layer.effect(
         published?.value !== undefined &&
         published.input === input &&
         Equal.equals(published.value.data.defaultModel, value.data.defaultModel) &&
-        Equal.equals(published.value.all, value.all)
+        Equal.equals(published.value.all, value.all) &&
+        Equal.equals(published.value.other, value.other)
       published = { value, input }
       if (unchanged) return
       yield* bus.publish(

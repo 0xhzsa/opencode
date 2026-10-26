@@ -26,6 +26,7 @@ import { Reference } from "../reference.js"
 import { Rpc } from "../rpc.js"
 import { AbsolutePath, type DeepMutable } from "../schema.js"
 import { Skill } from "../skill.js"
+import { State } from "../state.js"
 import { Tool } from "../tool.js"
 import { Workspace } from "../workspace.js"
 import { Vcs } from "../vcs.js"
@@ -203,7 +204,9 @@ export const make = Effect.fn("PluginHost.make")(function* (
                 : response(Effect.succeed(provider)),
             ),
           ),
-      reload: providers.reload,
+      // Model transforms may read the same plugin state as provider transforms. Provider skips rebuilds that change
+      // nothing, so it no longer reruns them implicitly; Model still publishes only real changes.
+      reload: () => State.batch(providers.reload().pipe(Effect.andThen(models.reload()))),
       transform: (callback) =>
         providers.transform((editor) => {
           callback({
