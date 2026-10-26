@@ -2,27 +2,13 @@
 
 Read this before cutting a minor or major release, act on every item in its section, and delete each item once it ships. Add an item whenever a change leaves something to finish in a later release, such as a deprecated alias to remove.
 
-## Next minor
+## Remove at next minor
 
-- [ ] Remove the deprecated pre-experimental SDK and plugin aliases from [#59072](https://github.com/anomalyco/opencode/pull/59072):
-  - SDK methods (`packages/client/src/deprecated-aliases.ts`, plus `file.write` in `packages/client/src/promise/client.ts`), each now at `client.experimental.<same path>`:
-    - `client.session.{stats,import,export,skill,wait,log}`
-    - `client.session.instructions.entry.{list,put,remove}`
-    - `client.generate.text`
-    - `client.voice.{models,session}`
-    - `client.migration.v1.status`
-    - `client.usage.limits`
-    - `client.integration.wellknown.add`
-    - `client.mcp.{add,remove,connect,disconnect}` and `client.mcp.client.token`
-    - `client.file.{watch,unwatch}` and, in the Promise client only, `client.file.write`
-    - `client.config.update`
-  - SDK types renamed with an `Experimental` prefix (`packages/client/src/promise/deprecated.ts`, `packages/client/src/effect/deprecated.ts`, and `GenerateApi` in `packages/client/src/promise/api.ts`), for example `SessionWaitInput` → `ExperimentalSessionWaitInput`. `packages/client/src/effect/deprecated.ts` also augments the Effect group interfaces (`AppApi`, `SessionApi`, `IntegrationApi`, `McpApi`, `FileApi`, `ConfigApi`) with the old members.
-  - Plugin `Context` paths (`packages/plugin/src/{effect,promise}/{plugin,session}.ts`, wired in `packages/core/src/plugin/host.ts`, `packages/plugin/src/promise/adapter.ts` and `packages/core/test/plugin/host.ts`), each now under `ctx.experimental`:
-    - `ctx.generate`
-    - `ctx.session.wait`
-    - `ctx.session.instructions`
-  - Then drop the `Omit<IntegrationApi, "wellknown">` in `packages/plugin/src/{effect,promise}/integration.ts` and the alias expectations in `packages/client/test/{promise,effect}.test.ts` and `packages/core/test/plugin/experimental-namespace.test.ts`.
+- [ ] The deprecated pre-experimental SDK aliases from [#59072](https://github.com/anomalyco/opencode/pull/59072). Each old path is now `client.experimental.<same path>`, and each old type name is now `Experimental<name>`:
+  - Methods: `client.session.{stats,import,export,skill,wait,log}`, `client.session.instructions.entry.{list,put,remove}`, `client.generate.text`, `client.voice.{models,session}`, `client.migration.v1.status`, `client.usage.limits`, `client.integration.wellknown.add`, `client.mcp.{add,remove,connect,disconnect}`, `client.mcp.client.token`, `client.file.{watch,unwatch}`, `client.config.update`, and `client.file.write` (Promise client only).
+  - Types: the Input, Output and (Effect) Operation types of those methods, such as `SessionWaitInput`, plus the Effect `GenerateApi`, `VoiceApi`, `MigrationApi` and `UsageApi`, and the Promise `GenerateApi` in `packages/client/src/promise/api.ts`.
+  - To remove: drop `aliases: true` from both `compile` calls in `packages/client/script/generate.ts` and run `bun run generate` in `packages/client`; delete `GenerateApi` from `packages/client/src/promise/api.ts`; delete `packages/client/test/deprecated-aliases.test.ts` and the alias entries in `packages/client/test/promise.test.ts`; drop the `Omit<IntegrationApi, "wellknown">` in `packages/plugin/src/{effect,promise}/integration.ts`.
 
-## Next major
+## Remove at next major
 
 No items yet.

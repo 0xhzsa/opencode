@@ -28,12 +28,6 @@ interface CompiledEndpoint {
 }
 
 const compiledEndpoints = new WeakMap<object, CompiledEndpoint>()
-
-/** The endpoint and Effect host method behind each adapted Promise method, so tests can check where endpoints surface. */
-export const adaptedEndpoints = new WeakMap<
-  object,
-  { readonly endpoint: HttpApiEndpoint.Top; readonly method: object }
->()
 const JsonInput = Schema.fromJsonString(Schema.Unknown)
 
 interface HostRpcCallContext {
@@ -274,7 +268,7 @@ export function fromPromise(plugin: Plugin) {
           method: (input: never) => Effect.Effect<unknown, unknown>,
         ) => {
           const compiled = compileEndpoint(endpoint)
-          const adapted = (input?: unknown) =>
+          return ((input?: unknown) =>
             Effect.gen(function* () {
               // Match the generated Promise client, whose request body crosses JSON before endpoint decoding.
               const normalized = yield* Schema.encodeUnknownEffect(JsonInput)(input ?? {}).pipe(
@@ -284,9 +278,7 @@ export function fromPromise(plugin: Plugin) {
               const result = yield* method(Object.assign({}, ...decoded) as never)
               if (compiled.noContent) return undefined
               return yield* compiled.encode(result)
-            }).pipe(Effect.runPromiseWith(runtime))
-          adaptedEndpoints.set(adapted, { endpoint, method })
-          return adapted as PromiseMethod
+            }).pipe(Effect.runPromiseWith(runtime))) as PromiseMethod
         }
 
         const transform =
@@ -299,34 +291,6 @@ export function fromPromise(plugin: Plugin) {
                 callback(editor)
               }),
             )
-
-        const experimental: PromiseContext["experimental"] = {
-          generate: {
-            text: adaptApiMethod(GenerateEndpoints["generate.text"], host.experimental.generate.text),
-          },
-          session: {
-            wait: adaptApiMethod(SessionEndpoints["session.wait"], host.experimental.session.wait),
-            instructions: {
-              entry: {
-                list: adaptApiMethod(
-                  SessionEndpoints["session.instructions.entry.list"],
-                  host.experimental.session.instructions.entry.list,
-                ),
-                put: adaptApiMethod(
-                  SessionEndpoints["session.instructions.entry.put"],
-                  host.experimental.session.instructions.entry.put,
-                ),
-                remove: adaptApiMethod(
-                  SessionEndpoints["session.instructions.entry.remove"],
-                  host.experimental.session.instructions.entry.remove,
-                ),
-              },
-            },
-          },
-          terminal: {
-            read: adaptApiMethod(ExperimentalEndpoints["persistentPty.read"], host.experimental.terminal.read),
-          },
-        }
 
         const context2: PromiseContext = {
           app: host.app,
@@ -376,9 +340,14 @@ export function fromPromise(plugin: Plugin) {
                 options,
               ),
           },
-          experimental,
-          // Deprecated pre-experimental path; removed in the next minor (.github/RELEASE_REMINDERS.md).
-          generate: experimental.generate,
+          experimental: {
+            terminal: {
+              read: adaptApiMethod(ExperimentalEndpoints["persistentPty.read"], host.experimental.terminal.read),
+            },
+          },
+          generate: {
+            text: adaptApiMethod(GenerateEndpoints["generate.text"], host.generate.text),
+          },
           model: {
             list: adaptApiMethod(ModelEndpoints["model.list"], host.model.list),
             default: adaptApiMethod(ModelEndpoints["model.default"], host.model.default),
@@ -641,10 +610,24 @@ export function fromPromise(plugin: Plugin) {
             interrupt: adaptApiMethod(SessionEndpoints["session.interrupt"], host.session.interrupt),
             update: adaptApiMethod(SessionEndpoints["session.update"], host.session.update),
             move: adaptApiMethod(SessionEndpoints["session.move"], host.session.move),
+            wait: adaptApiMethod(SessionEndpoints["session.wait"], host.session.wait),
             context: adaptApiMethod(SessionEndpoints["session.context"], host.session.context),
-            // Deprecated pre-experimental paths; removed in the next minor (.github/RELEASE_REMINDERS.md).
-            wait: experimental.session.wait,
-            instructions: experimental.session.instructions,
+            instructions: {
+              entry: {
+                list: adaptApiMethod(
+                  SessionEndpoints["session.instructions.entry.list"],
+                  host.session.instructions.entry.list,
+                ),
+                put: adaptApiMethod(
+                  SessionEndpoints["session.instructions.entry.put"],
+                  host.session.instructions.entry.put,
+                ),
+                remove: adaptApiMethod(
+                  SessionEndpoints["session.instructions.entry.remove"],
+                  host.session.instructions.entry.remove,
+                ),
+              },
+            },
           },
           shell: {
             hook: (name, callback) =>

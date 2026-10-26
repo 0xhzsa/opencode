@@ -121,13 +121,12 @@ interface Context {
   readonly command: CommandDomain
   readonly event: EventDomain
   readonly experimental: {
-    readonly generate: ExperimentalGenerateApi<unknown>
-    readonly session: Pick<ExperimentalSessionApi<unknown>, "wait" | "instructions">
     readonly terminal: Pick<ExperimentalApi<unknown>["persistentPty"], "read">
   }
   readonly integration: IntegrationDomain
   readonly mcp: MCPDomain
   readonly model: ModelDomain
+  readonly generate: ExperimentalGenerateApi<unknown>
   readonly permission: PermissionDomain
   readonly plugin: Pick<PluginApi<unknown>, "list">
   readonly provider: ProviderDomain
@@ -859,18 +858,17 @@ effect: (ctx) =>
   }),
 ```
 
-Attach, list, or remove keyed session instruction entries with the experimental `ctx.experimental.session.instructions.entry`. Entries render as `<context key="...">` blocks in the session's instructions, and updates or removals are announced at the next step boundary without queuing a message turn.
+Attach, list, or remove keyed session instruction entries with `instructions.entry`. Entries render as `<context key="...">` blocks in the session's instructions, and updates or removals are announced at the next step boundary without queuing a message turn.
 
 ```ts
 effect: (ctx) =>
   Effect.gen(function* () {
     const created = yield* ctx.session.create({ title: "Review" }).pipe(Effect.orDie)
-    const instructions = ctx.experimental.session.instructions
-    yield* instructions.entry
+    yield* ctx.session.instructions.entry
       .put({ sessionID: created.id, key: "deploy-target", value: "production" })
       .pipe(Effect.orDie)
-    const entries = yield* instructions.entry.list({ sessionID: created.id }).pipe(Effect.orDie)
-    yield* instructions.entry.remove({ sessionID: created.id, key: "deploy-target" }).pipe(Effect.orDie)
+    const entries = yield* ctx.session.instructions.entry.list({ sessionID: created.id }).pipe(Effect.orDie)
+    yield* ctx.session.instructions.entry.remove({ sessionID: created.id, key: "deploy-target" }).pipe(Effect.orDie)
   }),
 ```
 
@@ -896,14 +894,11 @@ type SessionDomain = Pick<
   | "interrupt"
   | "update"
   | "move"
+  | "wait"
   | "context"
+  | "instructions"
 >
 ```
-
-Endpoints under `/api/experimental` reach plugins through `ctx.experimental`: `ctx.experimental.generate`,
-`ctx.experimental.session.wait`, `ctx.experimental.session.instructions` and `ctx.experimental.terminal.read`. They
-may change between releases. The older `ctx.generate`, `ctx.session.wait` and `ctx.session.instructions` still work
-but are deprecated and will be removed in the next minor release.
 
 ### Skills
 

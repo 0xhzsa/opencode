@@ -1,10 +1,4 @@
-import type {
-  CredentialApi,
-  ExperimentalApi,
-  ExperimentalGenerateApi,
-  ExperimentalSessionApi,
-  PluginApi,
-} from "@opencode/client/effect/api"
+import type { CredentialApi, ExperimentalApi, ExperimentalGenerateApi, PluginApi } from "@opencode/client/effect/api"
 import type { Location } from "@opencode/schema/location"
 import type { Effect, Scope } from "effect"
 import type { PluginOptions } from "../options.js"
@@ -39,14 +33,11 @@ export interface Context {
   readonly credential: Pick<CredentialApi<unknown>, "activate">
   readonly event: EventDomain
   readonly experimental: {
-    readonly generate: ExperimentalGenerateApi<unknown>
-    readonly session: Pick<ExperimentalSessionApi<unknown>, "wait" | "instructions">
     readonly terminal: Pick<ExperimentalApi<unknown>["persistentPty"], "read">
   }
   readonly integration: IntegrationDomain
   readonly mcp: MCPDomain
   readonly model: ModelDomain
-  /** @deprecated Use `ctx.experimental.generate`. Removed in the next minor. */
   readonly generate: ExperimentalGenerateApi<unknown>
   readonly permission: PermissionDomain
   readonly plugin: Pick<PluginApi<unknown>, "list">

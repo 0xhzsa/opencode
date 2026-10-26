@@ -429,6 +429,39 @@ export interface SessionApi<E = never> {
   }
   readonly environment: SessionEnvironmentOperation<E>
   readonly view: SessionViewOperation<E>
+
+  /** @deprecated Use `client.experimental.session.stats`. Removed in the next minor. */
+  readonly stats: ExperimentalSessionStatsOperation<E>
+
+  /** @deprecated Use `client.experimental.session.import`. Removed in the next minor. */
+  readonly import: ExperimentalSessionImportOperation<E>
+
+  /** @deprecated Use `client.experimental.session.export`. Removed in the next minor. */
+  readonly export: ExperimentalSessionExportOperation<E>
+
+  /** @deprecated Use `client.experimental.session.skill`. Removed in the next minor. */
+  readonly skill: ExperimentalSessionSkillOperation<E>
+
+  /** @deprecated Use `client.experimental.session.wait`. Removed in the next minor. */
+  readonly wait: ExperimentalSessionWaitOperation<E>
+
+  /** @deprecated Use `client.experimental.session.instructions`. Removed in the next minor. */
+  readonly instructions: {
+    /** @deprecated Use `client.experimental.session.instructions.entry`. Removed in the next minor. */
+    readonly entry: {
+      /** @deprecated Use `client.experimental.session.instructions.entry.list`. Removed in the next minor. */
+      readonly list: ExperimentalSessionInstructionsEntryListOperation<E>
+
+      /** @deprecated Use `client.experimental.session.instructions.entry.put`. Removed in the next minor. */
+      readonly put: ExperimentalSessionInstructionsEntryPutOperation<E>
+
+      /** @deprecated Use `client.experimental.session.instructions.entry.remove`. Removed in the next minor. */
+      readonly remove: ExperimentalSessionInstructionsEntryRemoveOperation<E>
+    }
+  }
+
+  /** @deprecated Use `client.experimental.session.log`. Removed in the next minor. */
+  readonly log: ExperimentalSessionLogOperation<E>
 }
 
 export type ExperimentalSessionStatsInput = {
@@ -1638,6 +1671,12 @@ export interface IntegrationApi<E = never> {
     readonly status: IntegrationCommandStatusOperation<E>
     readonly cancel: IntegrationCommandCancelOperation<E>
   }
+
+  /** @deprecated Use `client.experimental.integration.wellknown`. Removed in the next minor. */
+  readonly wellknown: {
+    /** @deprecated Use `client.experimental.integration.wellknown.add`. Removed in the next minor. */
+    readonly add: ExperimentalIntegrationWellknownAddOperation<E>
+  }
 }
 
 export type ExperimentalIntegrationWellknownAddInput = {
@@ -1666,6 +1705,24 @@ export type McpResourceCatalogOperation<E = never> = (
 export interface McpApi<E = never> {
   readonly list: McpListOperation<E>
   readonly resource: { readonly catalog: McpResourceCatalogOperation<E> }
+
+  /** @deprecated Use `client.experimental.mcp.add`. Removed in the next minor. */
+  readonly add: ExperimentalMcpAddOperation<E>
+
+  /** @deprecated Use `client.experimental.mcp.remove`. Removed in the next minor. */
+  readonly remove: ExperimentalMcpRemoveOperation<E>
+
+  /** @deprecated Use `client.experimental.mcp.connect`. Removed in the next minor. */
+  readonly connect: ExperimentalMcpConnectOperation<E>
+
+  /** @deprecated Use `client.experimental.mcp.disconnect`. Removed in the next minor. */
+  readonly disconnect: ExperimentalMcpDisconnectOperation<E>
+
+  /** @deprecated Use `client.experimental.mcp.client`. Removed in the next minor. */
+  readonly client: {
+    /** @deprecated Use `client.experimental.mcp.client.token`. Removed in the next minor. */
+    readonly token: ExperimentalMcpClientTokenOperation<E>
+  }
 }
 
 export type ExperimentalMcpAddInput = {
@@ -1891,6 +1948,12 @@ export type FileFindOperation<E = never> = (input: FileFindInput) => Effect.Effe
 export interface FileApi<E = never> {
   readonly list: FileListOperation<E>
   readonly find: FileFindOperation<E>
+
+  /** @deprecated Use `client.experimental.file.watch`. Removed in the next minor. */
+  readonly watch: ExperimentalFileWatchOperation<E>
+
+  /** @deprecated Use `client.experimental.file.unwatch`. Removed in the next minor. */
+  readonly unwatch: ExperimentalFileUnwatchOperation<E>
 }
 
 export type ExperimentalFileWatchInput = {
@@ -2532,6 +2595,9 @@ export type ConfigShellsOperation<E = never> = () => Effect.Effect<ConfigShellsO
 export interface ConfigApi<E = never> {
   readonly get: ConfigGetOperation<E>
   readonly shells: ConfigShellsOperation<E>
+
+  /** @deprecated Use `client.experimental.config.update`. Removed in the next minor. */
+  readonly update: ExperimentalConfigUpdateOperation<E>
 }
 
 export type ExperimentalConfigUpdateInput = { readonly shell: string | null }
@@ -2543,6 +2609,219 @@ export type ExperimentalConfigUpdateOperation<E = never> = (
 export interface ExperimentalConfigApi<E = never> {
   readonly update: ExperimentalConfigUpdateOperation<E>
 }
+
+/** @deprecated Use `ExperimentalSessionStatsInput`. Removed in the next minor. */
+export type SessionStatsInput = ExperimentalSessionStatsInput
+
+/** @deprecated Use `ExperimentalSessionStatsOutput`. Removed in the next minor. */
+export type SessionStatsOutput = ExperimentalSessionStatsOutput
+
+/** @deprecated Use `ExperimentalSessionStatsOperation`. Removed in the next minor. */
+export type SessionStatsOperation<E = never> = ExperimentalSessionStatsOperation<E>
+
+/** @deprecated Use `ExperimentalSessionImportInput`. Removed in the next minor. */
+export type SessionImportInput = ExperimentalSessionImportInput
+
+/** @deprecated Use `ExperimentalSessionImportOutput`. Removed in the next minor. */
+export type SessionImportOutput = ExperimentalSessionImportOutput
+
+/** @deprecated Use `ExperimentalSessionImportOperation`. Removed in the next minor. */
+export type SessionImportOperation<E = never> = ExperimentalSessionImportOperation<E>
+
+/** @deprecated Use `ExperimentalSessionExportInput`. Removed in the next minor. */
+export type SessionExportInput = ExperimentalSessionExportInput
+
+/** @deprecated Use `ExperimentalSessionExportOutput`. Removed in the next minor. */
+export type SessionExportOutput = ExperimentalSessionExportOutput
+
+/** @deprecated Use `ExperimentalSessionExportOperation`. Removed in the next minor. */
+export type SessionExportOperation<E = never> = ExperimentalSessionExportOperation<E>
+
+/** @deprecated Use `ExperimentalSessionSkillInput`. Removed in the next minor. */
+export type SessionSkillInput = ExperimentalSessionSkillInput
+
+/** @deprecated Use `ExperimentalSessionSkillOutput`. Removed in the next minor. */
+export type SessionSkillOutput = ExperimentalSessionSkillOutput
+
+/** @deprecated Use `ExperimentalSessionSkillOperation`. Removed in the next minor. */
+export type SessionSkillOperation<E = never> = ExperimentalSessionSkillOperation<E>
+
+/** @deprecated Use `ExperimentalSessionWaitInput`. Removed in the next minor. */
+export type SessionWaitInput = ExperimentalSessionWaitInput
+
+/** @deprecated Use `ExperimentalSessionWaitOutput`. Removed in the next minor. */
+export type SessionWaitOutput = ExperimentalSessionWaitOutput
+
+/** @deprecated Use `ExperimentalSessionWaitOperation`. Removed in the next minor. */
+export type SessionWaitOperation<E = never> = ExperimentalSessionWaitOperation<E>
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryListInput`. Removed in the next minor. */
+export type SessionInstructionsEntryListInput = ExperimentalSessionInstructionsEntryListInput
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryListOutput`. Removed in the next minor. */
+export type SessionInstructionsEntryListOutput = ExperimentalSessionInstructionsEntryListOutput
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryListOperation`. Removed in the next minor. */
+export type SessionInstructionsEntryListOperation<E = never> = ExperimentalSessionInstructionsEntryListOperation<E>
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryPutInput`. Removed in the next minor. */
+export type SessionInstructionsEntryPutInput = ExperimentalSessionInstructionsEntryPutInput
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryPutOutput`. Removed in the next minor. */
+export type SessionInstructionsEntryPutOutput = ExperimentalSessionInstructionsEntryPutOutput
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryPutOperation`. Removed in the next minor. */
+export type SessionInstructionsEntryPutOperation<E = never> = ExperimentalSessionInstructionsEntryPutOperation<E>
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryRemoveInput`. Removed in the next minor. */
+export type SessionInstructionsEntryRemoveInput = ExperimentalSessionInstructionsEntryRemoveInput
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryRemoveOutput`. Removed in the next minor. */
+export type SessionInstructionsEntryRemoveOutput = ExperimentalSessionInstructionsEntryRemoveOutput
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryRemoveOperation`. Removed in the next minor. */
+export type SessionInstructionsEntryRemoveOperation<E = never> = ExperimentalSessionInstructionsEntryRemoveOperation<E>
+
+/** @deprecated Use `ExperimentalSessionLogInput`. Removed in the next minor. */
+export type SessionLogInput = ExperimentalSessionLogInput
+
+/** @deprecated Use `ExperimentalSessionLogOutput`. Removed in the next minor. */
+export type SessionLogOutput = ExperimentalSessionLogOutput
+
+/** @deprecated Use `ExperimentalSessionLogOperation`. Removed in the next minor. */
+export type SessionLogOperation<E = never> = ExperimentalSessionLogOperation<E>
+
+/** @deprecated Use `ExperimentalGenerateTextInput`. Removed in the next minor. */
+export type GenerateTextInput = ExperimentalGenerateTextInput
+
+/** @deprecated Use `ExperimentalGenerateTextOutput`. Removed in the next minor. */
+export type GenerateTextOutput = ExperimentalGenerateTextOutput
+
+/** @deprecated Use `ExperimentalGenerateTextOperation`. Removed in the next minor. */
+export type GenerateTextOperation<E = never> = ExperimentalGenerateTextOperation<E>
+
+/** @deprecated Use `ExperimentalVoiceModelsOutput`. Removed in the next minor. */
+export type VoiceModelsOutput = ExperimentalVoiceModelsOutput
+
+/** @deprecated Use `ExperimentalVoiceModelsOperation`. Removed in the next minor. */
+export type VoiceModelsOperation<E = never> = ExperimentalVoiceModelsOperation<E>
+
+/** @deprecated Use `ExperimentalVoiceSessionInput`. Removed in the next minor. */
+export type VoiceSessionInput = ExperimentalVoiceSessionInput
+
+/** @deprecated Use `ExperimentalVoiceSessionOutput`. Removed in the next minor. */
+export type VoiceSessionOutput = ExperimentalVoiceSessionOutput
+
+/** @deprecated Use `ExperimentalVoiceSessionOperation`. Removed in the next minor. */
+export type VoiceSessionOperation<E = never> = ExperimentalVoiceSessionOperation<E>
+
+/** @deprecated Use `ExperimentalIntegrationWellknownAddInput`. Removed in the next minor. */
+export type IntegrationWellknownAddInput = ExperimentalIntegrationWellknownAddInput
+
+/** @deprecated Use `ExperimentalIntegrationWellknownAddOutput`. Removed in the next minor. */
+export type IntegrationWellknownAddOutput = ExperimentalIntegrationWellknownAddOutput
+
+/** @deprecated Use `ExperimentalIntegrationWellknownAddOperation`. Removed in the next minor. */
+export type IntegrationWellknownAddOperation<E = never> = ExperimentalIntegrationWellknownAddOperation<E>
+
+/** @deprecated Use `ExperimentalMcpAddInput`. Removed in the next minor. */
+export type McpAddInput = ExperimentalMcpAddInput
+
+/** @deprecated Use `ExperimentalMcpAddOutput`. Removed in the next minor. */
+export type McpAddOutput = ExperimentalMcpAddOutput
+
+/** @deprecated Use `ExperimentalMcpAddOperation`. Removed in the next minor. */
+export type McpAddOperation<E = never> = ExperimentalMcpAddOperation<E>
+
+/** @deprecated Use `ExperimentalMcpRemoveInput`. Removed in the next minor. */
+export type McpRemoveInput = ExperimentalMcpRemoveInput
+
+/** @deprecated Use `ExperimentalMcpRemoveOutput`. Removed in the next minor. */
+export type McpRemoveOutput = ExperimentalMcpRemoveOutput
+
+/** @deprecated Use `ExperimentalMcpRemoveOperation`. Removed in the next minor. */
+export type McpRemoveOperation<E = never> = ExperimentalMcpRemoveOperation<E>
+
+/** @deprecated Use `ExperimentalMcpConnectInput`. Removed in the next minor. */
+export type McpConnectInput = ExperimentalMcpConnectInput
+
+/** @deprecated Use `ExperimentalMcpConnectOutput`. Removed in the next minor. */
+export type McpConnectOutput = ExperimentalMcpConnectOutput
+
+/** @deprecated Use `ExperimentalMcpConnectOperation`. Removed in the next minor. */
+export type McpConnectOperation<E = never> = ExperimentalMcpConnectOperation<E>
+
+/** @deprecated Use `ExperimentalMcpDisconnectInput`. Removed in the next minor. */
+export type McpDisconnectInput = ExperimentalMcpDisconnectInput
+
+/** @deprecated Use `ExperimentalMcpDisconnectOutput`. Removed in the next minor. */
+export type McpDisconnectOutput = ExperimentalMcpDisconnectOutput
+
+/** @deprecated Use `ExperimentalMcpDisconnectOperation`. Removed in the next minor. */
+export type McpDisconnectOperation<E = never> = ExperimentalMcpDisconnectOperation<E>
+
+/** @deprecated Use `ExperimentalMcpClientTokenInput`. Removed in the next minor. */
+export type McpClientTokenInput = ExperimentalMcpClientTokenInput
+
+/** @deprecated Use `ExperimentalMcpClientTokenOutput`. Removed in the next minor. */
+export type McpClientTokenOutput = ExperimentalMcpClientTokenOutput
+
+/** @deprecated Use `ExperimentalMcpClientTokenOperation`. Removed in the next minor. */
+export type McpClientTokenOperation<E = never> = ExperimentalMcpClientTokenOperation<E>
+
+/** @deprecated Use `ExperimentalFileWatchInput`. Removed in the next minor. */
+export type FileWatchInput = ExperimentalFileWatchInput
+
+/** @deprecated Use `ExperimentalFileWatchOutput`. Removed in the next minor. */
+export type FileWatchOutput = ExperimentalFileWatchOutput
+
+/** @deprecated Use `ExperimentalFileWatchOperation`. Removed in the next minor. */
+export type FileWatchOperation<E = never> = ExperimentalFileWatchOperation<E>
+
+/** @deprecated Use `ExperimentalFileUnwatchInput`. Removed in the next minor. */
+export type FileUnwatchInput = ExperimentalFileUnwatchInput
+
+/** @deprecated Use `ExperimentalFileUnwatchOutput`. Removed in the next minor. */
+export type FileUnwatchOutput = ExperimentalFileUnwatchOutput
+
+/** @deprecated Use `ExperimentalFileUnwatchOperation`. Removed in the next minor. */
+export type FileUnwatchOperation<E = never> = ExperimentalFileUnwatchOperation<E>
+
+/** @deprecated Use `ExperimentalMigrationV1StatusOutput`. Removed in the next minor. */
+export type MigrationV1StatusOutput = ExperimentalMigrationV1StatusOutput
+
+/** @deprecated Use `ExperimentalMigrationV1StatusOperation`. Removed in the next minor. */
+export type MigrationV1StatusOperation<E = never> = ExperimentalMigrationV1StatusOperation<E>
+
+/** @deprecated Use `ExperimentalUsageLimitsInput`. Removed in the next minor. */
+export type UsageLimitsInput = ExperimentalUsageLimitsInput
+
+/** @deprecated Use `ExperimentalUsageLimitsOutput`. Removed in the next minor. */
+export type UsageLimitsOutput = ExperimentalUsageLimitsOutput
+
+/** @deprecated Use `ExperimentalUsageLimitsOperation`. Removed in the next minor. */
+export type UsageLimitsOperation<E = never> = ExperimentalUsageLimitsOperation<E>
+
+/** @deprecated Use `ExperimentalConfigUpdateInput`. Removed in the next minor. */
+export type ConfigUpdateInput = ExperimentalConfigUpdateInput
+
+/** @deprecated Use `ExperimentalConfigUpdateOutput`. Removed in the next minor. */
+export type ConfigUpdateOutput = ExperimentalConfigUpdateOutput
+
+/** @deprecated Use `ExperimentalConfigUpdateOperation`. Removed in the next minor. */
+export type ConfigUpdateOperation<E = never> = ExperimentalConfigUpdateOperation<E>
+
+/** @deprecated Use `ExperimentalGenerateApi`. Removed in the next minor. */
+export type GenerateApi<E = never> = ExperimentalGenerateApi<E>
+
+/** @deprecated Use `ExperimentalVoiceApi`. Removed in the next minor. */
+export type VoiceApi<E = never> = ExperimentalVoiceApi<E>
+
+/** @deprecated Use `ExperimentalMigrationApi`. Removed in the next minor. */
+export type MigrationApi<E = never> = ExperimentalMigrationApi<E>
+
+/** @deprecated Use `ExperimentalUsageApi`. Removed in the next minor. */
+export type UsageApi<E = never> = ExperimentalUsageApi<E>
 
 export interface AppApi<E = never> {
   readonly server: ServerApi<E>
@@ -2583,4 +2862,34 @@ export interface AppApi<E = never> {
   readonly debug: DebugApi<E>
   readonly websearch: WebsearchApi<E>
   readonly config: ConfigApi<E>
+
+  /** @deprecated Use `client.experimental.generate`. Removed in the next minor. */
+  readonly generate: {
+    /** @deprecated Use `client.experimental.generate.text`. Removed in the next minor. */
+    readonly text: ExperimentalGenerateTextOperation<E>
+  }
+
+  /** @deprecated Use `client.experimental.voice`. Removed in the next minor. */
+  readonly voice: {
+    /** @deprecated Use `client.experimental.voice.models`. Removed in the next minor. */
+    readonly models: ExperimentalVoiceModelsOperation<E>
+
+    /** @deprecated Use `client.experimental.voice.session`. Removed in the next minor. */
+    readonly session: ExperimentalVoiceSessionOperation<E>
+  }
+
+  /** @deprecated Use `client.experimental.migration`. Removed in the next minor. */
+  readonly migration: {
+    /** @deprecated Use `client.experimental.migration.v1`. Removed in the next minor. */
+    readonly v1: {
+      /** @deprecated Use `client.experimental.migration.v1.status`. Removed in the next minor. */
+      readonly status: ExperimentalMigrationV1StatusOperation<E>
+    }
+  }
+
+  /** @deprecated Use `client.experimental.usage`. Removed in the next minor. */
+  readonly usage: {
+    /** @deprecated Use `client.experimental.usage.limits`. Removed in the next minor. */
+    readonly limits: ExperimentalUsageLimitsOperation<E>
+  }
 }

@@ -480,6 +480,100 @@ describe("HttpApiCodegen.generate", () => {
     )
   })
 
+  test("keeps pre-namespace paths and type names as deprecated aliases", async () => {
+    const source = HttpApi.make("test")
+      .add(
+        HttpApiGroup.make("server.session")
+          .add(HttpApiEndpoint.get("get", "/session", { success: Schema.String }))
+          .add(
+            HttpApiEndpoint.get("stats", "/experimental/session/:sessionID/stats", {
+              params: { sessionID: Schema.String },
+              success: Schema.String,
+            }),
+          ),
+      )
+      .add(
+        HttpApiGroup.make("server.generate").add(
+          HttpApiEndpoint.post("text", "/experimental/generate/text", {
+            payload: Schema.Struct({ prompt: Schema.String }),
+            success: Schema.String,
+          }),
+        ),
+      )
+    const options = {
+      groupNames: { "server.session": "session", "server.generate": "generate" },
+      namespace: (endpoint: HttpApiEndpoint.Top) =>
+        endpoint.path.startsWith("/experimental/") ? "experimental" : undefined,
+    }
+    expect(compileContract(source, options).aliases).toBeUndefined()
+    expect(
+      emitPromise(compileContract(source, options))
+        .files.map((file) => file.content)
+        .join(""),
+    ).not.toContain("@deprecated")
+
+    const contract = compileContract(source, { ...options, aliases: true })
+    expect(contract.aliases?.map((alias) => [alias.from.join("."), alias.to.join(".")])).toEqual([
+      ["session.stats", "experimental.session.stats"],
+      ["generate.text", "experimental.generate.text"],
+    ])
+
+    const paths: Array<string> = []
+    const promise = emitPromise(contract)
+    await using emitted = await emittedModule(promise)
+    const client = emitted.module.OpenCode.make({
+      baseUrl: "https://example.com",
+      fetch: async (input: RequestInfo | URL) => {
+        paths.push(new URL(input instanceof Request ? input.url : input).pathname)
+        return Response.json("ok")
+      },
+    })
+    expect(Object.keys(client)).toEqual(["session", "experimental", "generate"])
+    expect(Object.keys(client.session)).toEqual(["get", "stats"])
+    expect(client.session.stats).toBe(client.experimental.session.stats)
+    expect(client.generate.text).toBe(client.experimental.generate.text)
+    expect(await client.session.stats({ sessionID: "a" })).toBe("ok")
+    expect(paths).toEqual(["/experimental/session/a/stats"])
+    const promiseFile = (path: string) => promise.files.find((file) => file.path === path)?.content
+    expect(promiseFile("client.ts")).toContain(
+      "/** @deprecated Use `client.experimental.generate.text`. Removed in the next minor. */",
+    )
+    expect(promiseFile("types.ts")).toContain(
+      "/** @deprecated Use `ExperimentalSessionStatsInput`. Removed in the next minor. */\nexport type SessionStatsInput = ExperimentalSessionStatsInput",
+    )
+
+    const shape = emitEffectShape(contract).files.find((file) => file.path === "api.ts")?.content
+    // The alias joins the interface of the group still at its old path, so code typed against SessionApi compiles.
+    expect(shape).toContain(
+      'export interface SessionApi<E = never> {\nreadonly "get": SessionGetOperation<E>\n\n/** @deprecated Use `client.experimental.session.stats`. Removed in the next minor. */\nreadonly "stats": ExperimentalSessionStatsOperation<E>\n}',
+    )
+    expect(shape).toContain("export type SessionStatsOperation<E = never> = ExperimentalSessionStatsOperation<E>")
+    expect(shape).toContain("export type GenerateApi<E = never> = ExperimentalGenerateApi<E>")
+    expect(shape).toContain(
+      '/** @deprecated Use `client.experimental.generate`. Removed in the next minor. */\nreadonly "generate": {',
+    )
+    expect(emitEffect(contract).files.find((file) => file.path === "client.ts")?.content).toContain(
+      'return { ...client, "session": { ...client.session, ',
+    )
+  })
+
+  test("rejects an alias that collides with a client path", () => {
+    const source = HttpApi.make("test").add(
+      HttpApiGroup.make("session")
+        .add(HttpApiEndpoint.get("stats", "/session/stats", { success: Schema.String }))
+        .add(
+          HttpApiEndpoint.get("experimentalStats", "/experimental/session/stats", {
+            success: Schema.String,
+          }).annotateMerge(OpenApi.annotations({ identifier: "experimental.session.stats" })),
+        ),
+    )
+    const namespace = (endpoint: HttpApiEndpoint.Top) =>
+      endpoint.path.startsWith("/experimental/") ? "experimental" : undefined
+
+    expect(() => compileContract(source, { namespace })).not.toThrow()
+    expect(() => compileContract(source, { namespace, aliases: true })).toThrow("Client alias collision: session.stats")
+  })
+
   test("derives nested paths from OpenAPI operation IDs", () => {
     const source = HttpApi.make("test").add(
       HttpApiGroup.make("server.session").add(

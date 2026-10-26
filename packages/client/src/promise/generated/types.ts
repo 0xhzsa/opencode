@@ -4352,3 +4352,141 @@ export type ConfigShellsOutput = Array<ConfigShellOption>
 export type ExperimentalConfigUpdateInput = { readonly shell: string | null }
 
 export type ExperimentalConfigUpdateOutput = void
+
+/** @deprecated Use `ExperimentalSessionStatsInput`. Removed in the next minor. */
+export type SessionStatsInput = ExperimentalSessionStatsInput
+
+/** @deprecated Use `ExperimentalSessionStatsOutput`. Removed in the next minor. */
+export type SessionStatsOutput = ExperimentalSessionStatsOutput
+
+/** @deprecated Use `ExperimentalSessionImportInput`. Removed in the next minor. */
+export type SessionImportInput = ExperimentalSessionImportInput
+
+/** @deprecated Use `ExperimentalSessionImportOutput`. Removed in the next minor. */
+export type SessionImportOutput = ExperimentalSessionImportOutput
+
+/** @deprecated Use `ExperimentalSessionExportInput`. Removed in the next minor. */
+export type SessionExportInput = ExperimentalSessionExportInput
+
+/** @deprecated Use `ExperimentalSessionExportOutput`. Removed in the next minor. */
+export type SessionExportOutput = ExperimentalSessionExportOutput
+
+/** @deprecated Use `ExperimentalSessionSkillInput`. Removed in the next minor. */
+export type SessionSkillInput = ExperimentalSessionSkillInput
+
+/** @deprecated Use `ExperimentalSessionSkillOutput`. Removed in the next minor. */
+export type SessionSkillOutput = ExperimentalSessionSkillOutput
+
+/** @deprecated Use `ExperimentalSessionWaitInput`. Removed in the next minor. */
+export type SessionWaitInput = ExperimentalSessionWaitInput
+
+/** @deprecated Use `ExperimentalSessionWaitOutput`. Removed in the next minor. */
+export type SessionWaitOutput = ExperimentalSessionWaitOutput
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryListInput`. Removed in the next minor. */
+export type SessionInstructionsEntryListInput = ExperimentalSessionInstructionsEntryListInput
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryListOutput`. Removed in the next minor. */
+export type SessionInstructionsEntryListOutput = ExperimentalSessionInstructionsEntryListOutput
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryPutInput`. Removed in the next minor. */
+export type SessionInstructionsEntryPutInput = ExperimentalSessionInstructionsEntryPutInput
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryPutOutput`. Removed in the next minor. */
+export type SessionInstructionsEntryPutOutput = ExperimentalSessionInstructionsEntryPutOutput
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryRemoveInput`. Removed in the next minor. */
+export type SessionInstructionsEntryRemoveInput = ExperimentalSessionInstructionsEntryRemoveInput
+
+/** @deprecated Use `ExperimentalSessionInstructionsEntryRemoveOutput`. Removed in the next minor. */
+export type SessionInstructionsEntryRemoveOutput = ExperimentalSessionInstructionsEntryRemoveOutput
+
+/** @deprecated Use `ExperimentalSessionLogInput`. Removed in the next minor. */
+export type SessionLogInput = ExperimentalSessionLogInput
+
+/** @deprecated Use `ExperimentalSessionLogOutput`. Removed in the next minor. */
+export type SessionLogOutput = ExperimentalSessionLogOutput
+
+/** @deprecated Use `ExperimentalGenerateTextInput`. Removed in the next minor. */
+export type GenerateTextInput = ExperimentalGenerateTextInput
+
+/** @deprecated Use `ExperimentalGenerateTextOutput`. Removed in the next minor. */
+export type GenerateTextOutput = ExperimentalGenerateTextOutput
+
+/** @deprecated Use `ExperimentalVoiceModelsOutput`. Removed in the next minor. */
+export type VoiceModelsOutput = ExperimentalVoiceModelsOutput
+
+/** @deprecated Use `ExperimentalVoiceSessionInput`. Removed in the next minor. */
+export type VoiceSessionInput = ExperimentalVoiceSessionInput
+
+/** @deprecated Use `ExperimentalVoiceSessionOutput`. Removed in the next minor. */
+export type VoiceSessionOutput = ExperimentalVoiceSessionOutput
+
+/** @deprecated Use `ExperimentalIntegrationWellknownAddInput`. Removed in the next minor. */
+export type IntegrationWellknownAddInput = ExperimentalIntegrationWellknownAddInput
+
+/** @deprecated Use `ExperimentalIntegrationWellknownAddOutput`. Removed in the next minor. */
+export type IntegrationWellknownAddOutput = ExperimentalIntegrationWellknownAddOutput
+
+/** @deprecated Use `ExperimentalMcpAddInput`. Removed in the next minor. */
+export type McpAddInput = ExperimentalMcpAddInput
+
+/** @deprecated Use `ExperimentalMcpAddOutput`. Removed in the next minor. */
+export type McpAddOutput = ExperimentalMcpAddOutput
+
+/** @deprecated Use `ExperimentalMcpRemoveInput`. Removed in the next minor. */
+export type McpRemoveInput = ExperimentalMcpRemoveInput
+
+/** @deprecated Use `ExperimentalMcpRemoveOutput`. Removed in the next minor. */
+export type McpRemoveOutput = ExperimentalMcpRemoveOutput
+
+/** @deprecated Use `ExperimentalMcpConnectInput`. Removed in the next minor. */
+export type McpConnectInput = ExperimentalMcpConnectInput
+
+/** @deprecated Use `ExperimentalMcpConnectOutput`. Removed in the next minor. */
+export type McpConnectOutput = ExperimentalMcpConnectOutput
+
+/** @deprecated Use `ExperimentalMcpDisconnectInput`. Removed in the next minor. */
+export type McpDisconnectInput = ExperimentalMcpDisconnectInput
+
+/** @deprecated Use `ExperimentalMcpDisconnectOutput`. Removed in the next minor. */
+export type McpDisconnectOutput = ExperimentalMcpDisconnectOutput
+
+/** @deprecated Use `ExperimentalMcpClientTokenInput`. Removed in the next minor. */
+export type McpClientTokenInput = ExperimentalMcpClientTokenInput
+
+/** @deprecated Use `ExperimentalMcpClientTokenOutput`. Removed in the next minor. */
+export type McpClientTokenOutput = ExperimentalMcpClientTokenOutput
+
+/** @deprecated Use `ExperimentalFileWriteInput`. Removed in the next minor. */
+export type FileWriteInput = ExperimentalFileWriteInput
+
+/** @deprecated Use `ExperimentalFileWriteOutput`. Removed in the next minor. */
+export type FileWriteOutput = ExperimentalFileWriteOutput
+
+/** @deprecated Use `ExperimentalFileWatchInput`. Removed in the next minor. */
+export type FileWatchInput = ExperimentalFileWatchInput
+
+/** @deprecated Use `ExperimentalFileWatchOutput`. Removed in the next minor. */
+export type FileWatchOutput = ExperimentalFileWatchOutput
+
+/** @deprecated Use `ExperimentalFileUnwatchInput`. Removed in the next minor. */
+export type FileUnwatchInput = ExperimentalFileUnwatchInput
+
+/** @deprecated Use `ExperimentalFileUnwatchOutput`. Removed in the next minor. */
+export type FileUnwatchOutput = ExperimentalFileUnwatchOutput
+
+/** @deprecated Use `ExperimentalMigrationV1StatusOutput`. Removed in the next minor. */
+export type MigrationV1StatusOutput = ExperimentalMigrationV1StatusOutput
+
+/** @deprecated Use `ExperimentalUsageLimitsInput`. Removed in the next minor. */
+export type UsageLimitsInput = ExperimentalUsageLimitsInput
+
+/** @deprecated Use `ExperimentalUsageLimitsOutput`. Removed in the next minor. */
+export type UsageLimitsOutput = ExperimentalUsageLimitsOutput
+
+/** @deprecated Use `ExperimentalConfigUpdateInput`. Removed in the next minor. */
+export type ConfigUpdateInput = ExperimentalConfigUpdateInput
+
+/** @deprecated Use `ExperimentalConfigUpdateOutput`. Removed in the next minor. */
+export type ConfigUpdateOutput = ExperimentalConfigUpdateOutput

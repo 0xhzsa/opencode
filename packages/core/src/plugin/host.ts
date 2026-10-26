@@ -116,36 +116,6 @@ export const make = Effect.fn("PluginHost.make")(function* (
     }).pipe(Effect.provide(locations.get(ref)), Effect.orDie),
   )
 
-  const experimental: Plugin.Context["experimental"] = {
-    generate: {
-      text: (input) => generate.text(input).pipe(Effect.map((text) => ({ text }))),
-    },
-    session: {
-      wait: (input) => sessions.wait(input.sessionID),
-      instructions: {
-        entry: {
-          list: Effect.fn(function* (input) {
-            yield* sessions.get(input.sessionID)
-            return yield* instructionEntries.list(input.sessionID)
-          }),
-          put: Effect.fn(function* (input) {
-            const key = yield* Schema.decodeUnknownEffect(InstructionEntry.Key)(input.key)
-            yield* sessions.get(input.sessionID)
-            yield* instructionEntries.put({ ...input, key })
-          }),
-          remove: Effect.fn(function* (input) {
-            const key = yield* Schema.decodeUnknownEffect(InstructionEntry.Key)(input.key)
-            yield* sessions.get(input.sessionID)
-            yield* instructionEntries.remove({ ...input, key })
-          }),
-        },
-      },
-    },
-    terminal: {
-      read: (input) => persistentPty.read(input.sessionID, input.lines),
-    },
-  }
-
   // Keep the instance graph's inferred types independent of Session handles.
   const context: Plugin.Context = {
     app,
@@ -308,9 +278,14 @@ export const make = Effect.fn("PluginHost.make")(function* (
         )
       }) as Plugin.Context["event"]["subscribe"],
     },
-    experimental,
-    // Deprecated pre-experimental path; removed in the next minor (.github/RELEASE_REMINDERS.md).
-    generate: experimental.generate,
+    experimental: {
+      terminal: {
+        read: (input) => persistentPty.read(input.sessionID, input.lines),
+      },
+    },
+    generate: {
+      text: (input) => generate.text(input).pipe(Effect.map((text) => ({ text }))),
+    },
     integration: {
       list: () => response(integration.list()),
       get: Effect.fn(function* (input) {
@@ -622,10 +597,26 @@ export const make = Effect.fn("PluginHost.make")(function* (
         sessions
           .interrupt(input.sessionID, { resume: input.resume })
           .pipe(Effect.map((interrupted) => ({ interrupted }))),
+      wait: (input) => sessions.wait(input.sessionID),
       context: (input) => sessions.context(input.sessionID),
-      // Deprecated pre-experimental paths; removed in the next minor (.github/RELEASE_REMINDERS.md).
-      wait: experimental.session.wait,
-      instructions: experimental.session.instructions,
+      instructions: {
+        entry: {
+          list: Effect.fn(function* (input) {
+            yield* sessions.get(input.sessionID)
+            return yield* instructionEntries.list(input.sessionID)
+          }),
+          put: Effect.fn(function* (input) {
+            const key = yield* Schema.decodeUnknownEffect(InstructionEntry.Key)(input.key)
+            yield* sessions.get(input.sessionID)
+            yield* instructionEntries.put({ ...input, key })
+          }),
+          remove: Effect.fn(function* (input) {
+            const key = yield* Schema.decodeUnknownEffect(InstructionEntry.Key)(input.key)
+            yield* sessions.get(input.sessionID)
+            yield* instructionEntries.remove({ ...input, key })
+          }),
+        },
+      },
     },
   }
   return context

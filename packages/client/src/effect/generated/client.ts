@@ -1740,47 +1740,140 @@ const adaptGroupExperimentalConfig = (raw: RawClient["server.config"]) => ({
   update: EndpointExperimentalConfigUpdate(raw),
 })
 
-const adaptClient = (raw: RawClient) => ({
-  server: adaptGroupServer(raw["server.server"]),
-  location: adaptGroupLocation(raw["server.location"]),
-  agent: adaptGroupAgent(raw["server.agent"]),
-  plugin: adaptGroupPlugin(raw["server.plugin"]),
-  session: adaptGroupSession(raw["server.session"]),
-  experimental: {
-    ...adaptGroupExperimental(raw["server.experimental"]),
-    session: adaptGroupExperimentalSession(raw["server.session"]),
-    generate: adaptGroupExperimentalGenerate(raw["server.generate"]),
-    voice: adaptGroupExperimentalVoice(raw["server.voice"]),
-    integration: adaptGroupExperimentalIntegration(raw["server.integration"]),
-    mcp: adaptGroupExperimentalMcp(raw["server.mcp"]),
-    file: adaptGroupExperimentalFile(raw["server.fs"]),
-    migration: adaptGroupExperimentalMigration(raw["server.migration"]),
-    usage: adaptGroupExperimentalUsage(raw["server.usage"]),
-    config: adaptGroupExperimentalConfig(raw["server.config"]),
-  },
-  message: adaptGroupMessage(raw["server.message"]),
-  model: adaptGroupModel(raw["server.model"]),
-  provider: adaptGroupProvider(raw["server.provider"]),
-  integration: adaptGroupIntegration(raw["server.integration"]),
-  mcp: adaptGroupMcp(raw["server.mcp"]),
-  credential: adaptGroupCredential(raw["server.credential"]),
-  project: adaptGroupProject(raw["server.project"]),
-  form: adaptGroupForm(raw["server.form"]),
-  permission: adaptGroupPermission(raw["server.permission"]),
-  file: adaptGroupFile(raw["server.fs"]),
-  command: adaptGroupCommand(raw["server.command"]),
-  skill: adaptGroupSkill(raw["server.skill"]),
-  rpc: adaptGroupRpc(raw["server.rpc"]),
-  event: adaptGroupEvent(raw["server.event"]),
-  pty: adaptGroupPty(raw["server.pty"]),
-  shell: adaptGroupShell(raw["server.shell"]),
-  reference: adaptGroupReference(raw["server.reference"]),
-  worktree: adaptGroupWorktree(raw["server.worktree"]),
-  vcs: adaptGroupVcs(raw["server.vcs"]),
-  debug: adaptGroupDebug(raw["server.debug"]),
-  websearch: adaptGroupWebsearch(raw["server.websearch"]),
-  config: adaptGroupConfig(raw["server.config"]),
-})
+const adaptClient = (raw: RawClient) => {
+  const client = {
+    server: adaptGroupServer(raw["server.server"]),
+    location: adaptGroupLocation(raw["server.location"]),
+    agent: adaptGroupAgent(raw["server.agent"]),
+    plugin: adaptGroupPlugin(raw["server.plugin"]),
+    session: adaptGroupSession(raw["server.session"]),
+    experimental: {
+      ...adaptGroupExperimental(raw["server.experimental"]),
+      session: adaptGroupExperimentalSession(raw["server.session"]),
+      generate: adaptGroupExperimentalGenerate(raw["server.generate"]),
+      voice: adaptGroupExperimentalVoice(raw["server.voice"]),
+      integration: adaptGroupExperimentalIntegration(raw["server.integration"]),
+      mcp: adaptGroupExperimentalMcp(raw["server.mcp"]),
+      file: adaptGroupExperimentalFile(raw["server.fs"]),
+      migration: adaptGroupExperimentalMigration(raw["server.migration"]),
+      usage: adaptGroupExperimentalUsage(raw["server.usage"]),
+      config: adaptGroupExperimentalConfig(raw["server.config"]),
+    },
+    message: adaptGroupMessage(raw["server.message"]),
+    model: adaptGroupModel(raw["server.model"]),
+    provider: adaptGroupProvider(raw["server.provider"]),
+    integration: adaptGroupIntegration(raw["server.integration"]),
+    mcp: adaptGroupMcp(raw["server.mcp"]),
+    credential: adaptGroupCredential(raw["server.credential"]),
+    project: adaptGroupProject(raw["server.project"]),
+    form: adaptGroupForm(raw["server.form"]),
+    permission: adaptGroupPermission(raw["server.permission"]),
+    file: adaptGroupFile(raw["server.fs"]),
+    command: adaptGroupCommand(raw["server.command"]),
+    skill: adaptGroupSkill(raw["server.skill"]),
+    rpc: adaptGroupRpc(raw["server.rpc"]),
+    event: adaptGroupEvent(raw["server.event"]),
+    pty: adaptGroupPty(raw["server.pty"]),
+    shell: adaptGroupShell(raw["server.shell"]),
+    reference: adaptGroupReference(raw["server.reference"]),
+    worktree: adaptGroupWorktree(raw["server.worktree"]),
+    vcs: adaptGroupVcs(raw["server.vcs"]),
+    debug: adaptGroupDebug(raw["server.debug"]),
+    websearch: adaptGroupWebsearch(raw["server.websearch"]),
+    config: adaptGroupConfig(raw["server.config"]),
+  }
+  return {
+    ...client,
+    session: {
+      ...client.session,
+      /** @deprecated Use `client.experimental.session.stats`. Removed in the next minor. */
+      stats: client.experimental.session.stats,
+      /** @deprecated Use `client.experimental.session.import`. Removed in the next minor. */
+      import: client.experimental.session.import,
+      /** @deprecated Use `client.experimental.session.export`. Removed in the next minor. */
+      export: client.experimental.session.export,
+      /** @deprecated Use `client.experimental.session.skill`. Removed in the next minor. */
+      skill: client.experimental.session.skill,
+      /** @deprecated Use `client.experimental.session.wait`. Removed in the next minor. */
+      wait: client.experimental.session.wait,
+      /** @deprecated Use `client.experimental.session.instructions`. Removed in the next minor. */
+      instructions: {
+        /** @deprecated Use `client.experimental.session.instructions.entry`. Removed in the next minor. */
+        entry: {
+          /** @deprecated Use `client.experimental.session.instructions.entry.list`. Removed in the next minor. */
+          list: client.experimental.session.instructions.entry.list,
+          /** @deprecated Use `client.experimental.session.instructions.entry.put`. Removed in the next minor. */
+          put: client.experimental.session.instructions.entry.put,
+          /** @deprecated Use `client.experimental.session.instructions.entry.remove`. Removed in the next minor. */
+          remove: client.experimental.session.instructions.entry.remove,
+        },
+      },
+      /** @deprecated Use `client.experimental.session.log`. Removed in the next minor. */
+      log: client.experimental.session.log,
+    },
+    /** @deprecated Use `client.experimental.generate`. Removed in the next minor. */
+    generate: {
+      /** @deprecated Use `client.experimental.generate.text`. Removed in the next minor. */
+      text: client.experimental.generate.text,
+    },
+    /** @deprecated Use `client.experimental.voice`. Removed in the next minor. */
+    voice: {
+      /** @deprecated Use `client.experimental.voice.models`. Removed in the next minor. */
+      models: client.experimental.voice.models,
+      /** @deprecated Use `client.experimental.voice.session`. Removed in the next minor. */
+      session: client.experimental.voice.session,
+    },
+    integration: {
+      ...client.integration,
+      /** @deprecated Use `client.experimental.integration.wellknown`. Removed in the next minor. */
+      wellknown: {
+        /** @deprecated Use `client.experimental.integration.wellknown.add`. Removed in the next minor. */
+        add: client.experimental.integration.wellknown.add,
+      },
+    },
+    mcp: {
+      ...client.mcp,
+      /** @deprecated Use `client.experimental.mcp.add`. Removed in the next minor. */
+      add: client.experimental.mcp.add,
+      /** @deprecated Use `client.experimental.mcp.remove`. Removed in the next minor. */
+      remove: client.experimental.mcp.remove,
+      /** @deprecated Use `client.experimental.mcp.connect`. Removed in the next minor. */
+      connect: client.experimental.mcp.connect,
+      /** @deprecated Use `client.experimental.mcp.disconnect`. Removed in the next minor. */
+      disconnect: client.experimental.mcp.disconnect,
+      /** @deprecated Use `client.experimental.mcp.client`. Removed in the next minor. */
+      client: {
+        /** @deprecated Use `client.experimental.mcp.client.token`. Removed in the next minor. */
+        token: client.experimental.mcp.client.token,
+      },
+    },
+    file: {
+      ...client.file,
+      /** @deprecated Use `client.experimental.file.watch`. Removed in the next minor. */
+      watch: client.experimental.file.watch,
+      /** @deprecated Use `client.experimental.file.unwatch`. Removed in the next minor. */
+      unwatch: client.experimental.file.unwatch,
+    },
+    /** @deprecated Use `client.experimental.migration`. Removed in the next minor. */
+    migration: {
+      /** @deprecated Use `client.experimental.migration.v1`. Removed in the next minor. */
+      v1: {
+        /** @deprecated Use `client.experimental.migration.v1.status`. Removed in the next minor. */
+        status: client.experimental.migration.v1.status,
+      },
+    },
+    /** @deprecated Use `client.experimental.usage`. Removed in the next minor. */
+    usage: {
+      /** @deprecated Use `client.experimental.usage.limits`. Removed in the next minor. */
+      limits: client.experimental.usage.limits,
+    },
+    config: {
+      ...client.config,
+      /** @deprecated Use `client.experimental.config.update`. Removed in the next minor. */
+      update: client.experimental.config.update,
+    },
+  }
+}
 
 export const make = (options?: { readonly baseUrl?: URL | string }) =>
   HttpApiClient.make(ClientApi, options).pipe(Effect.map(adaptClient))

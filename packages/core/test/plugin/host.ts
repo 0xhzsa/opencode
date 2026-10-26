@@ -12,29 +12,11 @@ import { WebSearch } from "@opencode/core/websearch"
 import { Effect, Stream } from "effect"
 
 type EventSource = ReturnType<Plugin.Context["event"]["subscribe"]>
-type Overrides = Partial<Omit<Plugin.Context, "options" | "session" | "event" | "generate">> & {
+type Overrides = Partial<Omit<Plugin.Context, "options" | "session" | "event">> & {
   readonly session?: Partial<Plugin.Context["session"]>
   readonly event?: { readonly subscribe: () => EventSource }
 }
 export function host(overrides: Overrides = {}): Plugin.Context {
-  const experimental: Plugin.Context["experimental"] = overrides.experimental ?? {
-    generate: {
-      text: () => Effect.die("unused experimental.generate.text"),
-    },
-    session: {
-      wait: () => Effect.die("unused experimental.session.wait"),
-      instructions: {
-        entry: {
-          list: () => Effect.die("unused experimental.session.instructions.entry.list"),
-          put: () => Effect.die("unused experimental.session.instructions.entry.put"),
-          remove: () => Effect.die("unused experimental.session.instructions.entry.remove"),
-        },
-      },
-    },
-    terminal: {
-      read: () => Effect.die("unused experimental.terminal.read"),
-    },
-  }
   return {
     app: overrides.app ?? { name: "test", version: "test", channel: "test" },
     location:
@@ -86,8 +68,14 @@ export function host(overrides: Overrides = {}): Plugin.Context {
       activate: () => Effect.die("unused credential.activate"),
     },
     event: { subscribe: events(overrides.event?.subscribe ?? (() => Stream.empty)) },
-    experimental,
-    generate: experimental.generate,
+    experimental: overrides.experimental ?? {
+      terminal: {
+        read: () => Effect.die("unused experimental.terminal.read"),
+      },
+    },
+    generate: overrides.generate ?? {
+      text: () => Effect.die("unused generate.text"),
+    },
     integration: overrides.integration ?? {
       list: () => Effect.die("unused integration.list"),
       get: () => Effect.die("unused integration.get"),
@@ -195,9 +183,15 @@ export function host(overrides: Overrides = {}): Plugin.Context {
       move: overrides.session?.move ?? (() => Effect.die("unused session.move")),
       synthetic: overrides.session?.synthetic ?? (() => Effect.die("unused session.synthetic")),
       interrupt: overrides.session?.interrupt ?? (() => Effect.die("unused session.interrupt")),
+      wait: overrides.session?.wait ?? (() => Effect.die("unused session.wait")),
       context: overrides.session?.context ?? (() => Effect.die("unused session.context")),
-      wait: experimental.session.wait,
-      instructions: experimental.session.instructions,
+      instructions: overrides.session?.instructions ?? {
+        entry: {
+          list: () => Effect.die("unused session.instructions.entry.list"),
+          put: () => Effect.die("unused session.instructions.entry.put"),
+          remove: () => Effect.die("unused session.instructions.entry.remove"),
+        },
+      },
     },
   }
 }

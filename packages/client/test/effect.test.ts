@@ -74,23 +74,6 @@ test("session.get returns the decoded Effect projection", async () => {
   expect(DateTime.toEpochMillis(result.time.created)).toBe(1_717_171_717_000)
 })
 
-test("pre-experimental paths stay as deprecated aliases of client.experimental", async () => {
-  const client = await OpenCode.make({ baseUrl: "http://localhost:3000" }).pipe(
-    Effect.provideService(
-      HttpClient.HttpClient,
-      HttpClient.make(() => Effect.die("unused")),
-    ),
-    Effect.runPromise,
-  )
-  expect(client.session.wait).toBe(client.experimental.session.wait)
-  expect(client.session.instructions).toBe(client.experimental.session.instructions)
-  expect(client.generate).toBe(client.experimental.generate)
-  expect(client.mcp.client).toBe(client.experimental.mcp.client)
-  expect(client.config.update).toBe(client.experimental.config.update)
-  expect(client.config.get).toBeFunction()
-  expect("write" in client.file).toBe(false)
-})
-
 test("session instructions methods use the public HTTP contract", async () => {
   const requests: Array<{ method: string; url: string; body?: unknown }> = []
   const instructions = [{ key: "review-notes", value: { text: "Check the diff", priority: 1 } }]

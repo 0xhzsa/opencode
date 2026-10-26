@@ -168,10 +168,7 @@ export type SessionDomain = Pick<
   | "update"
   | "move"
   | "context"
-> & {
-  readonly hook: ModelHooks<SessionHooks>
-  /** @deprecated Use `ctx.experimental.session.wait`. Removed in the next minor. */
-  readonly wait: ExperimentalSessionApi<unknown>["wait"]
-  /** @deprecated Use `ctx.experimental.session.instructions`. Removed in the next minor. */
-  readonly instructions: ExperimentalSessionApi<unknown>["instructions"]
-}
+> &
+  Pick<ExperimentalSessionApi<unknown>, "wait" | "instructions"> & {
+    readonly hook: ModelHooks<SessionHooks>
+  }
