@@ -141,6 +141,7 @@ export interface Interface {
   }) => Effect.Effect<SessionEnvironment.Variables | undefined, NotFoundError>
   readonly view: (input: { sessionID: SessionSchema.ID; idle: number }) => Effect.Effect<void, NotFoundError>
   readonly remove: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError>
+  readonly sequence: (sessionID: SessionSchema.ID) => Effect.Effect<number, NotFoundError>
   readonly messages: (
     input: SessionStore.MessagesInput,
   ) => Effect.Effect<SessionMessage.Info[], NotFoundError | MessageDecodeError>
@@ -429,6 +430,10 @@ const layer = Layer.effect(
               : undefined,
           },
         }
+      }),
+      sequence: Effect.fn("Session.sequence")(function* (sessionID) {
+        yield* result.get(sessionID)
+        return yield* store.sequence(sessionID)
       }),
       messages: Effect.fn("Session.messages")(function* (input) {
         yield* result.get(input.sessionID)

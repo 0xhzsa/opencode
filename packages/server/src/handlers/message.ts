@@ -49,11 +49,15 @@ export const MessageHandler = HttpApiBuilder.group(Api, "server.message", (handl
           type: ctx.query.type,
           cursor: decoded ? { id: decoded.id, direction: decoded.direction } : undefined,
         }
+        const seq = yield* session
+          .sequence(input.sessionID)
+          .pipe(Effect.catchTag("Session.NotFoundError", missingSession))
         const page = <Message extends { readonly id: SessionMessage.ID }>(messages: ReadonlyArray<Message>) => {
           const first = messages[0]
           const last = messages.at(-1)
           return {
             data: messages,
+            seq,
             cursor: {
               previous: first ? cursor.encode(first, order, "previous") : undefined,
               next: last ? cursor.encode(last, order, "next") : undefined,

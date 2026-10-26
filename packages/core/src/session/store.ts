@@ -6,6 +6,7 @@ import { Project } from "@opencode/schema/project"
 import { Workspace } from "@opencode/schema/workspace"
 import { AbsolutePath, PositiveInt, RelativePath } from "@opencode/schema/schema"
 import { Database } from "../database/database.js"
+import { Bus } from "../bus.js"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { SessionHistory } from "./history.js"
 import { MessageDecodeError } from "./error.js"
@@ -54,6 +55,7 @@ export type MessagesInput = {
 export interface Interface {
   readonly get: (sessionID: Session.ID) => Effect.Effect<Session.Info | undefined>
   readonly list: (input?: ListInput) => Effect.Effect<Session.Info[]>
+  readonly sequence: (sessionID: Session.ID) => Effect.Effect<number>
   readonly messages: (input: MessagesInput) => Effect.Effect<SessionMessage.Info[], MessageDecodeError>
   readonly context: (sessionID: Session.ID) => Effect.Effect<SessionMessage.Info[], MessageDecodeError>
   readonly message: (
@@ -185,6 +187,7 @@ const layer = Layer.effect(
         )
         return (direction === "previous" ? rows.toReversed() : rows).map((row) => fromRow(row))
       }),
+      sequence: Effect.fn("SessionStore.sequence")((sessionID) => Bus.latestSequence(db, sessionID)),
       messages: Effect.fn("SessionStore.messages")(function* (input) {
         return yield* SessionHistory.decodeMessageRows(db, yield* messageRows(input))
       }),
