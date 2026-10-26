@@ -229,6 +229,25 @@ test("keeps verified inline paths across a workspace tab switch", async ({ page 
   } finally {
     held.release()
   }
+
+  // A view that renders again, here after its tab closed, repeats the lookups. Expired positives keep their styling
+  // while revalidation is pending; negatives must discover new files.
+  await closeTab(page, sourceID)
+  await page.clock.setFixedTime(new Date("2026-10-21T00:01:01Z"))
+  const refresh = await holdRoute(page, /\/api\/fs\/find\?/)
+
+  try {
+    await reopen(page, sourceID)
+    await refresh.arrived
+    await expect(source).toHaveAttribute("data-inline-code-kind", "path")
+  } finally {
+    refresh.release()
+  }
+
+  existing.add(other)
+  await closeTab(page, targetID)
+  await reopen(page, targetID)
+  await expect(target).toHaveAttribute("data-inline-code-kind", "path")
 })
 
 test("scrolls within a long answer without mounting unrelated history", async ({ page }) => {
@@ -576,6 +595,22 @@ function placeholderHistory(id: string) {
   return { items: [{ id: `msg_${id}`, type: "user", text: `History for ${id}`, time: { created: 1 } }] } satisfies {
     items: SessionMessageInfo[]
   }
+}
+
+async function closeTab(page: Page, sessionID: string) {
+  const closing = tab(page, sessionID)
+  await closing.click({ button: "right" })
+  await page.getByRole("menuitem", { name: "Close tab", exact: true }).click()
+  await expect(closing).toBeHidden()
+}
+
+async function reopen(page: Page, sessionID: string) {
+  await page.getByRole("button", { name: "Home", exact: true }).click()
+  await page
+    .locator(
+      `[data-component="home-session-row-container"][data-session-id="${sessionID}"] [data-component="home-session-row"]`,
+    )
+    .click()
 }
 
 function tab(page: Page, sessionID: string) {
