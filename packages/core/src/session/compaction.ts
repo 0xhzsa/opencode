@@ -823,6 +823,7 @@ export const layer = Layer.effect(
         session: context.session,
         agent: context.agent.id,
         model: context.model,
+        native: context.model.compaction?.type === "native",
         tools: context.tools,
         system: base.system,
         messages: base.messages,
