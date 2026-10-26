@@ -6,25 +6,24 @@ import type { RGBA } from "@opentui/core"
 import "./spinner-renderable"
 import { SPINNER_FRAMES } from "./spinner-frames"
 import { ShimmerText } from "./shimmer-text"
-import { schedule, unschedule, type AnimationTask } from "../ui/animation"
 
 export { SPINNER_FRAMES } from "./spinner-frames"
 
 const FRAME_MS = 80
 const [tick, setTick] = createSignal(0)
-const advance: AnimationTask = (now) => {
-  setTick(Math.floor(now / FRAME_MS))
-  return true
-}
+const advance = () => setTick(Math.floor(performance.now() / FRAME_MS))
 let subscribers = 0
+let timer: ReturnType<typeof setInterval> | undefined
 
 function subscribe() {
   if (subscribers++ === 0) {
-    advance(performance.now())
-    schedule(advance)
+    advance()
+    timer = setInterval(advance, FRAME_MS)
   }
   onCleanup(() => {
-    if (--subscribers === 0) unschedule(advance)
+    if (--subscribers > 0) return
+    clearInterval(timer)
+    timer = undefined
   })
 }
 

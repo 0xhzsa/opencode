@@ -27,7 +27,7 @@ type ValueState = {
   from: number[]
 }
 
-export type AnimationTask = (now: number) => boolean
+type AnimationTask = (now: number) => boolean
 
 const tasks = new Set<AnimationTask>()
 let timer: ReturnType<typeof setInterval> | undefined
@@ -213,13 +213,13 @@ function clone<T extends AnimatableTarget>(target: T) {
   ) as T
 }
 
-export function schedule(task: AnimationTask) {
+function schedule(task: AnimationTask) {
   tasks.add(task)
   if (timer) return
   timer = setInterval(tick, 16)
 }
 
-export function unschedule(task: AnimationTask) {
+function unschedule(task: AnimationTask) {
   tasks.delete(task)
   if (tasks.size > 0 || !timer) return
   clearInterval(timer)
