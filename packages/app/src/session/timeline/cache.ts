@@ -37,9 +37,16 @@ export function createTimelineCache(
         const sessionKey = untrack(session.identity.sessionKey)
         const active = createMemo(() => visible() && session.identity.sessionKey() === key)
 
-        // A detached view retains its own inputs until it is selected again.
-        const select = <T>(read: Accessor<T>) =>
-          createMemo<T>((previous) => (active() ? read() : previous), untrack(read))
+        // A detached view retains its own inputs until it is selected again, and reads each once on creation.
+        const select = <T>(read: Accessor<T>) => {
+          const held = createMemo<{ value: T } | undefined>(
+            (previous) => (active() || !previous ? { value: read() } : previous),
+            undefined,
+            { equals: (previous, next) => previous?.value === next?.value },
+          )
+
+          return () => held()!.value
+        }
 
         // Session retention evicts the transcripts of closed sessions. A detached view would still hold the old
         // transcript and its DOM, so it goes too; reopening the session renders a new view.
@@ -59,11 +66,11 @@ export function createTimelineCache(
         const directory = select(() => data.directory)
         const sessionID = select(() => data.sessionID)
         const agents = select(() => data.agents)
+        // Local file links are not held: each view provides its own link handling for its session.
         const readImage = select(() => markdown?.readImage)
-        const openLocalFile = select(() => markdown?.openLocalFile)
-        const localFileExists = select(() => markdown?.localFileExists)
         const openSession = select(() => markdown?.openSession)
         const sessionTitle = select(() => markdown?.sessionTitle)
+        const turnDiff = select(() => data.turnDiff)
 
         // The Location's config is a query: read it in the reader and only while selected, so a pending config
         // suspends that reader as the live provider would rather than this view's owner, the whole screen.
@@ -123,7 +130,9 @@ export function createTimelineCache(
                 get shellOutput() {
                   return active() ? data.shellOutput : undefined
                 },
-                turnDiff: data.turnDiff,
+                get turnDiff() {
+                  return turnDiff()
+                },
               },
               () =>
                 provide(
@@ -131,12 +140,6 @@ export function createTimelineCache(
                   {
                     get readImage() {
                       return readImage()
-                    },
-                    get openLocalFile() {
-                      return openLocalFile()
-                    },
-                    get localFileExists() {
-                      return localFileExists()
                     },
                     get openSession() {
                       return openSession()

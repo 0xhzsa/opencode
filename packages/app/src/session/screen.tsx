@@ -268,6 +268,7 @@ function SessionScreenContent(props: {
     (source, active) => {
       // A cached timeline keeps its own session's latest object while another session is routed.
       const own = createMemo<MountedSession>((previous) => {
+        if (!active()) return previous
         const view = props.view()
 
         return view.id === source.identity.sessionID() ? view : previous

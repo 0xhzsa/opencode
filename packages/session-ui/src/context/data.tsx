@@ -91,7 +91,9 @@ export const {
       sessionHref: props.onSessionHref,
       shellRunning: props.shellRunning,
       shellOutput: props.shellOutput,
-      turnDiff: props.turnDiff,
+      get turnDiff() {
+        return props.turnDiff
+      },
     }
   },
 })

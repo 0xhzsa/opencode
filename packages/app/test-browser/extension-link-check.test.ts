@@ -65,3 +65,21 @@ test("asks again when a check comes back negative after the timeline was hidden"
     input.dispose()
   }
 })
+
+test("asks again when a check comes back negative after the timeline was hidden and shown again", async () => {
+  const answers = [Promise.withResolvers<boolean>(), Promise.withResolvers<boolean>()]
+  const input = setup(() => answers[input.asked.length - 1]!.promise)
+
+  try {
+    const pending = input.exists("src/app.ts")
+    input.setActive(false)
+    input.setActive(true)
+    answers[0]!.resolve(false)
+    await Bun.sleep(0)
+    expect(input.asked).toHaveLength(2)
+    answers[1]!.resolve(true)
+    expect(await pending).toBe(true)
+  } finally {
+    input.dispose()
+  }
+})

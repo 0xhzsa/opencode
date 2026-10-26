@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import type { SessionMessageInfo } from "@opencode/client/promise"
-import { DataContext, useData } from "@opencode/session-ui/context"
+import { DataContext, useData, type TurnDiffSource } from "@opencode/session-ui/context"
 import { MarkdownContext, useMarkdown, type ReadMarkdownImage } from "@opencode/session-ui/context/markdown"
 import {
   batch,
@@ -24,12 +24,14 @@ function setup() {
       directory: string
       visible: boolean
       deferred: boolean
+      turnDiff: string
       messages: Partial<Record<string, SessionMessageInfo[]>>
     }>({
       id: "ses_a",
       directory: "/repo",
       visible: true,
       deferred: false,
+      turnDiff: "a1",
       messages: {
         ses_a: [{ id: "msg_a", type: "user", text: "First session", time: { created: 1 } }],
         ses_b: [{ id: "msg_b", type: "user", text: "Second session", time: { created: 2 } }],
@@ -50,6 +52,18 @@ function setup() {
     const deferredReads: Record<string, string[]> = {}
     const shellOutput = async () => ({ data: { cursor: 0, size: 0, output: "" } })
     const shells: Record<string, boolean[]> = {}
+    // Turn diff sources by label, as the host binds one to the routed tab, and the labels each view saw.
+    const turnDiffSources = new Map<string, TurnDiffSource>()
+
+    const turnDiffSource = (label: string) => {
+      const source = turnDiffSources.get(label) ?? { get: () => undefined, load: () => {} }
+      turnDiffSources.set(label, source)
+
+      return source
+    }
+
+    const turnDiffs: Record<string, string[]> = {}
+    let directoryReads = 0
 
     const imageReader = createMemo(() => {
       const read: ReadMarkdownImage = async () => undefined
@@ -81,6 +95,8 @@ function setup() {
         {
           store: { session: [], session_status: {}, session_diff: {} },
           get directory() {
+            directoryReads++
+
             return state.directory
           },
           sessionID: undefined,
@@ -92,7 +108,9 @@ function setup() {
           sessionHref: undefined,
           shellRunning: undefined,
           shellOutput,
-          turnDiff: undefined,
+          get turnDiff() {
+            return turnDiffSource(state.turnDiff)
+          },
         },
         () =>
           provide(
@@ -111,7 +129,19 @@ function setup() {
       ),
     )
 
-    return { state, setState, cache, views, disposed, reads, deferredReads, shells, dispose }
+    return {
+      state,
+      setState,
+      cache,
+      views,
+      disposed,
+      reads,
+      deferredReads,
+      shells,
+      turnDiffs,
+      directoryReads: () => directoryReads,
+      dispose,
+    }
 
     function createSessionTimelineCache() {
       return createTimelineCache(
@@ -176,6 +206,11 @@ function setup() {
               (readImage && imageReaders.get(readImage)) ?? "",
               data.backgroundCompaction ? "/other" : "/repo",
             ]
+          })
+          createComputed(() => {
+            const source = data.turnDiff
+            const label = [...turnDiffSources].find((entry) => entry[1] === source)?.[0] ?? ""
+            turnDiffs[view] = [...(turnDiffs[view] ?? []), label]
           })
           createComputed(() => {
             shells[view] = [...(shells[view] ?? []), data.shellOutput === shellOutput]
@@ -378,6 +413,35 @@ test("a detached view's shells stop reading output until it is selected again", 
     input.cache()
     expect(input.shells["ses_a in /repo"]!.at(-1)).toBe(true)
     expect(input.shells["ses_b in /repo"]!.at(-1)).toBe(false)
+  } finally {
+    input.dispose()
+  }
+})
+
+test("a view follows its routed tab's turn diffs while selected and keeps them once detached", () => {
+  const input = setup()
+
+  try {
+    input.cache()
+    // The tab of a newly opened session arrives after its route.
+    input.setState("turnDiff", "a2")
+    expect(input.turnDiffs["ses_a in /repo"]!.at(-1)).toBe("a2")
+    // A child session's tab returns to its parent, whose route resolves its own tab.
+    input.setState({ id: "ses_b", turnDiff: "b1" })
+    input.cache()
+    expect(input.turnDiffs["ses_a in /repo"]!.at(-1)).toBe("a2")
+    expect(input.turnDiffs["ses_b in /repo"]!.at(-1)).toBe("b1")
+  } finally {
+    input.dispose()
+  }
+})
+
+test("reads each provider value once when a view is created", () => {
+  const input = setup()
+
+  try {
+    input.cache()
+    expect(input.directoryReads()).toBe(1)
   } finally {
     input.dispose()
   }
