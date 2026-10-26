@@ -431,27 +431,54 @@ describe("Schedule", () => {
     }),
   )
 
-  it.effect("keeps the next cron slot after now inside a DST fold", () =>
+  // On 2026-11-01 New York falls back at 06:00Z, so 1:00-1:59 runs twice: 05:00Z EDT, then 06:00Z EST.
+  const cron = (schedules: Schedule.Interface, expression: string) =>
+    schedules.create({
+      sessionID,
+      when: { type: "cron", cron: expression, tz: "America/New_York" },
+      action: { type: "prompt", prompt: expression },
+    })
+
+  it.effect("keeps a step cron firing through the repeated hour", () =>
     Effect.gen(function* () {
-      // 1:00 EDT; at 06:00Z the clocks fall back and 1:00-1:59 repeats as EST.
-      yield* setTime("2026-11-01T05:00:00Z")
+      yield* setTime("2026-11-01T05:50:00Z")
       const schedules = yield* setup()
-      const early = yield* schedules.create({
-        sessionID,
-        when: { type: "cron", cron: "*/10 * * * *", tz: "America/New_York" },
-        action: { type: "prompt", prompt: "poll" },
-      })
-      expect(iso(early.nextDueAt)).toBe("2026-11-01T05:10:00.000Z")
+      const schedule = yield* cron(schedules, "*/10 * * * *")
+      expect(iso(schedule.nextDueAt)).toBe("2026-11-01T06:00:00.000Z")
+
+      yield* setTime("2026-11-01T06:00:00Z")
+      yield* schedules.tick
+      expect(iso((yield* schedules.get(schedule.id)).nextDueAt)).toBe("2026-11-01T06:10:00.000Z")
 
       yield* setTime("2026-11-01T06:05:00Z")
+      expect(iso((yield* cron(schedules, "*/10 * * * *")).nextDueAt)).toBe("2026-11-01T06:10:00.000Z")
+      expect(iso((yield* cron(schedules, "0 * * * *")).nextDueAt)).toBe("2026-11-01T07:00:00.000Z")
+    }),
+  )
+
+  it.effect("fires a fixed-time cron once in the repeated hour", () =>
+    Effect.gen(function* () {
+      yield* setTime("2026-11-01T05:00:00Z")
+      const schedules = yield* setup()
+      const schedule = yield* cron(schedules, "30 1 * * *")
+      expect(iso(schedule.nextDueAt)).toBe("2026-11-01T05:30:00.000Z")
+
+      yield* setTime("2026-11-01T05:30:00Z")
       yield* schedules.tick
-      expect(iso((yield* schedules.get(early.id)).nextDueAt)).toBe("2026-11-01T07:00:00.000Z")
-      const inFold = yield* schedules.create({
-        sessionID,
-        when: { type: "cron", cron: "*/10 * * * *", tz: "America/New_York" },
-        action: { type: "prompt", prompt: "poll" },
-      })
-      expect(iso(inFold.nextDueAt)).toBe("2026-11-01T07:00:00.000Z")
+      expect(iso((yield* schedules.get(schedule.id)).nextDueAt)).toBe("2026-11-02T06:30:00.000Z")
+
+      yield* setTime("2026-11-01T06:05:00Z")
+      expect(iso((yield* cron(schedules, "30 1 * * *")).nextDueAt)).toBe("2026-11-02T06:30:00.000Z")
+    }),
+  )
+
+  it.effect("moves cron past the skipped hour when clocks spring forward", () =>
+    Effect.gen(function* () {
+      // On 2026-03-08 New York jumps from 2:00 EST to 3:00 EDT at 07:00Z.
+      yield* setTime("2026-03-08T06:55:00Z")
+      const schedules = yield* setup()
+      expect(iso((yield* cron(schedules, "*/10 * * * *")).nextDueAt)).toBe("2026-03-08T07:00:00.000Z")
+      expect(iso((yield* cron(schedules, "30 2 * * *")).nextDueAt)).toBe("2026-03-08T07:30:00.000Z")
     }),
   )
 

@@ -59,7 +59,10 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Sc
 
 type Row = typeof ScheduleTable.$inferSelect
 
-const MIN_INTERVAL = 60_000
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+const DAY = 24 * HOUR
+const MIN_INTERVAL = MINUTE
 /** A firing this far past its due time is marked late. */
 const LATE_AFTER = 60_000
 /** The loop re-reads the table at least this often, so clock jumps and missed doorbells are caught. */
@@ -93,17 +96,38 @@ const parseAt = (input: string, zone: DateTime.TimeZone) => {
 const cronNext = Option.liftThrowable(Cron.next)
 
 /**
- * The first slot strictly after `now`, or undefined if the expression never matches a date. In a DST fall-back fold
- * Cron.next maps the repeated hour to its first occurrence, which is already past, so step forward until a slot lands
- * after `now`.
+ * Cron.next keeps only the first occurrence of wall-clock times that repeat when clocks fall back. Inside the repeated
+ * hour it maps back to that first occurrence, which is already past, so step forward until a slot lands after `now`.
  */
-const nextCron = (cron: Cron.Cron, now: number) => {
-  for (let cursor = now; cursor < now + 86_400_000; cursor += 60_000) {
+const firstOccurrence = (cron: Cron.Cron, now: number) => {
+  for (let cursor = now; cursor < now + DAY; cursor += MINUTE) {
     const next = cronNext(cron, new Date(cursor))
     if (Option.isNone(next)) return undefined
     if (next.value.getTime() > now) return next.value.getTime()
   }
   return undefined
+}
+
+/** Whether the minute or hour field is a wildcard or step, which standard cron keeps running through a repeated hour. */
+const repeatsInFold = (expression: string) => {
+  const fields = expression.trim().split(/\s+/)
+  const [minute, hour] = fields.length === 6 ? fields.slice(1) : fields
+  return minute?.startsWith("*") === true || hour?.startsWith("*") === true
+}
+
+/**
+ * The first slot strictly after `now`, or undefined if the expression never matches a date. Like standard cron, a
+ * fixed-time job fires once on the first occurrence of a repeated hour, while a wildcard or step job keeps firing
+ * through it, so for those scan the next two hours of real minutes for a match that Cron.next skipped.
+ */
+const nextCron = (expression: string, cron: Cron.Cron, now: number) => {
+  const first = firstOccurrence(cron, now)
+  if (!repeatsInFold(expression)) return first
+  const second = cron.seconds.values().next().value ?? 0
+  const end = Math.min(first ?? Infinity, now + 2 * HOUR)
+  for (let at = Math.floor(now / MINUTE) * MINUTE + second * 1000; at < end; at += MINUTE)
+    if (at > now && Cron.match(cron, new Date(at))) return at
+  return first
 }
 
 /** The first slot strictly after `now`, or undefined for one-shots. */
@@ -119,7 +143,7 @@ const following = (row: Pick<Row, "when" | "tz" | "next_due_at">, now: number) =
       return due + (Math.floor((now - due) / every) + 1) * every
     }
     case "cron":
-      return nextCron(Cron.parseUnsafe(row.when.cron, row.tz), now)
+      return nextCron(row.when.cron, Cron.parseUnsafe(row.when.cron, row.tz), now)
   }
 }
 
@@ -346,7 +370,7 @@ const layer = Layer.effect(
           if (Result.isFailure(cron)) return yield* new InvalidError({ reason: cron.failure.message })
           if (cron.success.seconds.size !== 1)
             return yield* new InvalidError({ reason: "cron must fire at most once a minute" })
-          const next = nextCron(cron.success, now)
+          const next = nextCron(when.cron, cron.success, now)
           if (next === undefined) return yield* new InvalidError({ reason: `cron never fires: ${when.cron}` })
           return next
         }
