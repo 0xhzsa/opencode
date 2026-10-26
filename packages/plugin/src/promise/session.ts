@@ -137,13 +137,36 @@ export interface SessionRetry {
 }
 
 /**
+ * Background work still running for the idle Session or one of its descendants. `sessionID` is
+ * the Session that owns the job: the idle Session itself, or a descendant such as a subagent child.
+ */
+export type SessionIdleBackground =
+  | {
+      readonly kind: "shell"
+      readonly sessionID: Session.ID
+      readonly shellID: string
+      readonly command: string
+    }
+  | {
+      readonly kind: "subagent"
+      readonly sessionID: Session.ID
+      readonly childSessionID: Session.ID
+      readonly agent: string
+      readonly description: string
+    }
+
+/**
  * Runs when a Session finishes model work and has no pending input, just before it goes idle.
  * It does not run after interruption, failure, or control-only work such as a manual compaction.
  * Input admitted by the hook, such as a synthetic message, runs in the same execution instead
  * of the Session going idle.
+ *
+ * `background` lists work that is still running. When it finishes, its notice wakes the Session
+ * and the hook runs again, so a plugin that waits for background work can simply return.
  */
 export interface SessionIdle {
   readonly sessionID: Session.ID
+  readonly background: ReadonlyArray<SessionIdleBackground>
 }
 
 export interface SessionHooks {

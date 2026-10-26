@@ -34,6 +34,7 @@ import { EventTable } from "@opencode/core/event/sql"
 import { Project } from "@opencode/core/project"
 import { ProjectTable } from "@opencode/core/project/sql"
 import { Form } from "@opencode/core/form"
+import { Job } from "@opencode/core/job"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
 import { Snapshot } from "@opencode/core/snapshot"
@@ -472,6 +473,7 @@ const layer = Layer.unwrap(
         Model.node,
         Tool.node,
         PluginHooks.node,
+        Job.node,
         echoNode,
         SessionRunnerModel.node,
         InstructionBuiltIns.node,
@@ -501,13 +503,14 @@ const it = testEffect(layer)
 const sessionID = Session.ID.make("ses_runner_test")
 const otherSessionID = Session.ID.make("ses_runner_other")
 
-const insertSession = (id: Session.ID) =>
+const insertSession = (id: Session.ID, parentID?: Session.ID) =>
   Effect.gen(function* () {
     const { db } = yield* Database.Service
     yield* db
       .insert(SessionTable)
       .values({
         id,
+        parent_id: parentID,
         project_id: Project.ID.global,
         slug: id,
         directory: "/project",
@@ -1197,6 +1200,62 @@ describe("SessionRunnerLLM", () => {
 
     expect(s.requests).toHaveLength(2)
     expect(idles).toEqual([2])
+  })
+
+  scenario("passes background work of the session and its descendants to the idle hook", function* (s) {
+    const jobs = yield* Job.Service
+    const hooks = yield* PluginHooks.Service
+    const childID = Session.ID.make("ses_runner_child")
+    yield* insertSession(childID, sessionID)
+    yield* insertSession(otherSessionID)
+    const background = (recovery: Job.Recovery, id: string) =>
+      jobs.start({ id, type: recovery.kind, recovery, run: Effect.never }).pipe(Effect.andThen(jobs.background(id)))
+    yield* background({ kind: "shell", sessionID, shellID: "shell-own", command: "bun dev" }, "shell-own")
+    yield* background(
+      {
+        kind: "subagent",
+        parentSessionID: sessionID,
+        childSessionID: childID,
+        agent: "explore",
+        description: "Find callers",
+      },
+      childID,
+    )
+    yield* background({ kind: "shell", sessionID: childID, shellID: "shell-child", command: "bun test" }, "shell-child")
+    yield* background(
+      { kind: "shell", sessionID: otherSessionID, shellID: "shell-other", command: "bun build" },
+      "shell-other",
+    )
+    // Blocking work is not background work: only jobs moved to the background count.
+    yield* jobs.start({
+      id: "shell-blocking",
+      type: "shell",
+      recovery: { kind: "shell", sessionID, shellID: "shell-blocking", command: "sleep 10" },
+      run: Effect.never,
+    })
+    const events: SessionHooks["idle"][] = []
+    yield* hooks.register("session", "idle", (event) => Effect.sync(() => events.push(event)))
+    yield* s.llm.push(TestLLM.text("Waiting on background work", "text-waiting"))
+
+    yield* s.runPrompt("Start")
+
+    expect(events).toHaveLength(1)
+    expect(events[0]?.background).toEqual([
+      { kind: "shell", sessionID, shellID: "shell-own", command: "bun dev" },
+      { kind: "subagent", sessionID, childSessionID: childID, agent: "explore", description: "Find callers" },
+      { kind: "shell", sessionID: childID, shellID: "shell-child", command: "bun test" },
+    ])
+  })
+
+  scenario("passes no background work to the idle hook when none is running", function* (s) {
+    const hooks = yield* PluginHooks.Service
+    const events: SessionHooks["idle"][] = []
+    yield* hooks.register("session", "idle", (event) => Effect.sync(() => events.push(event)))
+    yield* s.llm.push(TestLLM.text("Done", "text-done"))
+
+    yield* s.runPrompt("Start")
+
+    expect(events).toEqual([{ sessionID, background: [] }])
   })
 
   scenario("keeps idle hook input pending across a compaction admitted with it", function* (s) {

@@ -11,6 +11,8 @@ import { SessionCompaction } from "../compaction.js"
 import { SessionContext } from "../context.js"
 import { SessionEvent } from "../event.js"
 import { SessionInbox } from "../inbox.js"
+import { SessionBackground } from "../background.js"
+import { Job } from "../../job.js"
 import { SessionHistory } from "../history.js"
 import { SessionModelRequest } from "../model-request.js"
 import { SessionModelTransport } from "../model-transport.js"
@@ -50,6 +52,7 @@ const layer = Layer.effect(
     const compaction = yield* SessionCompaction.Service
     const plugins = yield* Plugin.Service
     const hooks = yield* PluginHooks.Service
+    const jobs = yield* Job.Service
     const title = yield* SessionTitle.Service
     const steps = yield* SessionStep.make
     // Title generation starts once input is visible and must not delay model execution.
@@ -163,7 +166,11 @@ const layer = Layer.effect(
                 // Control-only drains such as a manual compaction never ran the model, so they skip the hook.
                 if (pending || !stepped) return DrainResult.Complete()
                 // The Session would go idle; a plugin may admit input to keep this execution working.
-                yield* restore(hooks.trigger("session", "idle", { sessionID }))
+                yield* restore(
+                  SessionBackground.outstanding(jobs, store, sessionID).pipe(
+                    Effect.flatMap((background) => hooks.trigger("session", "idle", { sessionID, background })),
+                  ),
+                )
                 if (!(yield* SessionInbox.has(db, sessionID, "input"))) return DrainResult.Complete()
                 continue
               }
@@ -434,6 +441,7 @@ export const node = makeLocationNode({
     SessionCompaction.node,
     Plugin.node,
     PluginHooks.node,
+    Job.node,
     SessionTitle.node,
     Snapshot.node,
     ToolOutput.node,
