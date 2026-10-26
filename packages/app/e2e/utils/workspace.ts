@@ -140,7 +140,9 @@ export async function openWorktreeDraft(page: Page, input: WorkspaceInput & { dr
   await expect(editor).toBeVisible({ timeout: APP_READY_TIMEOUT })
   await newSessionLocation(page).click()
   // The dialog opens on projects; → lists the current project's worktrees.
-  await page.keyboard.press("ArrowRight")
+  const search = page.getByRole("combobox", { name: "Search projects", exact: true })
+  await expect(search).toBeFocused()
+  await search.press("ArrowRight")
   await page.getByRole("option", { name: /^New worktree/ }).click()
   await expect(newSessionLocation(page)).toContainText("New worktree")
   await expect(editor).toBeEditable()

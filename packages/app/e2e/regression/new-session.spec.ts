@@ -51,6 +51,29 @@ test("the new session screen does not show session details", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Session details", exact: true })).toHaveCount(0)
 })
 
+for (const row of [
+  {
+    name: "POSIX",
+    directory: "/Users/alice/.local/share/opencode/worktree/123456/my-project",
+    pattern: /^\/Users\/.*…\/123456\/my-project$/,
+  },
+  {
+    name: "Windows",
+    directory: "C:\\Users\\alice\\Documents\\opencode\\worktree\\123456\\my-project",
+    pattern: /^C:\\.*…\\123456\\my-project$/,
+  },
+]) {
+  test(`the location path keeps its start and final two segments on ${row.name}`, async ({ page }) => {
+    await page.setViewportSize({ width: 600, height: 700 })
+    await openDraft(page, { name: "A project with a long name", directory: row.directory })
+    const path = page.locator('[data-slot="new-session-location-path"]')
+    await expect(path).toHaveText(row.pattern)
+    await expect.poll(() => path.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+    await path.hover()
+    await expect(page.getByRole("tooltip")).toHaveText(row.directory)
+  })
+}
+
 test("the combined location picker shows checkout branches and chooses the base for a new worktree", async ({
   page,
 }) => {
@@ -60,7 +83,7 @@ test("the combined location picker shows checkout branches and chooses the base 
 
   const view = await openWorktreeDraft(page, {
     name: "BranchContext",
-    project: { name: "OpenCode" },
+    project: { name: "Custom project" },
     vcs: (directory) => ({
       current: directory === existing ? "model-picker-dialog" : "timeline-quotes",
       default: "main",
@@ -116,7 +139,12 @@ test("the combined location picker shows checkout branches and chooses the base 
   await select(/^stellar-orchid /)
   await expect(screen.getByText("model-picker-dialog", { exact: true })).toBeVisible()
   await expect(screen.getByRole("button", { name: /from / })).toHaveCount(0)
-  await select(/^BranchContext /)
+  await newSessionLocation(page).click()
+  await page.getByRole("combobox", { name: "Search projects", exact: true }).press("ArrowRight")
+  await page.getByRole("combobox", { name: "Search worktrees", exact: true }).fill("Custom project")
+  await expect(page.getByRole("option")).toHaveCount(1)
+  await page.getByRole("option", { name: /Custom project C:\/OpenCode\/BranchContext/ }).click()
+  await expect(view.editor).toBeFocused()
   await expect(screen.getByText("timeline-quotes", { exact: true })).toBeVisible()
   await expect(screen.getByRole("button", { name: /from / })).toHaveCount(0)
   await select(/^New worktree/)
@@ -536,9 +564,7 @@ test("executes a selected slash command after creating its worktree", async ({ p
   expect(mock.prompts).toEqual([])
 })
 
-test("the location dialog lists every ready server's projects in one list and tags the remote ones", async ({
-  page,
-}) => {
+test("the location dialog separates added projects from server projects and tags the remote ones", async ({ page }) => {
   const apollo = "http://apollo.test:4096"
 
   const entry = (id: string, directory: string, active: number) =>
@@ -584,41 +610,37 @@ test("the location dialog lists every ready server's projects in one list and ta
   const search = dialog.getByRole("combobox")
   await expect(search).toBeFocused()
   const options = dialog.getByRole("option")
-  const add = options.filter({ hasText: "Add project" })
+  const add = options.filter({ hasText: "Open project…" })
   const rows = options.filter({ has: page.locator(".new-session-location-name") })
   const names = options.locator(".new-session-location-name")
   const paths = options.locator(".command-palette-description")
-  const chip = dialog.getByRole("button", { name: "Back to projects", exact: true })
-  const heading = dialog.getByText("Projects", { exact: true })
-  const addButton = dialog.getByRole("button", { name: "Add project", exact: true })
-  // Used projects first, then the rest, each by recent activity across servers; only remote ones carry a tag.
-  await expect(names).toHaveText(["opencodeapollo", "opencode", "console", "sstapollo"])
-  await expect(paths).toHaveText(["/home/dax/opencode", "C:/work/opencode", "C:/work/console", "/home/dax/sst"])
-  // "Add project" is the first row of the scrolling list, above the Projects heading, yet the first project is still
-  // the opening row, not the draft's current project (the second row).
-  await expect(dialog.locator("[data-scrollable]").getByRole("option").first()).toHaveText("Add project")
-  await expect(rows).toHaveCount(4)
-  await expect
-    .poll(async () => {
-      const row = await add.boundingBox()
-      const title = await heading.boundingBox()
-
-      return row && title ? row.y + row.height <= title.y : false
-    })
-    .toBe(true)
-  await expect(rows.nth(0)).toHaveAttribute("aria-selected", "true")
-  // The search field also ends with an "Add project" button, next in the Tab order.
-  await page.keyboard.press("Tab")
-  await expect(addButton).toBeFocused()
-  await search.focus()
+  const back = dialog.getByRole("button", { name: "Back to projects", exact: true })
+  // Only the projects added to this client open expanded; other ready-server projects remain discoverable.
+  await expect(names).toHaveText(["opencodeapollo", "opencode"])
+  await expect(paths).toHaveText(["/home/dax/opencode", "C:/work/opencode"])
+  const others = options.filter({ hasText: "Other projects" })
+  await expect(others).toBeVisible()
+  await expect(others.locator(".new-session-location-count")).toHaveText("2")
+  await expect(dialog.locator(".command-palette-group-title")).toHaveCount(0)
+  await expect(options.locator(".command-palette-title")).toHaveText([
+    "opencode",
+    "opencode",
+    "Other projects",
+    "Open project…",
+  ])
+  // It opens on the first row, not on the draft's current project (the second row).
+  await expect(options.nth(0)).toHaveAttribute("aria-selected", "true")
 
   // The picker shares the palette's full-width search, compact rows, and single-line titles.
-  await expect(rows.nth(0)).toHaveCSS("height", "36px")
-  await expect(rows.nth(0)).toHaveCSS("display", "flex")
+  await expect(options.nth(0)).toHaveCSS("height", "28px")
+  await expect(dialog.locator(".palette-menu-search [data-component='text-input-v2']")).toHaveCSS("height", "28px")
+  await expect(dialog.locator(".new-session-location-hints")).toHaveCount(0)
+  await expect(dialog.locator("..")).toHaveCSS("width", "480px")
+  await expect(options.nth(0)).toHaveCSS("display", "flex")
   await expect(names.nth(0).locator(".command-palette-title")).toHaveCSS("font-size", "13px")
   await expect(names.nth(0).locator(".command-palette-title")).toHaveCSS("white-space", "nowrap")
   await expect(rows.nth(0)).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
-  // "Add project" shares the project rows' width and icon column.
+  // "Open project…" shares the project rows' width and icon column.
   await expect
     .poll(async () => {
       const field = await dialog.locator('[data-component="text-input-v2"]').boundingBox()
@@ -633,59 +655,65 @@ test("the location dialog lists every ready server's projects in one list and ta
     })
     .toBeLessThanOrEqual(1)
 
-  // Searching narrows the projects and keeps "Add project" first; with no match it is the active row.
+  await others.click()
+  await expect(names).toHaveText(["console", "sstapollo"])
+  await expect(back).toHaveText("Other projects")
+  await search.fill("no-project-matches")
+  await expect(options).toHaveCount(0)
+  await expect(back).toBeVisible()
+  await search.fill("")
+  await expect(names).toHaveText(["console", "sstapollo"])
+  await search.press("ArrowLeft")
+  await expect(names).toHaveText(["opencodeapollo", "opencode"])
+  await search.press("ArrowRight")
+  await expect(names).toHaveText(["console", "sstapollo"])
+  await search.press("Backspace")
+  await search.press("Enter")
+  await expect(names).toHaveText(["console", "sstapollo"])
+  await search.press("Escape")
+  await expect(names).toHaveText(["opencodeapollo", "opencode"])
+  await others.click()
+  await back.click()
+  await expect(names).toHaveText(["opencodeapollo", "opencode"])
+
   await search.fill("apollo")
   await expect(names).toHaveText(["opencodeapollo", "sstapollo"])
-  await expect(options.first()).toHaveText("Add project")
-  await search.fill("nothing matches")
-  await expect(options).toHaveText(["Add project"])
-  await expect(add).toHaveAttribute("aria-selected", "true")
-  await expect(heading).toHaveCount(0)
+  await expect(dialog.locator(".command-palette-group-title")).toHaveText("Other projects")
 
-  // The worktree step keeps the server's tag beside the project.
+  // The worktree step keeps the project's avatar and server tag in its main-checkout row.
   await search.fill("opencode")
   await expect(paths).toHaveText(["/home/dax/opencode", "C:/work/opencode"])
   await expect(rows.nth(0)).toHaveAttribute("aria-selected", "true")
   await page.keyboard.press("ArrowRight")
-  // The worktree step has no "Add project".
+  // The worktree step has no "Open project…".
   await expect(add).toHaveCount(0)
-  await expect(addButton).toHaveCount(0)
-  await expect(chip).toContainText("opencode")
-  await expect(chip.locator('[data-component="tag"]')).toHaveText("apollo")
+  await expect(back).toHaveText("Run session in")
+  await expect(options.nth(0).locator('[data-component="tag"]')).toHaveText("apollo")
   await expect(options.locator(".command-palette-title")).toHaveText(["opencode", "New worktree", "opencode-beta"])
+  await expect(dialog.getByRole("separator")).toHaveCount(1)
+  await search.fill("opencode-beta")
+  await expect(options).toHaveCount(1)
+  await expect(dialog.getByRole("separator")).toHaveCount(0)
+  await search.fill("no-worktree-matches")
+  await expect(options).toHaveCount(0)
+  await expect(dialog.getByRole("separator")).toHaveCount(0)
+  await search.fill("")
   await expect(options.nth(0)).toHaveAttribute("aria-selected", "true")
-  // The chip's avatar sits on the same column as the row icons below it.
-  await expect
-    .poll(async () => {
-      const avatar = await chip.locator('[data-component="project-avatar-v2"]').boundingBox()
-      const icon = await options.nth(0).locator(".command-palette-row-icon").boundingBox()
-
-      return avatar && icon ? Math.abs(avatar.x - icon.x) : Infinity
-    })
-    .toBeLessThanOrEqual(0.5)
   await page.keyboard.press("Backspace")
   await expect(search).toHaveValue("opencode")
   await expect(rows.nth(0)).toHaveAttribute("aria-selected", "true")
 
-  // ArrowUp from the first project reaches "Add project" above it; adding a project picks one of the ready servers
-  // first, then browses that server.
+  // Adding a project picks one of the ready servers first, then browses that server.
   await search.fill("")
   await expect(rows.nth(0)).toHaveAttribute("aria-selected", "true")
   await page.keyboard.press("ArrowUp")
-  await expect(add).toHaveAttribute("aria-selected", "true")
-  await page.keyboard.press("ArrowDown")
-  await expect(rows.nth(0)).toHaveAttribute("aria-selected", "true")
-  await page.keyboard.press("ArrowUp")
-  await page.keyboard.press("ArrowRight")
-  await expect(chip).toHaveText("Add project")
-  await expect(addButton).toHaveCount(0)
-  // The search field's button starts the same flow.
-  await page.keyboard.press("Backspace")
-  await expect(addButton).toBeVisible()
-  await page.keyboard.press("Tab")
-  await page.keyboard.press("Enter")
-  await expect(chip).toHaveText("Add project")
+  await expect(options.nth(3)).toHaveAttribute("aria-selected", "true")
+  await page.keyboard.press((await page.evaluate(() => navigator.platform.includes("Mac"))) ? "Meta+o" : "Control+o")
+  await expect(back).toHaveText("Servers")
   // The server the app runs beside shows its hostname and "This computer" instead of its address.
+  await expect(options).toHaveText(["hailmaryThis computer", "apollo"])
+  await back.click()
+  await options.filter({ hasText: "Open project…" }).click()
   await expect(options).toHaveText(["hailmaryThis computer", "apollo"])
   await options.filter({ hasText: "apollo" }).click()
   await expect(page.getByRole("button", { name: "Select folder", exact: true })).toBeEnabled()

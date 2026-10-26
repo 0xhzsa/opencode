@@ -37,7 +37,7 @@ export function NewSessionBranch(props: { workspace: NewSessionWorkspaceControll
           when={creating()}
           fallback={
             <div class="flex h-7 min-w-0 max-w-[220px] items-center gap-1.5 ps-1.5 pe-2 text-v2-text-text-faint">
-              <Icon name="branch" size="small" class="shrink-0 text-v2-icon-icon-faint" />
+              <Icon name="branch" size="small" class="shrink-0 text-v2-icon-icon-muted" />
               <span ref={observe} dir="auto" class="min-w-0 truncate">
                 {label()}
               </span>
