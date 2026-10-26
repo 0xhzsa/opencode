@@ -233,7 +233,8 @@ export const Plugin = define({
     )
 
     // An active goal only sits idle while it waits on background work, whose notice wakes the Session. If nothing has
-    // run for WAIT_LIMIT (a hung subagent, a shell that never exits, a missed wake), pause instead of staying active.
+    // run in the Session or below it for WAIT_LIMIT (a hung subagent, a shell that never exits, a missed wake), pause
+    // instead of staying active.
     const timers = yield* FiberMap.make<string>()
     const watch = (sessionID: Session.ID) =>
       read(sessionID).pipe(
@@ -260,6 +261,17 @@ export const Plugin = define({
         ),
       )
 
+    // A subagent's executions carry its own Session ID, so a step anywhere below a waiting goal restarts its timer.
+    // Otherwise a healthy subagent working past WAIT_LIMIT would pause the goal it works for.
+    const touch = Effect.fn("GoalPlugin.touch")(function* (sessionID: Session.ID) {
+      if ((yield* FiberMap.size(timers)) === 0) return
+      let current = (yield* ctx.session.get({ sessionID })).parentID
+      while (current !== undefined) {
+        if (yield* FiberMap.has(timers, current)) return yield* watch(current)
+        current = (yield* ctx.session.get({ sessionID: current })).parentID
+      }
+    })
+
     yield* ctx.event
       .subscribe({
         types: [
@@ -267,11 +279,17 @@ export const Plugin = define({
           "session.execution.succeeded",
           "session.execution.interrupted",
           "session.execution.failed",
+          "session.step.started",
+          "session.step.ended",
         ],
       })
       .pipe(
         Stream.runForEach((event) => {
           const sessionID = event.data.sessionID
+          if (event.type === "session.step.started" || event.type === "session.step.ended")
+            return touch(sessionID).pipe(
+              Effect.catchCause((cause) => Effect.logWarning("failed to note goal activity", { sessionID, cause })),
+            )
           if (event.type === "session.execution.started") return FiberMap.remove(timers, sessionID)
           if (event.type === "session.execution.succeeded")
             return watch(sessionID).pipe(

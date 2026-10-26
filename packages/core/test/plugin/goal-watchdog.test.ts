@@ -12,8 +12,14 @@ import { it } from "../lib/effect"
 import { host } from "./host"
 
 const sessionID = Session.ID.make("ses_goal_watchdog")
+// A subagent working for the goal Session, and the subagent's own subagent.
+const child = Session.ID.make("ses_goal_watchdog_child")
+const grandchild = Session.ID.make("ses_goal_watchdog_grandchild")
+const unrelated = Session.ID.make("ses_goal_watchdog_unrelated")
+const parents: Record<string, Session.ID | undefined> = { [child]: sessionID, [grandchild]: child }
 
 type Execution = SessionEvent.Execution.Started | SessionEvent.Execution.Succeeded
+type Watched = Execution | SessionEvent.Step.Started
 
 const execution = (type: Execution["type"]): Execution => ({
   id: Event.ID.create(),
@@ -23,25 +29,30 @@ const execution = (type: Execution["type"]): Execution => ({
   data: { sessionID },
 })
 
+// SAFETY: the plugin reads only the type and Session ID of a step event.
+const step = (stepSessionID: Session.ID) =>
+  ({ type: "session.step.started", data: { sessionID: stepSessionID } }) as unknown as SessionEvent.Step.Started
+
 /** Runs the goal plugin against stubbed domains: one Session whose metadata the plugin reads and writes. */
 const run = Effect.fnUntraced(function* (metadata: Record<string, unknown> = {}) {
   const state = { metadata }
-  const events = yield* Queue.unbounded<Execution>()
+  const events = yield* Queue.unbounded<Watched>()
   const commands: CommandDefinition[] = []
   const hooks = new Map<string, (event: unknown) => Effect.Effect<void>>()
-  const info = () =>
-    // SAFETY: the plugin reads only the id, title, creation time and metadata of a Session.
+  const info = (id: Session.ID = sessionID) =>
+    // SAFETY: the plugin reads only the id, parent, title, creation time and metadata of a Session.
     ({
-      id: sessionID,
+      id,
+      parentID: parents[id],
       title: "Release",
       time: { created: DateTime.makeUnsafe(0) },
-      metadata: state.metadata,
+      metadata: id === sessionID ? state.metadata : {},
     }) as unknown as Session.Info
   const session: Partial<Plugin.Context["session"]> = {
     // SAFETY: tests call the captured hooks with the event fields the plugin reads.
     hook: ((name: string, callback: (event: unknown) => Effect.Effect<void>) =>
       Effect.sync(() => void hooks.set(name, callback))) as never,
-    get: () => Effect.sync(info),
+    get: (input) => Effect.sync(() => info(input.sessionID)),
     // SAFETY: the startup sweep reads only `data`.
     list: () => Effect.sync(() => ({ data: [info()], cursor: {} })) as never,
     update: (input) =>
@@ -74,6 +85,8 @@ const run = Effect.fnUntraced(function* (metadata: Record<string, unknown> = {})
     hook: (name: string, event: unknown) => hooks.get(name)?.(event) ?? Effect.die(`no ${name} hook`),
     emit: (type: Execution["type"]) =>
       Queue.offer(events, execution(type)).pipe(Effect.andThen(Effect.yieldNow), Effect.andThen(Effect.yieldNow)),
+    step: (stepSessionID: Session.ID) =>
+      Queue.offer(events, step(stepSessionID)).pipe(Effect.andThen(Effect.yieldNow), Effect.andThen(Effect.yieldNow)),
   }
 })
 
@@ -116,6 +129,30 @@ describe("goal plugin waiting", () => {
 
       yield* plugin.emit("session.execution.succeeded")
       yield* TestClock.adjust(GoalPlugin.WAIT_LIMIT)
+      expect(plugin.goal()).toMatchObject({
+        status: "paused",
+        reason: "Nothing ran for 30 minutes while the goal waited on background work",
+      })
+    }),
+  )
+
+  it.effect("keeps waiting while a descendant Session keeps running steps", () =>
+    Effect.gen(function* () {
+      const plugin = yield* run()
+      yield* plugin.command("Ship the release")
+      yield* plugin.emit("session.execution.succeeded")
+
+      // A subagent below the goal Session works past the limit; each of its steps restarts the wait.
+      yield* TestClock.adjust(Duration.subtract(GoalPlugin.WAIT_LIMIT, Duration.minutes(1)))
+      yield* plugin.step(child)
+      yield* TestClock.adjust(Duration.subtract(GoalPlugin.WAIT_LIMIT, Duration.minutes(1)))
+      yield* plugin.step(grandchild)
+      yield* TestClock.adjust(Duration.subtract(GoalPlugin.WAIT_LIMIT, Duration.minutes(1)))
+      expect(plugin.goal()).toMatchObject({ status: "active" })
+
+      // Another Session's steps say nothing about this goal's work.
+      yield* plugin.step(unrelated)
+      yield* TestClock.adjust(Duration.minutes(2))
       expect(plugin.goal()).toMatchObject({
         status: "paused",
         reason: "Nothing ran for 30 minutes while the goal waited on background work",
