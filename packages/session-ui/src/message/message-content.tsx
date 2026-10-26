@@ -683,10 +683,7 @@ export function CurrentUserMessageDisplay(props: {
           <span data-slot="user-message-meta-wrap">
             <span data-slot="user-message-meta">
               <UserMessageTransition active={waiting()}>
-                <span data-slot="user-message-pending" aria-hidden="true">
-                  <Icon name="outline-steer" size="small" />
-                </span>
-                <span>{i18n.t("ui.message.pending")}</span>
+                <span data-slot="user-message-pending">{i18n.t("ui.message.pending")}</span>
                 <Show when={metaLabels().length > 0}>
                   <span data-slot="user-message-meta-separator" aria-hidden="true">
                     {"\u00B7"}

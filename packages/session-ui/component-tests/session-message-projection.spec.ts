@@ -163,33 +163,17 @@ story("marks pending metadata without badging delivered, starting, or queued pro
   const voice = timeline.getByRole("img", { name: "Voice", exact: true })
   await expect(voice).toBeVisible()
   await expect(indicator).toBeVisible()
-  await expect(indicator).toHaveAttribute("aria-hidden", "true")
+  // The faded bubble already marks a steer as waiting, so Pending is plain text with no icon.
+  await expect(indicator).toHaveText("Pending")
+  await expect(timeline.locator('[data-slot="user-message-meta"] svg')).toHaveCount(0)
 
   await expect(voice.locator("use")).toHaveAttribute("href", "#opencode-v2-icon-outline-wave-audio")
-  await expect(indicator.locator("use")).toHaveAttribute("href", "#opencode-v2-icon-outline-steer")
-
-  const icon = await indicator.locator("svg").boundingBox()
-  const label = await timeline.locator('[data-slot="user-message-meta"]').boundingBox()
-
-  if (!icon || !label) throw new Error("Pending metadata geometry is unavailable")
-  expect(Math.abs(icon.y + icon.height / 2 - label.y - label.height / 2)).toBeLessThan(0.5)
 
   await expect(voice).toHaveCSS("width", "20px")
   await expect(voice).toHaveCSS("height", "20px")
   await expect(voice.locator('[data-slot="icon-svg"]')).toHaveCSS("width", "14px")
   await expect(voice.locator('[data-slot="icon-svg"]')).toHaveCSS("height", "14px")
 
-  const faint = await indicator.evaluate((element) => {
-    const probe = document.createElement("span")
-    probe.style.color = "var(--v2-icon-icon-faint)"
-    element.append(probe)
-    const color = getComputedStyle(probe).color
-    probe.remove()
-
-    return color
-  })
-
-  await expect(indicator).toHaveCSS("color", faint)
   await expect(timeline.locator('[data-slot="user-message-meta"]')).toHaveText(/^Pending/)
   await timeline.getByLabel("Grouped prompts", { exact: true }).check()
   await expect(timeline.locator('[data-run-folded] [data-slot="user-message-copy-wrapper"]')).toBeHidden()

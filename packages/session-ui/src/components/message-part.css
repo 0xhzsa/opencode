@@ -168,16 +168,6 @@
     color: var(--v2-icon-icon-muted);
   }
 
-  [data-slot="user-message-pending"] {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
-    width: 14px;
-    height: 16px;
-    color: var(--v2-icon-icon-faint);
-  }
-
   [data-slot="user-message-text"] {
     display: inline-block;
     white-space: pre-wrap;
