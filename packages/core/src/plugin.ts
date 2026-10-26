@@ -300,5 +300,5 @@ export const node: LayerNode.Provider<Service, PersistentPty.UnavailableError, t
   Node.makeLocationNode({
     service: Service,
     layer,
-    deps: [PluginHost.requirements],
+    deps: [PluginHost.requirements, RuntimeStats.node],
   })

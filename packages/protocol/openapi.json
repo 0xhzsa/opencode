@@ -11933,7 +11933,24 @@
       "get": {
         "tags": ["experimental"],
         "operationId": "experimental.debug.runtime",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "heap",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": ["true", "false"]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "required": false
+          }
+        ],
         "security": [],
         "responses": {
           "200": {
@@ -11967,7 +11984,7 @@
             }
           }
         },
-        "description": "Process memory, loaded locations, and the sizes of long-lived server structures (event bus buffers, plugin registries, jobs, event feed subscribers), read from counters the server already holds. Never walks the heap. Experimental: may change without compatibility guarantees.",
+        "description": "Process memory, loaded locations, and the sizes of long-lived server structures (event bus buffers, plugin registries, jobs, event feed subscribers), read from counters the server already holds. With `heap=true` it also counts objects on the heap by type, which pauses the server (about 1 s per 100 million objects) but serializes nothing, so it stays usable on heaps too large for a snapshot. Experimental: may change without compatibility guarantees.",
         "summary": "Read runtime memory statistics"
       }
     },
@@ -15949,6 +15966,20 @@
             },
             "required": ["rss", "heapTotal", "heapUsed", "external", "arrayBuffers"],
             "additionalProperties": false
+          },
+          "objectTypes": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string",
+                  "enum": ["Infinity", "-Infinity", "NaN"]
+                }
+              ]
+            }
           },
           "locations": {
             "anyOf": [

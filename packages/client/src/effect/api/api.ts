@@ -2118,6 +2118,7 @@ export type ExperimentalPersistentPtyConnectTokenOperation<E = never> = (
   input: ExperimentalPersistentPtyConnectTokenInput,
 ) => Effect.Effect<ExperimentalPersistentPtyConnectTokenOutput, E>
 
+export type ExperimentalDebugRuntimeInput = { readonly heap?: boolean | undefined }
 export type ExperimentalDebugRuntimeOutput = {
   readonly pid: number
   readonly uptimeSeconds: number
@@ -2128,10 +2129,13 @@ export type ExperimentalDebugRuntimeOutput = {
     readonly external: number
     readonly arrayBuffers: number
   }
+  readonly objectTypes?: { readonly [x: string]: number }
   readonly locations: number
   readonly gauges: { readonly [x: string]: number }
 }
-export type ExperimentalDebugRuntimeOperation<E = never> = () => Effect.Effect<ExperimentalDebugRuntimeOutput, E>
+export type ExperimentalDebugRuntimeOperation<E = never> = (
+  input?: ExperimentalDebugRuntimeInput,
+) => Effect.Effect<ExperimentalDebugRuntimeOutput, E>
 
 export interface ExperimentalApi<E = never> {
   readonly persistentPty: {

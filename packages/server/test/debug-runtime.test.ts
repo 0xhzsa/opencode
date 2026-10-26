@@ -17,16 +17,20 @@ it.live("reports runtime memory and long-lived structure sizes", () =>
       models: { fetch: false },
       fs: { filewatcher: false },
     })
-    const read = Effect.promise(() =>
-      handler(new Request("http://opencode.local/api/experimental/debug/runtime")).then(async (response) => {
-        expect(response.status).toBe(200)
-        return decode(await response.json())
-      }),
-    )
+    const get = (query = "") =>
+      Effect.promise(() =>
+        handler(new Request(`http://opencode.local/api/experimental/debug/runtime${query}`)).then(async (response) => {
+          expect(response.status).toBe(200)
+          return decode(await response.json())
+        }),
+      )
+    const read = get()
 
     const before = yield* read
     expect(before.pid).toBe(process.pid)
     expect(before.memory.rss).toBeGreaterThan(0)
+    expect(before.objectTypes).toBeUndefined()
+    expect((yield* get("?heap=true")).objectTypes?.["Object"]).toBeGreaterThan(0)
     expect(before.locations).toBe(0)
     expect(before.gauges["bus.live.backlog"]).toBe(0)
     expect(before.gauges["job"]).toBe(0)

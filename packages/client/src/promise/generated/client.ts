@@ -236,6 +236,7 @@ import type {
   ExperimentalPersistentPtyConnectTokenOutput,
   ExperimentalMediaGetInput,
   ExperimentalMediaGetOutput,
+  ExperimentalDebugRuntimeInput,
   ExperimentalDebugRuntimeOutput,
   ShellListInput,
   ShellListOutput,
@@ -2042,11 +2043,12 @@ export function make(options: ClientOptions) {
           ),
       },
       debug: {
-        runtime: (requestOptions?: RequestOptions) =>
+        runtime: (input?: ExperimentalDebugRuntimeInput, requestOptions?: RequestOptions) =>
           request<ExperimentalDebugRuntimeOutput>(
             {
               method: "GET",
               path: `/api/experimental/debug/runtime`,
+              query: { heap: input?.["heap"] },
               successStatus: 200,
               declaredStatuses: [400, 401],
               empty: false,

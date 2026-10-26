@@ -188,7 +188,7 @@ interface Options {
 export function configured(options?: Options) {
   return makeGlobalNode({
     service: Service,
-    deps: [Database.node],
+    deps: [Database.node, RuntimeStats.node],
     layer: Layer.effect(
       Service,
       Effect.gen(function* () {
