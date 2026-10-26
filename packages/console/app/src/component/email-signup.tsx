@@ -2,10 +2,14 @@ import { action, useSubmission } from "@solidjs/router"
 import { Resource } from "@opencode/console-resource"
 import { Show } from "solid-js"
 import { useI18n } from "~/context/i18n"
+import { newsletterEmail } from "~/lib/newsletter"
 
 const emailSignup = action(async (formData: FormData) => {
   "use server"
-  const emailAddress = formData.get("email")!
+  const emailAddress = newsletterEmail(formData.get("email"))
+  if (!emailAddress) return false
+  // Outside production, accept sign-ups without writing to the production list.
+  if (import.meta.env.DEV || Resource.App.stage !== "production") return true
   const listId = "8b9bb82c-9d5f-11f0-975f-0df6fd1e4945"
   const response = await fetch(`https://api.emailoctopus.com/lists/${listId}/contacts`, {
     method: "PUT",

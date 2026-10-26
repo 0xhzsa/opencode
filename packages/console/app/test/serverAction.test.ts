@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { sanitizeServerActionRequest } from "../src/lib/server-action"
+import { newsletterEmail } from "../src/lib/newsletter"
 
 describe("server action referer", () => {
   test("preserves same-origin return locations", () => {
@@ -30,5 +31,28 @@ describe("server action referer", () => {
     })
 
     expect(sanitizeServerActionRequest(request)).toBe(request)
+  })
+})
+
+describe("newsletter email", () => {
+  test("accepts and trims ordinary addresses", () => {
+    expect(newsletterEmail("  fake-visitor+news@example.test ")).toBe("fake-visitor+news@example.test")
+  })
+
+  test("rejects malformed, non-ASCII and oversized addresses", () => {
+    expect(
+      [
+        undefined,
+        "",
+        "fake-visitor",
+        "fake@visitor@example.test",
+        "fake visitor@example.test",
+        "fake-visitor@example",
+        "fake\u0000visitor@example.test",
+        "fäke@example.test",
+        `${"a".repeat(65)}@example.test`,
+        `fake@${"a".repeat(250)}.test`,
+      ].map(newsletterEmail),
+    ).toEqual(Array(10).fill(undefined))
   })
 })

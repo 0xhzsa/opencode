@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { isoDay } from "../src/lib/format"
 import { jsonUrl, markdownUrl, prefersMarkdown } from "../src/lib/language"
+import { newsletterEmail } from "../src/lib/newsletter"
 
 describe("markdown negotiation", () => {
   test("agents that list markdown first get markdown", () => {
@@ -44,5 +45,28 @@ describe("iso days", () => {
 
   test("unrecognized labels pass through", () => {
     expect(isoDay("Week 32", "2026-10-01T22:16:22.000Z")).toBe("Week 32")
+  })
+})
+
+describe("newsletter email", () => {
+  test("accepts and trims ordinary addresses", () => {
+    expect(newsletterEmail("  fake-visitor+news@example.test ")).toBe("fake-visitor+news@example.test")
+  })
+
+  test("rejects malformed, non-ASCII and oversized addresses", () => {
+    expect(
+      [
+        undefined,
+        "",
+        "fake-visitor",
+        "fake@visitor@example.test",
+        "fake visitor@example.test",
+        "fake-visitor@example",
+        "fake\u0000visitor@example.test",
+        "fäke@example.test",
+        `${"a".repeat(65)}@example.test`,
+        `fake@${"a".repeat(250)}.test`,
+      ].map(newsletterEmail),
+    ).toEqual(Array(10).fill(undefined))
   })
 })
