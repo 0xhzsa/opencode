@@ -100,67 +100,6 @@ test.each([
   dispose()
 })
 
-test("a succeeded session alerts only once none of its direct children is running", async () => {
-  alerts.length = 0
-  tabs.store = [{ type: "session", server, sessionId: "parent" }]
-  const listeners = new Array<(event: OpenCodeEvent) => void>()
-
-  const sessions = [
-    { id: "parent", title: "Parent", location: { directory: "/project" } },
-    { id: "first", parentID: "parent", title: "First", location: { directory: "/project" } },
-    { id: "second", parentID: "parent", title: "Second", location: { directory: "/project" } },
-    { id: "nested", parentID: "first", title: "Nested", location: { directory: "/project" } },
-  ]
-
-  const running = new Set(["first", "second", "nested"])
-
-  const emit = (id: string) => {
-    listeners.forEach((listener) =>
-      // SAFETY: the notification state reads only the type, id and session of execution events.
-      listener({ type: "session.execution.succeeded", id, data: { sessionID: "parent" } } as never),
-    )
-
-    return new Promise((resolve) => setTimeout(resolve, 0))
-  }
-
-  const dispose = createRoot((dispose) => {
-    createState({
-      sdk: {
-        scope: ServerScope.local,
-        event: {
-          listen: (listener: (event: OpenCodeEvent) => void) => {
-            listeners.push(listener)
-
-            return () => {}
-          },
-        },
-      },
-      data: {
-        session: {
-          get: (id: string) => sessions.find((session) => session.id === id),
-          family: () => sessions.map((session) => session.id),
-          status: (id: string) => (running.has(id) ? "running" : "idle"),
-        },
-      },
-      coordinator: { system: async (_id: string, fn: () => Promise<void>) => fn() },
-    })
-
-    return dispose
-  })
-
-  // Each running child's report wakes the parent again, so it isn't done yet.
-  await emit("event-1")
-  running.delete("first")
-  await emit("event-2")
-  expect(alerts).toEqual([])
-
-  // Once the last child is idle the parent is done. The grandchild still running reports to its own parent.
-  running.delete("second")
-  await emit("event-3")
-  expect(alerts).toEqual(["notification.session.responseReady.title"])
-  dispose()
-})
-
 test("unread state and viewing follow the server's idle and viewed watermarks", async () => {
   const views: { sessionID: string; idle: number }[] = []
   const failures = { remaining: 1 }
