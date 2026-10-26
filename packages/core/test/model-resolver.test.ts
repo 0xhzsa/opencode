@@ -2,7 +2,8 @@ import { describe, expect } from "bun:test"
 import { LLM, LanguageModel, Message } from "@opencode/ai/effect"
 import { OpenAIChat } from "@opencode/ai/protocols"
 import { compileRequest } from "@opencode/ai/route/client"
-import { ConfigProvider, Effect, Layer } from "effect"
+import { mergeJsonRecords } from "@opencode/ai/schema/options"
+import { ConfigProvider, Effect, Layer, Struct } from "effect"
 import { Headers } from "effect/http"
 import { AISDKNative } from "@opencode/core/aisdk-native"
 import { Credential } from "@opencode/core/credential"
@@ -621,6 +622,130 @@ describe("ModelResolver", () => {
         include: ["reasoning.encrypted_content"],
       })
       expect(prepared.body).not.toHaveProperty("reasoning_effort")
+    }),
+  )
+
+  it.effect("sends Bedrock Converse reasoning variants and AI SDK settings in each model family's fields", () =>
+    Effect.gen(function* () {
+      const converse = (modelID: string, settings: Info["settings"] = {}) =>
+        model(Provider.aisdk("@ai-sdk/amazon-bedrock"), {
+          modelID,
+          settings: { region: "us-east-1", ...settings },
+          headers: {},
+          body: {},
+          limit: { context: 200_000, output: 64_000 },
+        })
+      const wire = Effect.fn(function* (catalog: Info, variant?: string) {
+        const resolved = yield* ModelResolver.resolveModel(
+          catalog,
+          variant === undefined ? undefined : VariantID.make(variant),
+          Credential.Key.make({ type: "key", key: "secret" }),
+        )
+        const prepared = yield* compileRequest(
+          LLM.request({ model: resolved, prompt: "Hello", generation: { maxTokens: 32_000 } }),
+        )
+        const body = mergeJsonRecords(prepared.body, resolved.route.defaults.http?.body) ?? {}
+        return Struct.omit(body, ["modelId", "messages"])
+      })
+      const variant = (modelID: string, supports: Variant.Support[], id: string) => {
+        const base = converse(modelID)
+        return wire(Info.make({ ...base, variants: Variant.resolve(base, supports) }), id)
+      }
+      const limit = { inferenceConfig: { maxTokens: 32_000 } }
+      const adaptive = { type: "adaptive", display: "summarized" }
+      const binding = {
+        thinking: { ...adaptive, block_binding: { prefix_mismatch_behavior: "drop_block" } },
+        anthropic_beta: ["thinking-binding-controls-2026-08-01"],
+      }
+      const cases = [
+        [
+          variant("us.anthropic.claude-opus-4-8", [{ type: "effort" }], "high"),
+          { thinking: adaptive, output_config: { effort: "high" } },
+        ],
+        [
+          variant("us.anthropic.claude-sonnet-5-1", [{ type: "effort" }], "low"),
+          { ...binding, output_config: { effort: "low" } },
+        ],
+        [variant("us.anthropic.claude-sonnet-5-1", [{ type: "toggle" }], "thinking"), binding],
+        [variant("us.anthropic.claude-sonnet-4-6", [{ type: "toggle" }], "none"), { thinking: { type: "disabled" } }],
+        [
+          variant("us.anthropic.claude-haiku-4-5-20251001-v1:0", [{ type: "effort" }], "high"),
+          { output_config: { effort: "high" } },
+        ],
+        [
+          variant("us.anthropic.claude-haiku-4-5-20251001-v1:0", [{ type: "budget_tokens", min: 1024 }], "high"),
+          { thinking: { type: "enabled", budget_tokens: 16_000 } },
+        ],
+        [variant("openai.gpt-oss-120b-1:0", [{ type: "effort" }], "high"), { reasoning_effort: "high" }],
+        [
+          variant("us.openai.gpt-5.6-sol", [{ type: "effort", values: ["none"] }], "none"),
+          { reasoning: { effort: "none" } },
+        ],
+        [variant("us.xai.grok-4.6", [{ type: "effort" }], "low"), { reasoning: { effort: "low" } }],
+        [
+          variant("us.amazon.nova-2-lite-v1:0", [{ type: "toggle" }], "none"),
+          { reasoningConfig: { type: "disabled" } },
+        ],
+        [
+          variant("us.amazon.nova-2-lite-v1:0", [{ type: "budget_tokens" }], "high"),
+          { reasoningConfig: { type: "enabled", budgetTokens: 32_000 } },
+        ],
+        [
+          wire(converse("anthropic.claude-sonnet-4-6-v1", { reasoningConfig: { maxReasoningEffort: "high" } })),
+          { output_config: { effort: "high" } },
+        ],
+        [
+          wire(converse("anthropic.claude-sonnet-5-1", { reasoningConfig: { type: "adaptive", display: "omitted" } })),
+          { ...binding, thinking: { ...binding.thinking, display: "omitted" } },
+        ],
+        [
+          wire(
+            converse("anthropic.claude-sonnet-4-6-v1", {
+              reasoningConfig: { type: "adaptive", maxReasoningEffort: "max" },
+              anthropicBeta: ["context-1m-2025-08-07"],
+            }),
+          ),
+          {
+            thinking: { type: "adaptive" },
+            output_config: { effort: "max" },
+            anthropic_beta: ["context-1m-2025-08-07"],
+          },
+        ],
+        [
+          wire(converse("amazon.nova-2-lite-v1:0", { reasoningConfig: { maxReasoningEffort: "low" } })),
+          { reasoningConfig: { maxReasoningEffort: "low" } },
+        ],
+        [
+          wire(converse("us.xai.grok-4.6", { reasoningConfig: { maxReasoningEffort: "high" } })),
+          { reasoningConfig: { maxReasoningEffort: "high" } },
+        ],
+        [
+          wire(
+            converse("us.openai.gpt-5.6-sol", {
+              reasoningConfig: { maxReasoningEffort: "high" },
+              additionalModelRequestFields: { reasoning: { summary: "auto" } },
+            }),
+          ),
+          { reasoning: { effort: "high", summary: "auto" } },
+        ],
+      ] as const
+      for (const [body, fields] of cases) expect(yield* body).toEqual({ ...limit, additionalModelRequestFields: fields })
+
+      expect(yield* variant("us.amazon.nova-2-lite-v1:0", [{ type: "effort" }], "high")).toEqual({
+        additionalModelRequestFields: { reasoningConfig: { type: "enabled", maxReasoningEffort: "high" } },
+      })
+      expect(
+        yield* wire(
+          converse("openai.gpt-oss-120b-1:0", {
+            reasoningConfig: { maxReasoningEffort: "high" },
+            serviceTier: "priority",
+          }),
+        ),
+      ).toEqual({
+        ...limit,
+        additionalModelRequestFields: { reasoning_effort: "high" },
+        serviceTier: { type: "priority" },
+      })
     }),
   )
 
@@ -1391,7 +1516,7 @@ describe("ModelResolver", () => {
       })
       expect(bedrock.route.id).toBe("bedrock-converse")
       expect(bedrock.route.defaults.generation).toEqual({ topP: 0.8 })
-      expect(bedrock.route.defaults.http?.body).toEqual({ serviceTier: { type: "priority" } })
+      expect(bedrock.route.defaults.providerOptions).toEqual({ serviceTier: "priority" })
       expect(mantle.route.id).toBe("bedrock-mantle-chat")
       expect(mantle.route.defaults.generation).toEqual({ topP: 0.6 })
       expect(workers.route.endpoint.baseURL).toBe("https://api.cloudflare.com/client/v4/accounts/account/ai/v1")

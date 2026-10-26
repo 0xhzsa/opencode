@@ -494,15 +494,14 @@ describe("Provider and Model", () => {
       })
       const model = required(yield* models.get(providerID, modelID))
       expect(model.package).toBe("@opencode/ai/providers/amazon-bedrock")
+      expect(model.settings).toMatchObject({ thinking: { type: "adaptive" } })
       expect(model.settings).not.toHaveProperty("reasoningConfig")
-      expect(model.body).toMatchObject({
-        additionalModelRequestFields: { thinking: { type: "adaptive" }, output_config: { effort: "high" } },
-      })
+      expect(model.body).toMatchObject({ additionalModelRequestFields: { output_config: { effort: "high" } } })
       expect(model.variants).toEqual([
         {
           id: Model.VariantID.make("max"),
-          settings: {},
-          body: { additionalModelRequestFields: { thinking: { type: "adaptive" }, output_config: { effort: "max" } } },
+          settings: { thinking: { type: "adaptive" } },
+          body: { additionalModelRequestFields: { output_config: { effort: "max" } } },
         },
       ])
       expect(required(yield* providers.get(Provider.ID.make("gitlab")))).toMatchObject({

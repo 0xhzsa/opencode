@@ -1249,14 +1249,8 @@ describe("ModelsDevPlugin", () => {
           id: Model.VariantID.make("none"),
           body: { additionalModelRequestFields: { reasoningConfig: { type: "disabled" } } },
         },
-        {
-          id: Model.VariantID.make("low"),
-          body: { additionalModelRequestFields: { reasoningConfig: { type: "enabled", maxReasoningEffort: "low" } } },
-        },
-        {
-          id: Model.VariantID.make("high"),
-          body: { additionalModelRequestFields: { reasoningConfig: { type: "enabled", maxReasoningEffort: "high" } } },
-        },
+        { id: Model.VariantID.make("low"), settings: { effort: "low" } },
+        { id: Model.VariantID.make("high"), settings: { effort: "high" } },
       ])
 
       const sapGemini = yield* modelState.get(Provider.ID.make("sap-ai-core"), Model.ID.make("gemini-2.5-flash"))

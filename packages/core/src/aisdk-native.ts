@@ -160,11 +160,10 @@ type Overlay = {
 function options(replacement: string, modelID: string | undefined, settings: Legacy): Overlay {
   const converse = replacement === "@opencode/ai/providers/amazon-bedrock" && modelID !== undefined
   const kept = Struct.omit(settings, ["headers", "extraBody", "useCompletionUrls", ...OPENROUTER_KEYS])
-  const thinking = converse ? bedrockThinking(modelID, settings) : undefined
   return {
     settings: {
       ...(replacement.startsWith("@opencode/ai/providers/amazon-bedrock") ? bedrockSettings(kept, converse) : kept),
-      ...(thinking === undefined ? {} : { thinking }),
+      ...(converse ? bedrockOptions(modelID, settings) : {}),
     },
     ...(settings.headers === undefined ? {} : { headers: settings.headers }),
     ...(settings.extraBody === undefined ? {} : { body: settings.extraBody }),
@@ -183,8 +182,8 @@ const BEDROCK_KEYS = [
   "secretAccessKey",
   "sessionToken",
 ]
-// Request settings Converse takes in the body; translated by `bedrockRequest`.
-const CONVERSE_KEYS = ["additionalModelRequestFields", "reasoningConfig", "anthropicBeta", "serviceTier"]
+// AI SDK request settings for Converse; translated by `bedrockOptions` and `bedrockRequest`.
+const CONVERSE_KEYS = ["additionalModelRequestFields", "reasoningConfig", "anthropicBeta"]
 
 function bedrockSettings(settings: Legacy, converse: boolean) {
   const region = settings.region ?? settings.credentials?.region
@@ -209,36 +208,32 @@ function bedrockSettings(settings: Legacy, converse: boolean) {
   }
 }
 
-// Claude's enabled budget is a typed setting so the protocol can fit it under the output limit.
-function bedrockThinking(modelID: string | undefined, settings: Legacy) {
+// The typed Converse options for the settings that map exactly; `bedrockRequest` sends the rest as raw body fields.
+function bedrockOptions(modelID: string, settings: Legacy) {
   const reasoning = settings.reasoningConfig
-  if (!modelID?.includes("anthropic") || reasoning?.type !== "enabled" || reasoning.budgetTokens === undefined) return
-  return { type: "enabled", budgetTokens: reasoning.budgetTokens }
+  if (modelID.includes("openai."))
+    return reasoning?.maxReasoningEffort === undefined ? {} : { effort: reasoning.maxReasoningEffort }
+  if (!modelID.includes("anthropic")) return {}
+  if (reasoning?.type === "adaptive")
+    return { thinking: { type: "adaptive", ...(reasoning.display === undefined ? {} : { display: reasoning.display }) } }
+  if (reasoning?.type !== "enabled" || reasoning.budgetTokens === undefined) return {}
+  return { thinking: { type: "enabled", budgetTokens: reasoning.budgetTokens } }
 }
 
-function bedrockRequest(modelID: string | undefined, settings: Legacy): Pick<Overlay, "body"> {
+// Typed `effort` also turns on adaptive thinking for Claude 4.6+, always sends `type: "enabled"` in `reasoningConfig`
+// and moves xAI to `reasoning.effort`, so only OpenAI effort maps exactly. Converse has no typed Anthropic betas.
+function bedrockRequest(modelID: string, settings: Legacy): Pick<Overlay, "body"> {
   const additional = settings.additionalModelRequestFields ?? {}
   const reasoning = settings.reasoningConfig
-  const anthropic = modelID?.includes("anthropic") ?? false
-  const openai = modelID?.includes("openai.") ?? false
-  // gpt-oss (Harmony) takes the flat chat-completions `reasoning_effort`; GPT-5.6+ take Responses-style `reasoning.effort`.
-  const harmony = modelID?.includes("openai.gpt-oss") ?? false
+  const anthropic = modelID.includes("anthropic")
   const effort = reasoning?.maxReasoningEffort
   const type = reasoning?.type
   const budget = reasoning?.budgetTokens
-  const display = reasoning?.display
   const betas = settings.anthropicBeta ?? []
   const fields = Provider.mergeOverlay(additional, {
     ...(betas.length > 0 ? { anthropic_beta: [...(additional.anthropic_beta ?? []), ...betas] } : {}),
-    ...(anthropic && type === "adaptive"
-      ? { thinking: { type: "adaptive", ...(display === undefined ? {} : { display }) } }
-      : {}),
     ...(anthropic && effort !== undefined ? { output_config: { ...additional.output_config, effort } } : {}),
-    ...(!anthropic && openai && harmony && effort !== undefined ? { reasoning_effort: effort } : {}),
-    ...(!anthropic && openai && !harmony && effort !== undefined
-      ? { reasoning: { ...additional.reasoning, effort } }
-      : {}),
-    ...(!anthropic && !openai && effort !== undefined
+    ...(!anthropic && !modelID.includes("openai.") && effort !== undefined
       ? {
           reasoningConfig: {
             ...(type === undefined || type === "adaptive" ? {} : { type }),
@@ -248,11 +243,7 @@ function bedrockRequest(modelID: string | undefined, settings: Legacy): Pick<Ove
         }
       : {}),
   })
-  const body = {
-    ...(fields && Object.keys(fields).length > 0 ? { additionalModelRequestFields: fields } : {}),
-    ...(settings.serviceTier === undefined ? {} : { serviceTier: { type: settings.serviceTier } }),
-  }
-  return Object.keys(body).length === 0 ? {} : { body }
+  return fields && Object.keys(fields).length > 0 ? { body: { additionalModelRequestFields: fields } } : {}
 }
 
 // Constructor options the native OpenRouter package takes as headers, plus `compatibility`, which the
@@ -314,7 +305,6 @@ const Legacy = Schema.StructWithRest(
         Schema.Struct({
           anthropic_beta: lenient(Schema.Array(Schema.String)),
           output_config: lenient(Schema.Record(Schema.String, Schema.Unknown)),
-          reasoning: lenient(Schema.Record(Schema.String, Schema.Unknown)),
         }),
         [Schema.Record(Schema.String, Schema.Unknown)],
       ),

@@ -441,32 +441,27 @@ const openrouter: Protocol = (model, support) => {
 const bedrockConverse: Protocol = (model, support) => {
   const id = modelID(model)
   const claude = id.includes("anthropic")
-  const fields = (fields: Record<string, unknown>): Overlay => ({ body: { additionalModelRequestFields: fields } })
+  // Converse has no typed option for non-Claude reasoning toggles or budgets.
+  const reasoningConfig = (config: Record<string, unknown>): Overlay => ({
+    body: { additionalModelRequestFields: { reasoningConfig: config } },
+  })
   switch (support.type) {
     case "effort":
-      return efforts(support.values ?? EFFORTS, (effort) => {
-        if (claude)
-          return fields({
-            ...(claudeInfo(model).manual ? {} : { thinking: ADAPTIVE_THINKING }),
-            output_config: { effort },
-          })
-        if (id.includes("openai.gpt-oss")) return fields({ reasoning_effort: effort })
-        if (id.includes("openai.") || id.includes("xai.")) return fields({ reasoning: { effort } })
-        return fields({ reasoningConfig: { type: "enabled", maxReasoningEffort: effort } })
-      })
+      return efforts(support.values ?? EFFORTS, (effort) => ({
+        settings: claude && !claudeInfo(model).manual ? { thinking: ADAPTIVE_THINKING, effort } : { effort },
+      }))
     case "toggle":
       return claude
-        ? toggle(fields({ thinking: { type: "disabled" } }), fields({ thinking: ADAPTIVE_THINKING }))
-        : toggle(fields({ reasoningConfig: { type: "disabled" } }), fields({ reasoningConfig: { type: "enabled" } }))
+        ? toggle({ settings: { thinking: { type: "disabled" } } }, { settings: { thinking: ADAPTIVE_THINKING } })
+        : toggle(reasoningConfig({ type: "disabled" }), reasoningConfig({ type: "enabled" }))
     case "budget_tokens":
       return budgets(
         model,
         support,
         (tokens) =>
-          // Claude's budget is a typed setting so the protocol can fit it under the output limit.
           claude
             ? { settings: { thinking: { type: "enabled", budgetTokens: tokens } } }
-            : fields({ reasoningConfig: { type: "enabled", budgetTokens: tokens } }),
+            : reasoningConfig({ type: "enabled", budgetTokens: tokens }),
         claude ? ANTHROPIC_OUTPUT_TOKEN_MAX : model.limit.output,
       )
   }

@@ -286,18 +286,12 @@ test("spells Bedrock Converse Claude budgets as a thinking setting", () => {
 test("spells Bedrock Converse effort for Grok and Nova", () => {
   const supports: Variant.Support[] = [{ type: "effort", values: ["low", "xhigh"] }]
   expect(resolve(model("@opencode/ai/providers/amazon-bedrock", "us.xai.grok-4.6"), supports)).toEqual([
-    { id: "low", body: { additionalModelRequestFields: { reasoning: { effort: "low" } } } },
-    { id: "xhigh", body: { additionalModelRequestFields: { reasoning: { effort: "xhigh" } } } },
+    { id: "low", settings: { effort: "low" } },
+    { id: "xhigh", settings: { effort: "xhigh" } },
   ])
   expect(resolve(model("@opencode/ai/providers/amazon-bedrock", "us.amazon.nova-2-lite-v1:0"), supports)).toEqual([
-    {
-      id: "low",
-      body: { additionalModelRequestFields: { reasoningConfig: { type: "enabled", maxReasoningEffort: "low" } } },
-    },
-    {
-      id: "xhigh",
-      body: { additionalModelRequestFields: { reasoningConfig: { type: "enabled", maxReasoningEffort: "xhigh" } } },
-    },
+    { id: "low", settings: { effort: "low" } },
+    { id: "xhigh", settings: { effort: "xhigh" } },
   ])
 })
 
