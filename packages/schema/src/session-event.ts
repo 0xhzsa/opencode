@@ -263,6 +263,14 @@ export namespace Execution {
   export type Interrupted = typeof Interrupted.Type
 }
 
+/**
+ * Follows `session.execution.succeeded` when no background subagent of the Session or its
+ * descendants is still running, so the Session has nothing more coming on its own. A running
+ * subagent's result wakes the Session later, and that execution settles instead.
+ */
+export const Settled = Event.ephemeral({ type: "session.settled", schema: Base })
+export type Settled = typeof Settled.Type
+
 export const InstructionsUpdated = Event.durable({
   type: "session.instructions.updated",
   durable: {
@@ -673,6 +681,7 @@ export const Definitions = Event.inventory(
   Execution.Succeeded,
   Execution.Failed,
   Execution.Interrupted,
+  Settled,
   InstructionsUpdated,
   Synthetic,
   Skill.Activated,

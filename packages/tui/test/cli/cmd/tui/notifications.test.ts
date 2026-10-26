@@ -108,6 +108,10 @@ function executionSucceeded(id: string, sessionID = "session"): OpenCodeEvent {
   }
 }
 
+function settled(id: string, sessionID = "session"): OpenCodeEvent {
+  return { id, created: 0, type: "session.settled", data: { sessionID } }
+}
+
 function executionFailed(id: string, sessionID = "session"): OpenCodeEvent {
   return {
     id,
@@ -246,8 +250,10 @@ describe("internal notifications TUI plugin", () => {
     const harness = await setup()
 
     harness.emit(executionSucceeded("event-1"))
-    harness.emit(executionStarted("event-2"))
-    harness.emit(executionSucceeded("event-3"))
+    harness.emit(settled("event-2"))
+    harness.emit(executionStarted("event-3"))
+    harness.emit(executionSucceeded("event-4"))
+    harness.emit(settled("event-5"))
 
     expect(harness.notifications).toEqual([
       {
@@ -276,6 +282,7 @@ describe("internal notifications TUI plugin", () => {
     })
     harness.emit(executionStarted("event-2", "subagent"))
     harness.emit(executionSucceeded("event-3", "subagent"))
+    harness.emit(settled("event-4", "subagent"))
 
     expect(harness.notifications).toEqual([
       {
@@ -293,12 +300,33 @@ describe("internal notifications TUI plugin", () => {
     ])
   })
 
+  test("waits for the session to settle before notifying that it is done", async () => {
+    const harness = await setup()
+
+    // The turn ends while a background subagent runs, then its result wakes the session.
+    harness.emit(executionStarted("event-1"))
+    harness.emit(executionSucceeded("event-2"))
+    expect(harness.notifications).toEqual([])
+    harness.emit(executionStarted("event-3"))
+    harness.emit(executionSucceeded("event-4"))
+    harness.emit(settled("event-5"))
+
+    expect(harness.notifications).toEqual([
+      {
+        title: "Demo session",
+        message: "Session done",
+        notification: { when: "blurred" },
+        sound: { name: "done", when: "always" },
+      },
+    ])
+  })
+
   test("notifies session errors once and suppresses the following idle done notification", async () => {
     const harness = await setup()
 
     harness.emit(executionStarted("event-1"))
     harness.emit(executionFailed("event-2"))
-    harness.emit(executionSucceeded("event-3"))
+    harness.emit(settled("event-3"))
 
     expect(harness.notifications).toEqual([
       {
