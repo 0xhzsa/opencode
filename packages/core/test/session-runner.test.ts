@@ -1292,7 +1292,7 @@ describe("SessionRunnerLLM", () => {
     yield* hooks.register("session", "idle", (event) => Effect.sync(() => idles.push(event.sessionID)))
     yield* s.admit("Before moving")
     yield* s.llm.push(TestLLM.text("Done", "text-done"))
-    const stream = yield* s.llm.gate
+    const stream = yield* s.llm.gate()
     const run = yield* runner.drain({ sessionID, force: false }).pipe(Effect.forkChild)
     yield* stream.started
     yield* s.sessionInbox.admit({
