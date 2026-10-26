@@ -11,7 +11,8 @@ import JUDGE from "./goal/judge.txt"
 import KICKOFF from "./goal/kickoff.txt"
 
 export const MAX_OBJECTIVE = 4_000
-export const MAX_ROUNDS = 20
+export const MAX_ROUNDS = 50
+export const MAX_STALLS = 3
 // Identifies this server process. A goal armed by an earlier process comes back paused instead of resuming on its own.
 const boot = crypto.randomUUID()
 
@@ -54,6 +55,21 @@ export const Plugin = define({
       read(sessionID).pipe(
         Effect.flatMap((goal) => (goal?.status === "active" ? settle(sessionID, goal, "paused", reason) : Effect.void)),
       )
+
+    // Whether the model called any tool since the goal's last kickoff or continuation. Without that message in view,
+    // for example after a compaction, the round counts as progress.
+    const usedTools = Effect.fn("GoalPlugin.usedTools")(function* (sessionID: Session.ID, goalID: string) {
+      const messages = yield* ctx.session.context({ sessionID })
+      const start = messages.findLastIndex(
+        (message) => (message.type === "synthetic" || message.type === "user") && message.metadata?.goalID === goalID,
+      )
+      return (
+        start === -1 ||
+        messages
+          .slice(start + 1)
+          .some((message) => message.type === "assistant" && message.content.some((part) => part.type === "tool"))
+      )
+    })
 
     const judge = Effect.fn("GoalPlugin.judge")(function* (
       sessionID: Session.ID,
@@ -108,17 +124,23 @@ export const Plugin = define({
       if (verdict.verdict === "done") return yield* settle(sessionID, latest, "complete", verdict.reason)
       if (verdict.verdict !== "continue") return yield* settle(sessionID, latest, "paused", verdict.reason)
 
+      const stalled = sameReason(latest.reason, verdict.reason) || !(yield* usedTools(sessionID, latest.id))
+      const stalls = stalled ? (latest.stalls ?? 0) + 1 : 0
+      if (stalls >= MAX_STALLS)
+        return yield* settle(sessionID, latest, "paused", `Not making progress: ${verdict.reason}`)
+
       const next = {
         ...latest,
         rounds: latest.rounds + 1,
+        stalls,
         reason: verdict.reason,
         updatedAt: yield* Clock.currentTimeMillis,
       }
       yield* write(sessionID, next)
+      // No description: timelines hide the continuation, and the pinned goal shows that the loop is still running.
       yield* ctx.session.synthetic({
         sessionID,
         text: continuation(next, [verdict.reason, verdict.next_step && `Next step: ${verdict.next_step}`]),
-        description: `Continuing goal (${next.rounds}/${next.maxRounds})`,
         metadata: { source: "goal", goalID: next.id },
       })
     })
@@ -189,7 +211,6 @@ export const Plugin = define({
               return yield* ctx.session.synthetic({
                 sessionID: input.sessionID,
                 text: continuation(resumed, ["The user resumed the goal."]),
-                description: "Resuming goal",
                 metadata: { source: "goal", goalID: resumed.id },
               })
             }
@@ -243,20 +264,18 @@ export const Plugin = define({
 
 function continuation(goal: State, feedback: ReadonlyArray<string | undefined>) {
   return render(CONTINUATION, {
-    round: String(goal.rounds),
-    limit: String(goal.maxRounds),
     objective: escape(goal.objective),
     feedback: feedback.filter(Boolean).join("\n"),
   })
 }
 
+function sameReason(previous: string | undefined, next: string) {
+  const normalize = (text: string) => text.trim().toLowerCase().replace(/\s+/g, " ")
+  return previous !== undefined && normalize(previous) === normalize(next)
+}
+
 function describe(goal: State) {
-  const status =
-    goal.status === "active"
-      ? `Goal active (round ${goal.rounds} of ${goal.maxRounds})`
-      : goal.status === "paused"
-        ? "Goal paused"
-        : "Goal achieved"
+  const status = goal.status === "active" ? "Goal active" : goal.status === "paused" ? "Goal paused" : "Goal achieved"
   return [`${status}: ${goal.objective}`, goal.reason].filter(Boolean).join("\n")
 }
 

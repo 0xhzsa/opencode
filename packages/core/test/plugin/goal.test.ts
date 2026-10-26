@@ -81,8 +81,13 @@ describe("goal plugin", () => {
       expect(messages.filter((message) => message.type === "user")).toEqual([])
       const notices = messages.filter((message) => message.type === "synthetic")
       expect(notices).toMatchObject([
-        { description: "Goal: Make the test suite pass", metadata: { source: "goal", goalID: expect.any(String) } },
-        { description: "Continuing goal (1/20)", metadata: { source: "goal", goalID: expect.any(String) } },
+        { metadata: { source: "goal", goalID: expect.any(String) } },
+        { metadata: { source: "goal", goalID: expect.any(String) } },
+      ])
+      // Only the kickoff has a description, so timelines show it and hide the continuation.
+      expect(notices.map((message) => message.type === "synthetic" && message.description)).toEqual([
+        "Goal: Make the test suite pass",
+        undefined,
       ])
       expect(notices[0]?.type === "synthetic" && notices[0].text).toContain(
         "<untrusted_objective>\nMake the test suite pass\n</untrusted_objective>",
@@ -105,6 +110,62 @@ describe("goal plugin", () => {
       yield* sessions.wait(session.id)
 
       expect(yield* goal(session.id)).toMatchObject({ status: "paused", reason: "It needs the production API key." })
+    }),
+  )
+
+  for (const scenario of [
+    {
+      // The first round with this reason made progress; the three repeats after it did not.
+      name: "the reviewer keeps giving the same reason, even with tool calls",
+      tools: true,
+      reasons: Array<string>(4).fill("The flaky test still fails."),
+    },
+    {
+      name: "rounds keep passing without tool calls",
+      tools: false,
+      reasons: ["Two tests fail.", "One test fails.", "The lint step fails."],
+    },
+  ])
+    it.live(`pauses when ${scenario.name}`, () =>
+      Effect.gen(function* () {
+        const session = yield* project()
+        const sessions = yield* Session.Service
+        const verdicts = reviewer(
+          ...scenario.reasons.map((reason) => JSON.stringify({ verdict: "continue", reason })),
+          '{"verdict":"done","reason":"Unreachable."}',
+        )
+        yield* serve(scenario.tools ? withTools(verdicts) : verdicts.respond)
+
+        yield* sessions.command({ sessionID: session.id, command: "goal", text: "Fix the flaky test" })
+        yield* sessions.wait(session.id)
+
+        // The third stalled round in a row pauses instead of sending another continuation.
+        expect(verdicts.asked()).toBe(scenario.reasons.length)
+        expect(yield* goal(session.id)).toMatchObject({
+          status: "paused",
+          reason: `Not making progress: ${scenario.reasons.at(-1)}`,
+          rounds: scenario.reasons.length - 1,
+        })
+      }),
+    )
+
+  it.live("keeps going while each round calls tools and finds a new reason", () =>
+    Effect.gen(function* () {
+      const session = yield* project()
+      const sessions = yield* Session.Service
+      const verdicts = reviewer(
+        '{"verdict":"continue","reason":"Two tests fail."}',
+        '{"verdict":"continue","reason":"One test fails."}',
+        '{"verdict":"continue","reason":"The lint step fails."}',
+        '{"verdict":"done","reason":"Everything passes."}',
+      )
+      yield* serve(withTools(verdicts))
+
+      yield* sessions.command({ sessionID: session.id, command: "goal", text: "Make CI green" })
+      yield* sessions.wait(session.id)
+
+      expect(verdicts.asked()).toBe(4)
+      expect(yield* goal(session.id)).toMatchObject({ status: "complete", rounds: 3, stalls: 0 })
     }),
   )
 
@@ -335,7 +396,10 @@ describe("goal plugin", () => {
       const resumed = (yield* sessions.messages({ sessionID: session.id, order: "asc" })).filter(
         (message) => message.type === "synthetic",
       )
-      expect(resumed).toMatchObject([{ description: "Goal: Update the changelog" }, { description: "Resuming goal" }])
+      expect(resumed.map((message) => message.type === "synthetic" && message.description)).toEqual([
+        "Goal: Update the changelog",
+        undefined,
+      ])
 
       yield* sessions.command({ sessionID: session.id, command: "goal", text: "clear" })
       expect(yield* goal(session.id)).toBeUndefined()
@@ -357,6 +421,17 @@ function reviewer(...replies: ReadonlyArray<string>) {
       asked.count++
       return TestLLM.text(queue.shift() ?? '{"verdict":"done","reason":"Out of script."}', `review-${asked.count}`)
     },
+  }
+}
+
+// Each round starts with a tool call and ends with text once the tool result is in.
+function withTools(verdicts: ReturnType<typeof reviewer>) {
+  return (request: LLMRequest) => {
+    if (isReview(request)) return verdicts.respond(request)
+    const last = JSON.stringify(request.messages.at(-1))
+    return last.includes("tool") && !last.includes("untrusted_objective")
+      ? TestLLM.text("Checked.", "work")
+      : TestLLM.tool(`call-${verdicts.asked()}`, "missing_tool", {})
   }
 }
 
