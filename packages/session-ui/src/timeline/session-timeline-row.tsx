@@ -960,6 +960,9 @@ export function createSessionTimelineRowRenderer(input: {
                       historicalModel={context()?.model ?? { id: "", providerID: "" }}
                       actions={input.actions}
                       run={joined()}
+                      fold
+                      expanded={input.disclosure.value(`user-expanded:${message().id}`)}
+                      onExpandedChange={(open) => input.disclosure.set(`user-expanded:${message().id}`, open)}
                     />
                   </div>
                 </div>

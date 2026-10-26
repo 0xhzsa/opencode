@@ -316,12 +316,30 @@ export function CurrentUserMessageDisplay(props: {
   references?: SessionUserAttachmentReference[]
   voice?: boolean
   run?: UserRun
+  /** Folds a long message to its first lines with a Read more toggle. Omitted, the message always shows in full. */
+  fold?: boolean
+  /** Whether a folded message is open. The timeline owns it so it survives row recycling. */
+  expanded?: boolean
+  onExpandedChange?: (expanded: boolean) => void
 }) {
   const data = useData()
   const dialog = useDialog()
   const i18n = useI18n()
 
-  const [state, setState] = createStore({ copied: false, reverting: false, forking: false, updating: false })
+  const [state, setState] = createStore({
+    copied: false,
+    reverting: false,
+    forking: false,
+    updating: false,
+    expanded: false,
+  })
+
+  const expanded = () => props.expanded ?? state.expanded
+
+  const setExpanded = (value: boolean) => {
+    if (props.onExpandedChange) return props.onExpandedChange(value)
+    setState("expanded", value)
+  }
 
   const status = createMemo(() => props.actions?.pending?.status(props.message.id))
   const pending = createMemo(() => status() !== undefined && status() !== "queued")
@@ -357,7 +375,6 @@ export function CurrentUserMessageDisplay(props: {
 
     return i18n.t(RELATIVE_TIME_KEYS[relative.unit], { count: numfmt().format(relative.count) })
   })
-
 
   // In a run, only the last message keeps the meta line; the others offer their actions beside the bubble.
   // Bubble corners tighten where two bubbles meet, as in the iOS app's grouped corners.
@@ -641,7 +658,14 @@ export function CurrentUserMessageDisplay(props: {
             </div>
           </Show>
           <div data-slot="user-message-text" dir="auto" data-comments={comments().length > 0 ? "true" : undefined}>
-            <CurrentHighlightedText text={props.text} files={inlineFiles()} agents={agents()} />
+            <Show
+              when={props.fold}
+              fallback={<CurrentHighlightedText text={props.text} files={inlineFiles()} agents={agents()} />}
+            >
+              <UserMessageFold id={`${props.message.id}-text`} expanded={expanded()} onExpandedChange={setExpanded}>
+                <CurrentHighlightedText text={props.text} files={inlineFiles()} agents={agents()} />
+              </UserMessageFold>
+            </Show>
             <Show when={comments().length > 0}>
               <UserMessageComments comments={comments()} bounded />
             </Show>
@@ -700,6 +724,88 @@ export function CurrentUserMessageDisplay(props: {
       </Show>
     </div>
   )
+}
+
+// The OpenCode iOS app's fold (UserBubbleFold): a message past 12 lines shows its first 8, so a fold always hides at
+// least 5 lines and a message just past the limit never folds away a line or two.
+const USER_MESSAGE_FOLD = { over: 12, show: 8 }
+
+function UserMessageFold(props: {
+  id: string
+  expanded: boolean
+  onExpandedChange: (expanded: boolean) => void
+  children: JSX.Element
+}) {
+  const i18n = useI18n()
+  const [size, setSize] = createStore({ lines: 0, lineHeight: 20 })
+  const long = () => size.lines > USER_MESSAGE_FOLD.over
+  const folded = () => long() && !props.expanded
+
+  let content: HTMLDivElement | undefined
+  let toggle: HTMLButtonElement | undefined
+
+  // The text is laid out whole and clipped, so its own height is the measure at any width.
+  const measure = () => {
+    if (!content) return
+    const lineHeight = parseFloat(getComputedStyle(content).lineHeight) || 20
+    setSize({ lineHeight, lines: Math.round(content.offsetHeight / lineHeight) })
+  }
+
+  onMount(() => {
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(content!)
+    onCleanup(() => observer.disconnect())
+  })
+
+  // Opening grows the row downward, so its top stays put. Closing a message taller than the screen would leave the
+  // reader past its end, so the toggle stays where it was pressed.
+  const flip = () => {
+    const opening = !props.expanded
+    const before = toggle?.getBoundingClientRect().top
+    props.onExpandedChange(opening)
+
+    if (opening || before === undefined || !toggle) return
+    const moved = before - toggle.getBoundingClientRect().top
+    const scroller = scrollParent(toggle)
+
+    if (scroller && moved > 1) scroller.scrollTop -= moved
+  }
+
+  return (
+    <>
+      <div
+        id={props.id}
+        data-slot="user-message-fold"
+        data-folded={folded() ? "" : undefined}
+        style={{ "max-height": folded() ? `${USER_MESSAGE_FOLD.show * size.lineHeight}px` : undefined }}
+      >
+        <div ref={content}>{props.children}</div>
+      </div>
+      <Show when={long()}>
+        <button
+          ref={toggle}
+          type="button"
+          data-slot="user-message-fold-toggle"
+          aria-expanded={props.expanded}
+          aria-controls={props.id}
+          onClick={flip}
+        >
+          <span>{props.expanded ? i18n.t("ui.message.showLess") : i18n.t("ui.message.readMore")}</span>
+          <Icon name="chevron-down" size="small" />
+        </button>
+      </Show>
+    </>
+  )
+}
+
+function scrollParent(element: HTMLElement) {
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY
+    if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight) return node
+  }
+
+  return document.scrollingElement
 }
 
 function CurrentHighlightedText(props: {
