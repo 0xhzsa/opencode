@@ -25,6 +25,19 @@ export function openNotificationSession(tabs: NotificationTabs, server: ServerCo
   tabs.select(tab)
 }
 
+// Only direct children: a grandchild reports to its own parent, so waiting on it could mean no sound at all. Running
+// shells don't count, or a session with a dev server running would never play one.
+function hasRunningChild(data: Data, sessionID: string) {
+  return data.session
+    .family(sessionID)
+    .some(
+      (child) =>
+        child !== sessionID &&
+        data.session.get(child)?.parentID === sessionID &&
+        data.session.status(child) === "running",
+    )
+}
+
 /** A session is unread when its latest terminal execution is newer than the last one any client viewed. */
 function isSessionUnread(session?: Pick<SessionInfo, "time">) {
   const time = session?.time
@@ -217,6 +230,9 @@ export function createServerNotificationState(input: {
   }
 
   const handleSessionIdle = (sessionID: string, eventID: string) => {
+    // A running subagent's report wakes the session again, so it isn't done yet.
+    if (hasRunningChild(input.data, sessionID)) return
+
     void lookup(sessionID).then((session) => {
       if (disposed.value) return
 
@@ -271,8 +287,7 @@ export function createServerNotificationState(input: {
       return
     }
 
-    // Settled, not succeeded: a Session waiting on background subagents is not done yet.
-    if (event.type === "session.settled") handleSessionIdle(event.data.sessionID, event.id)
+    if (event.type === "session.execution.succeeded") handleSessionIdle(event.data.sessionID, event.id)
   })
 
   onCleanup(() => {
