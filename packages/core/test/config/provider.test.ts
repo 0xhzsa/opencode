@@ -370,6 +370,32 @@ describe("ConfigProviderPlugin.Plugin", () => {
     }),
   )
 
+  it.effect("keeps any package a local config file names", () =>
+    Effect.gen(function* () {
+      const providers = yield* Provider.Service
+      const models = yield* Model.Service
+      const providerID = Provider.ID.make("custom")
+      yield* addPlugin([
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              custom: {
+                package: "aisdk:my-provider",
+                models: { chat: { package: "aisdk:git+https://example.com/provider.git" } },
+              },
+            },
+          }),
+        }),
+      ])
+
+      expect(required(yield* providers.get(providerID)).package).toBe("aisdk:my-provider")
+      expect(required(yield* models.get(providerID, Model.ID.make("chat"))).package).toBe(
+        "aisdk:git+https://example.com/provider.git",
+      )
+    }),
+  )
+
   it.effect("defaults custom model metadata", () =>
     Effect.gen(function* () {
       const models = yield* Model.Service

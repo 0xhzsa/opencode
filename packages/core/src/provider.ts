@@ -154,6 +154,33 @@ const builtins = new Map<string, () => Promise<unknown>>([
 /** Native `@opencode/ai/providers/*` entrypoints bundled with Core and loadable by name from config. */
 export const builtinPackages: ReadonlySet<string> = new Set(builtins.keys())
 
+// Third-party AI SDK providers the models.dev catalog routes models through.
+const catalogPackages = new Set([
+  "@aihubmix/ai-sdk-provider",
+  "@jerome-benoit/sap-ai-provider-v2",
+  "@openrouter/ai-sdk-provider",
+  "@qvac/ai-sdk-provider",
+  "@saladtechnologies-oss/ai-sdk-provider",
+  "ai-gateway-provider",
+  "gitlab-ai-provider",
+  "merge-gateway-ai-sdk-provider",
+  "venice-ai-sdk-provider",
+  "watsonx-ai-provider",
+])
+
+/**
+ * A provider package named by a remote source (an integration's config, the models.dev catalog), or undefined when
+ * that source may not load it. Loading a package installs and imports it, so a remote source is limited to OpenCode's
+ * own packages, official `@ai-sdk/*` packages, and the catalog's known providers, by bare name only: never a version,
+ * git, file, URL, or path spec. Config files the user wrote can still name any package.
+ */
+export function remotePackage(value: string | undefined) {
+  if (value === undefined) return undefined
+  const name = packageName(value)
+  if (builtinPackages.has(name) || catalogPackages.has(name)) return value
+  return /^@(opencode\/ai|ai-sdk)(\/[a-z0-9-]+)+$/.test(name) ? value : undefined
+}
+
 export const loadPackage = Effect.fn("Provider.loadPackage")(function* (input: string, npm?: Npm.Interface) {
   const specifier = packageName(input)
   const builtin = builtins.get(specifier)

@@ -458,8 +458,10 @@ describe("OpencodePlugin", () => {
                         settings: { baseURL: `${origin}/anthropic` },
                       },
                       disabled: { name: "Disabled", disabled: true },
+                      evil: { name: "Evil", package: "evil-pkg" },
                     },
                   },
+                  evil: { canonical: "openai", package: "git+https://evil.example/pkg.git" },
                 },
               })
             },
@@ -554,6 +556,11 @@ describe("OpencodePlugin", () => {
             },
           ])
           expect(required(yield* models.get(Provider.ID.make("remote"), Model.ID.make("disabled"))).enabled).toBe(false)
+          // A package the Console may not install falls back to the one the provider would use without it.
+          expect(required(yield* models.get(Provider.ID.make("remote"), Model.ID.make("evil"))).package).toBe(
+            "@opencode/ai/providers/openai-compatible",
+          )
+          expect(required(yield* providers.get(Provider.ID.make("evil"))).package).toBe("@opencode/ai/providers/openai")
           expect(yield* models.get(Provider.ID.make("remote"), Model.ID.make("stale"))).toBeDefined()
           expect(
             (yield* providers.snapshot()).records.get(Provider.ID.openai)?.models.get(Model.ID.make("api-model"))
@@ -2116,14 +2123,17 @@ describe("OpencodePlugin with a Console config", () => {
                 providers: {
                   remote: {
                     env: ["REMOTE_API_KEY"],
+                    package: "evil-pkg",
                     settings: { apiKey: "key", authToken: "auth", accessToken: "access", baseURL: "https://remote" },
                     models: {
                       chat: {
+                        package: "git+https://evil.example/pkg.git",
                         settings: { apiKey: "key", temperature: 0.1 },
                         variants: [{ id: "high", settings: { accessToken: "access", temperature: 0.2 } }],
                       },
                     },
                   },
+                  official: { package: "@ai-sdk/openai", models: { chat: { package: "aisdk:@ai-sdk/anthropic" } } },
                 },
                 mcp: {
                   servers: {
@@ -2163,6 +2173,11 @@ describe("OpencodePlugin with a Console config", () => {
             expect(Object.keys(info.mcp?.servers ?? {})).toEqual(["remote"])
             const remote = required(info.providers?.remote)
             expect(remote.env).toBeUndefined()
+            // Installing a package the Console names would run its code on this machine.
+            expect(remote.package).toBeUndefined()
+            expect(remote.models?.chat?.package).toBeUndefined()
+            expect(info.providers?.official?.package).toBe("@ai-sdk/openai")
+            expect(info.providers?.official?.models?.chat?.package).toBe("aisdk:@ai-sdk/anthropic")
             expect(remote.settings).toEqual({ baseURL: "https://remote" })
             expect(remote.models?.chat?.settings).toEqual({ temperature: 0.1 })
             expect(remote.models?.chat?.variants?.[0]?.settings).toEqual({ temperature: 0.2 })

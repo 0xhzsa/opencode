@@ -7,6 +7,7 @@ import { ConfigPolicy } from "@opencode/schema/config/policy"
 import { ConfigProvider } from "@opencode/schema/config/provider"
 import { Connection } from "@opencode/schema/connection"
 import { IntegrationID } from "@opencode/schema/integration-id"
+import { Provider } from "../provider.js"
 
 // Drop statements whose action or effect is a value this version does not know, so a newer remote source can
 // extend either enum. Malformed statements still fail validation.
@@ -51,8 +52,8 @@ export class Document extends Config.Document.extend<Document>("Config.Integrati
 
 /**
  * Builds an integration document from the allow-listed keys of a remote config: providers, remote MCP servers,
- * policies, and the web search selection. A remote source can never load plugins, run commands, or change any
- * other local behavior through config.
+ * policies, and the web search selection. A remote source can never load plugins, run commands, install arbitrary
+ * provider packages, or change any other local behavior through config.
  */
 export function make(input: {
   readonly integrationID: IntegrationID
@@ -76,6 +77,7 @@ export function make(input: {
               ...provider,
               // The connection supplies credentials; `env` would read local variables as this provider's key.
               env: undefined,
+              package: Provider.remotePackage(provider.package),
               settings: withoutCredentials(provider.settings),
               models:
                 provider.models &&
@@ -84,6 +86,7 @@ export function make(input: {
                     modelID,
                     {
                       ...model,
+                      package: Provider.remotePackage(model.package),
                       settings: withoutCredentials(model.settings),
                       variants: model.variants?.map((variant) => ({
                         ...variant,

@@ -334,6 +334,43 @@ describe("ModelsDev Service", () => {
     }),
   )
 
+  it.live("skips models whose catalog package a remote source may not install", () =>
+    Effect.gen(function* () {
+      const cache = makeCache()
+      const api = (sdk: Record<string, string>) => ({
+        api: { "chat-completions": { base_url: "https://api.acme.test/v1", sdk } },
+      })
+      writeCache(cache, {
+        acme: {
+          ...fixture.acme,
+          models: {
+            ...fixture.acme.models,
+            "acme-evil": sourceModel("acme-evil", api({ aisdk: "evil-pkg" })),
+            "acme-git": sourceModel("acme-git", api({ aisdk: "git+https://evil.example/pkg.git" })),
+            "acme-pinned": sourceModel(
+              "acme-pinned",
+              api({ aisdk: "@ai-sdk/openai@git+https://evil.example/pkg.git" }),
+            ),
+            "acme-opencodeai": sourceModel("acme-opencodeai", api({ opencodeai: "evil-pkg" })),
+            "acme-perplexity": sourceModel("acme-perplexity", api({ aisdk: "@ai-sdk/perplexity" })),
+            "acme-gitlab": sourceModel("acme-gitlab", api({ aisdk: "gitlab-ai-provider" })),
+          },
+        },
+      })
+      const state = yield* Ref.make(initialState)
+      const [acme] = yield* provided(
+        state,
+        cache,
+        ModelsDev.Service.use((service) => service.get()),
+      )
+      expect(acme?.models.map((model) => [model.id, model.package])).toEqual([
+        ["acme-1", undefined],
+        ["acme-perplexity", "aisdk:@ai-sdk/perplexity"],
+        ["acme-gitlab", "aisdk:gitlab-ai-provider"],
+      ])
+    }),
+  )
+
   it.live("keeps non-chat models with their type, maps MIME modalities, and skips malformed models", () =>
     Effect.gen(function* () {
       const cache = makeCache()

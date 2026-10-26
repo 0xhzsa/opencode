@@ -236,15 +236,17 @@ function route(providerID: Provider.ID, model: SourceModel): Route | undefined {
     ) ?? []
   if (!protocol || !api) return undefined
   const aisdk = api.sdk?.aisdk
-  const packageName =
+  // The catalog is remote, so it may only name packages a remote source is allowed to load.
+  const packageName = Provider.remotePackage(
     api.sdk?.opencodeai ??
-    (aisdk &&
-      (AISDKNative.native(aisdk, {
-        providerID,
-        modelID: model.id,
-        shape: protocol === "responses" ? "responses" : protocol === "chat-completions" ? "completions" : undefined,
-      }) ??
-        Provider.aisdk(aisdk)))
+      (aisdk &&
+        (AISDKNative.native(aisdk, {
+          providerID,
+          modelID: model.id,
+          shape: protocol === "responses" ? "responses" : protocol === "chat-completions" ? "completions" : undefined,
+        }) ??
+          Provider.aisdk(aisdk))),
+  )
   if (!packageName) return undefined
   const maxTokensField = Option.getOrUndefined(decodeMaxTokensField(api.compatibility?.max_tokens_field))
   const compatibility = {

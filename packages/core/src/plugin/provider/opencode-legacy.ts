@@ -78,13 +78,14 @@ export const register = Effect.fn("OpencodeLegacy.register")(function* (
     const remote = snapshot.remote?.type === "legacy" ? snapshot.remote : undefined
     for (const [providerID, item] of Object.entries(remote?.response.providers ?? {})) {
       const source = providers.get(item.canonical ?? providerID)
+      const providerPackage = Provider.remotePackage(item.package)
       providers.update(providerID, (provider) => {
         if (source && source.provider !== provider)
           Object.assign(provider, structuredClone(source.provider), { id: provider.id })
         provider.integrationID = Integration.ID.make("opencode")
         if (item.canonical !== undefined) provider.canonical = item.canonical
         if (item.name !== undefined) provider.name = item.name
-        provider.package = item.package ?? provider.package
+        provider.package = providerPackage ?? provider.package
         provider.settings = Provider.mergeOverlay(
           withoutCredentials(provider.settings),
           withoutCredentials(item.settings),
@@ -103,7 +104,8 @@ export const register = Effect.fn("OpencodeLegacy.register")(function* (
           if (config.releaseDate !== undefined) model.time = { released: Date.parse(config.releaseDate) }
           if (config.compatibility !== undefined)
             model.compatibility = { ...model.compatibility, ...config.compatibility }
-          model.package = config.package ?? (item.package !== undefined ? undefined : model.package)
+          model.package =
+            Provider.remotePackage(config.package) ?? (providerPackage !== undefined ? undefined : model.package)
           if (item.settings?.baseURL !== undefined && model.settings) delete model.settings.baseURL
           if (config.capabilities !== undefined)
             model.capabilities = Model.mergeCapabilities(config.capabilities, model.capabilities)
