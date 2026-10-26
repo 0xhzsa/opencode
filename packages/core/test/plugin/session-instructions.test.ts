@@ -30,12 +30,12 @@ it.live("Effect plugins can put, list, and remove session instruction entries se
     const context = yield* PluginHost.make(plugins)
     const created = yield* context.session.create({ title: "Plugin instructions" })
 
-    yield* context.session.instructions.entry.put({
+    yield* context.experimental.session.instructions.entry.put({
       sessionID: created.id,
       key: "deploy-target",
       value: "production",
     })
-    expect(yield* context.session.instructions.entry.list({ sessionID: created.id })).toEqual([
+    expect(yield* context.experimental.session.instructions.entry.list({ sessionID: created.id })).toEqual([
       { key: "deploy-target", value: "production" },
     ])
     expect(yield* sessions.inbox(created.id)).toEqual([])
@@ -44,7 +44,7 @@ it.live("Effect plugins can put, list, and remove session instruction entries se
     expect(first.initial).toBe(['<context key="deploy-target">', "production", "</context>"].join("\n"))
     expect(first.entries).toEqual([])
 
-    yield* context.session.instructions.entry.put({
+    yield* context.experimental.session.instructions.entry.put({
       sessionID: created.id,
       key: "deploy-target",
       value: { region: "us-east-1" },
@@ -64,8 +64,8 @@ it.live("Effect plugins can put, list, and remove session instruction entries se
       }),
     ])
 
-    yield* context.session.instructions.entry.remove({ sessionID: created.id, key: "deploy-target" })
-    expect(yield* context.session.instructions.entry.list({ sessionID: created.id })).toEqual([])
+    yield* context.experimental.session.instructions.entry.remove({ sessionID: created.id, key: "deploy-target" })
+    expect(yield* context.experimental.session.instructions.entry.list({ sessionID: created.id })).toEqual([])
 
     const third = yield* prepareRequest(created.id)
     expect(third.entries.at(-1)?.message).toMatchObject({
@@ -76,9 +76,13 @@ it.live("Effect plugins can put, list, and remove session instruction entries se
 
     const missing = Session.ID.create()
     for (const operation of [
-      context.session.instructions.entry.list({ sessionID: missing }),
-      context.session.instructions.entry.put({ sessionID: missing, key: "deploy-target", value: "production" }),
-      context.session.instructions.entry.remove({ sessionID: missing, key: "deploy-target" }),
+      context.experimental.session.instructions.entry.list({ sessionID: missing }),
+      context.experimental.session.instructions.entry.put({
+        sessionID: missing,
+        key: "deploy-target",
+        value: "production",
+      }),
+      context.experimental.session.instructions.entry.remove({ sessionID: missing, key: "deploy-target" }),
     ]) {
       expect(yield* operation.pipe(Effect.flip)).toMatchObject({
         _tag: "Session.NotFoundError",
@@ -86,7 +90,7 @@ it.live("Effect plugins can put, list, and remove session instruction entries se
       })
     }
     expect(
-      yield* context.session.instructions.entry
+      yield* context.experimental.session.instructions.entry
         .put({
           sessionID: created.id,
           key: "oversized",
@@ -97,13 +101,13 @@ it.live("Effect plugins can put, list, and remove session instruction entries se
 
     for (const key of ["Bad Key", "invalid/key"]) {
       for (const operation of [
-        context.session.instructions.entry.put({ sessionID: created.id, key, value: "rejected" }),
-        context.session.instructions.entry.remove({ sessionID: created.id, key }),
+        context.experimental.session.instructions.entry.put({ sessionID: created.id, key, value: "rejected" }),
+        context.experimental.session.instructions.entry.remove({ sessionID: created.id, key }),
       ]) {
         expect(yield* operation.pipe(Effect.flip)).toMatchObject({ _tag: "SchemaError" })
       }
     }
-    yield* context.session.instructions.entry.put({
+    yield* context.experimental.session.instructions.entry.put({
       sessionID: created.id,
       key: "recovered",
       value: "still works",
@@ -127,38 +131,42 @@ it.live("Promise plugins can put, list, and remove session instruction entries s
       id: "test.session-instructions.put",
       async setup(ctx) {
         expect(
-          await ctx.session.instructions.entry.put({
+          await ctx.experimental.session.instructions.entry.put({
             sessionID: created.id,
             key: "team.guidelines",
             value: "Prefer small, focused changes.",
           }),
         ).toBeUndefined()
-        expect(await ctx.session.instructions.entry.list({ sessionID: created.id })).toEqual([
+        expect(await ctx.experimental.session.instructions.entry.list({ sessionID: created.id })).toEqual([
           { key: "team.guidelines", value: "Prefer small, focused changes." },
         ])
         const missing = Session.ID.create()
-        await expect(ctx.session.instructions.entry.list({ sessionID: missing })).rejects.toMatchObject({
+        await expect(ctx.experimental.session.instructions.entry.list({ sessionID: missing })).rejects.toMatchObject({
           _tag: "Session.NotFoundError",
           sessionID: missing,
         })
         await expect(
-          ctx.session.instructions.entry.put({ sessionID: missing, key: "deploy-target", value: "production" }),
+          ctx.experimental.session.instructions.entry.put({
+            sessionID: missing,
+            key: "deploy-target",
+            value: "production",
+          }),
         ).rejects.toMatchObject({ _tag: "Session.NotFoundError", sessionID: missing })
         await expect(
-          ctx.session.instructions.entry.remove({ sessionID: missing, key: "deploy-target" }),
+          ctx.experimental.session.instructions.entry.remove({ sessionID: missing, key: "deploy-target" }),
         ).rejects.toMatchObject({ _tag: "Session.NotFoundError", sessionID: missing })
         await expect(
-          ctx.session.instructions.entry.put({
+          ctx.experimental.session.instructions.entry.put({
             sessionID: created.id,
             key: "invalid/key",
             value: "rejected",
           }),
         ).rejects.toMatchObject({ _tag: "SchemaError" })
         await expect(
-          ctx.session.instructions.entry.remove({ sessionID: created.id, key: "invalid/key" }),
+          ctx.experimental.session.instructions.entry.remove({ sessionID: created.id, key: "invalid/key" }),
         ).rejects.toMatchObject({ _tag: "SchemaError" })
         await expect(
-          ctx.session.instructions.entry.put({
+          ctx.experimental.session.instructions.entry.put({
             sessionID: created.id,
             key: "oversized",
             value: "x".repeat(InstructionEntry.MaxValueBytes),
@@ -177,12 +185,12 @@ it.live("Promise plugins can put, list, and remove session instruction entries s
       id: "test.session-instructions.remove",
       async setup(ctx) {
         expect(
-          await ctx.session.instructions.entry.remove({
+          await ctx.experimental.session.instructions.entry.remove({
             sessionID: created.id,
             key: "team.guidelines",
           }),
         ).toBeUndefined()
-        expect(await ctx.session.instructions.entry.list({ sessionID: created.id })).toEqual([])
+        expect(await ctx.experimental.session.instructions.entry.list({ sessionID: created.id })).toEqual([])
       },
     }).effect(context)
 

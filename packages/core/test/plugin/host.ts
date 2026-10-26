@@ -69,12 +69,22 @@ export function host(overrides: Overrides = {}): Plugin.Context {
     },
     event: { subscribe: events(overrides.event?.subscribe ?? (() => Stream.empty)) },
     experimental: overrides.experimental ?? {
+      generate: {
+        text: () => Effect.die("unused experimental.generate.text"),
+      },
+      session: {
+        wait: () => Effect.die("unused experimental.session.wait"),
+        instructions: {
+          entry: {
+            list: () => Effect.die("unused experimental.session.instructions.entry.list"),
+            put: () => Effect.die("unused experimental.session.instructions.entry.put"),
+            remove: () => Effect.die("unused experimental.session.instructions.entry.remove"),
+          },
+        },
+      },
       terminal: {
         read: () => Effect.die("unused experimental.terminal.read"),
       },
-    },
-    generate: overrides.generate ?? {
-      text: () => Effect.die("unused generate.text"),
     },
     integration: overrides.integration ?? {
       list: () => Effect.die("unused integration.list"),
@@ -183,15 +193,7 @@ export function host(overrides: Overrides = {}): Plugin.Context {
       move: overrides.session?.move ?? (() => Effect.die("unused session.move")),
       synthetic: overrides.session?.synthetic ?? (() => Effect.die("unused session.synthetic")),
       interrupt: overrides.session?.interrupt ?? (() => Effect.die("unused session.interrupt")),
-      wait: overrides.session?.wait ?? (() => Effect.die("unused session.wait")),
       context: overrides.session?.context ?? (() => Effect.die("unused session.context")),
-      instructions: overrides.session?.instructions ?? {
-        entry: {
-          list: () => Effect.die("unused session.instructions.entry.list"),
-          put: () => Effect.die("unused session.instructions.entry.put"),
-          remove: () => Effect.die("unused session.instructions.entry.remove"),
-        },
-      },
     },
   }
 }

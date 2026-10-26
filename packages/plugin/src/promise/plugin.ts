@@ -1,5 +1,10 @@
 import type { OpenCodeClient } from "@opencode/client"
-import type { CredentialApi, ExperimentalGenerateApi, PluginApi } from "@opencode/client/promise/api"
+import type {
+  CredentialApi,
+  ExperimentalGenerateApi,
+  ExperimentalSessionApi,
+  PluginApi,
+} from "@opencode/client/promise/api"
 import type { Location } from "@opencode/schema/location"
 import type { PluginOptions } from "../options.js"
 import type { App } from "../app.js"
@@ -33,12 +38,13 @@ export interface Context {
   readonly credential: Pick<CredentialApi, "activate">
   readonly event: EventDomain
   readonly experimental: {
+    readonly generate: ExperimentalGenerateApi
+    readonly session: Pick<ExperimentalSessionApi, "wait" | "instructions">
     readonly terminal: Pick<OpenCodeClient["experimental"]["persistentPty"], "read">
   }
   readonly integration: IntegrationDomain
   readonly mcp: MCPDomain
   readonly model: ModelDomain
-  readonly generate: ExperimentalGenerateApi
   readonly permission: PermissionDomain
   readonly plugin: Pick<PluginApi, "list">
   readonly provider: ProviderDomain

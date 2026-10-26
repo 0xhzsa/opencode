@@ -171,6 +171,7 @@ const table = sqliteTable("session", {
 - New endpoints and new default behaviors start experimental.
 - To graduate one, move the route out of `/api/experimental`, drop the `experimental.` prefix, and note it in `CHANGELOG.md`.
 - Experimental changes ship without deprecated aliases: rename or remove, then update the callers.
+- Plugins reach experimental endpoints only through `ctx.experimental` (`ctx.experimental.session.wait`, `ctx.experimental.generate`), in both the Effect and Promise `Context`, with no alias elsewhere on `ctx`. Experimental hooks are named `experimental.*` (`experimental.ws.handshake`). `packages/core/test/plugin/experimental-namespace.test.ts` checks this against the Promise adapter's endpoint mapping.
 
 ## Testing
 

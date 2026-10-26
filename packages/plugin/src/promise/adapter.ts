@@ -28,6 +28,12 @@ interface CompiledEndpoint {
 }
 
 const compiledEndpoints = new WeakMap<object, CompiledEndpoint>()
+
+/** The endpoint and Effect host method behind each adapted Promise method, so tests can check where endpoints surface. */
+export const adaptedEndpoints = new WeakMap<
+  object,
+  { readonly endpoint: HttpApiEndpoint.Top; readonly method: object }
+>()
 const JsonInput = Schema.fromJsonString(Schema.Unknown)
 
 interface HostRpcCallContext {
@@ -268,7 +274,7 @@ export function fromPromise(plugin: Plugin) {
           method: (input: never) => Effect.Effect<unknown, unknown>,
         ) => {
           const compiled = compileEndpoint(endpoint)
-          return ((input?: unknown) =>
+          const adapted = (input?: unknown) =>
             Effect.gen(function* () {
               // Match the generated Promise client, whose request body crosses JSON before endpoint decoding.
               const normalized = yield* Schema.encodeUnknownEffect(JsonInput)(input ?? {}).pipe(
@@ -278,7 +284,9 @@ export function fromPromise(plugin: Plugin) {
               const result = yield* method(Object.assign({}, ...decoded) as never)
               if (compiled.noContent) return undefined
               return yield* compiled.encode(result)
-            }).pipe(Effect.runPromiseWith(runtime))) as PromiseMethod
+            }).pipe(Effect.runPromiseWith(runtime))
+          adaptedEndpoints.set(adapted, { endpoint, method })
+          return adapted as PromiseMethod
         }
 
         const transform =
@@ -341,12 +349,31 @@ export function fromPromise(plugin: Plugin) {
               ),
           },
           experimental: {
+            generate: {
+              text: adaptApiMethod(GenerateEndpoints["generate.text"], host.experimental.generate.text),
+            },
+            session: {
+              wait: adaptApiMethod(SessionEndpoints["session.wait"], host.experimental.session.wait),
+              instructions: {
+                entry: {
+                  list: adaptApiMethod(
+                    SessionEndpoints["session.instructions.entry.list"],
+                    host.experimental.session.instructions.entry.list,
+                  ),
+                  put: adaptApiMethod(
+                    SessionEndpoints["session.instructions.entry.put"],
+                    host.experimental.session.instructions.entry.put,
+                  ),
+                  remove: adaptApiMethod(
+                    SessionEndpoints["session.instructions.entry.remove"],
+                    host.experimental.session.instructions.entry.remove,
+                  ),
+                },
+              },
+            },
             terminal: {
               read: adaptApiMethod(ExperimentalEndpoints["persistentPty.read"], host.experimental.terminal.read),
             },
-          },
-          generate: {
-            text: adaptApiMethod(GenerateEndpoints["generate.text"], host.generate.text),
           },
           model: {
             list: adaptApiMethod(ModelEndpoints["model.list"], host.model.list),
@@ -610,24 +637,7 @@ export function fromPromise(plugin: Plugin) {
             interrupt: adaptApiMethod(SessionEndpoints["session.interrupt"], host.session.interrupt),
             update: adaptApiMethod(SessionEndpoints["session.update"], host.session.update),
             move: adaptApiMethod(SessionEndpoints["session.move"], host.session.move),
-            wait: adaptApiMethod(SessionEndpoints["session.wait"], host.session.wait),
             context: adaptApiMethod(SessionEndpoints["session.context"], host.session.context),
-            instructions: {
-              entry: {
-                list: adaptApiMethod(
-                  SessionEndpoints["session.instructions.entry.list"],
-                  host.session.instructions.entry.list,
-                ),
-                put: adaptApiMethod(
-                  SessionEndpoints["session.instructions.entry.put"],
-                  host.session.instructions.entry.put,
-                ),
-                remove: adaptApiMethod(
-                  SessionEndpoints["session.instructions.entry.remove"],
-                  host.session.instructions.entry.remove,
-                ),
-              },
-            },
           },
           shell: {
             hook: (name, callback) =>
