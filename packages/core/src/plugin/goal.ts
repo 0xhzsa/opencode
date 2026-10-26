@@ -22,7 +22,9 @@ export const WAIT_LIMIT = Duration.minutes(30)
 /** Recent Sessions checked at startup for goals an earlier server process left active. */
 const SWEEP_LIMIT = 100
 // Identifies this server process. A goal armed by an earlier process comes back paused instead of resuming on its own.
-const boot = crypto.randomUUID()
+// Created on first use: Workers forbid random values while a module loads.
+let processBoot: string | undefined
+const boot = () => (processBoot ??= crypto.randomUUID())
 
 type State = SessionGoal.State
 
@@ -132,7 +134,7 @@ export const Plugin = define({
     ) {
       const goal = yield* read(sessionID)
       if (goal?.status !== "active") return
-      if (goal.boot !== boot)
+      if (goal.boot !== boot())
         return yield* settle(sessionID, goal, "paused", "The server restarted while the goal was active")
       // A running subagent's result wakes the Session, and the hook runs again then.
       if (background.some((work) => work.kind === "subagent")) return
@@ -291,7 +293,7 @@ export const Plugin = define({
           page.data,
           (session) => {
             const goal = SessionGoal.fromMetadata(session.id, session.metadata)
-            if (goal?.status !== "active" || goal.boot === boot) return Effect.void
+            if (goal?.status !== "active" || goal.boot === boot()) return Effect.void
             return settle(session.id, goal, "paused", "The server restarted while the goal was active")
           },
           { discard: true },
@@ -332,7 +334,7 @@ export const Plugin = define({
                 // The resume continuation is the first round of the new budget.
                 rounds: 1,
                 maxRounds: goal.maxRounds,
-                boot,
+                boot: boot(),
                 updatedAt: yield* Clock.currentTimeMillis,
               }
               yield* write(input.sessionID, resumed)
@@ -358,7 +360,7 @@ export const Plugin = define({
               status: "active",
               rounds: 0,
               maxRounds: MAX_ROUNDS,
-              boot,
+              boot: boot(),
               updatedAt: yield* Clock.currentTimeMillis,
             }
             yield* write(input.sessionID, created)
