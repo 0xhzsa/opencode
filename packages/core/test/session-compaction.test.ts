@@ -46,6 +46,8 @@ import { testEffect } from "./lib/effect"
 let requests: LLMRequest[] = []
 /** Runs before a request's response streams; tests hold it back to keep a background summary in flight. */
 let beforeResponse: Effect.Effect<void> = Effect.void
+/** A provider-side text limit, independent of the compaction estimator and excluding stripped reasoning. */
+let inputLimit: number | undefined
 const model = LanguageModel.make({
   id: "summary-model",
   provider: "test",
@@ -64,6 +66,16 @@ const cost = [
 const client = Layer.mock(LLMClient.Service)({
   stream: (request: LLMRequest) => {
     requests.push(request)
+    if (
+      inputLimit !== undefined &&
+      request.messages.reduce(
+        (sum, message) =>
+          sum + message.content.reduce((sum, part) => sum + (part.type === "text" ? part.text.length / 4 : 0), 0),
+        0,
+      ) > inputLimit
+    ) {
+      return Stream.make(LLMEvent.providerError({ message: "prompt too long", classification: "context-overflow" }))
+    }
     return Stream.fromEffect(beforeResponse).pipe(
       Stream.drain,
       Stream.concat(
@@ -1094,7 +1106,8 @@ for (const change of ["variant", "hook growth"] as const) {
     Effect.gen(function* () {
       requests = []
       const session = yield* insertSession(Session.ID.make(`ses_prefix_${change.replace(" ", "_")}`))
-      const older = measured("Earlier answer", 80_000)
+      // The shorter prefix must also exceed the budget after the hook adds its instructions.
+      const older = measured("Earlier answer", 156_000)
       const context = {
         ...loaded(session, [
           textUser("Earlier question"),
@@ -1131,6 +1144,131 @@ for (const change of ["variant", "hook growth"] as const) {
     }),
   )
 }
+
+it.effect("summary measured recovery shrinks from the rejected measured size", () =>
+  Effect.gen(function* () {
+    requests = []
+    inputLimit = 70_000
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        inputLimit = undefined
+      }),
+    )
+    const session = yield* insertSession(Session.ID.make("ses_measured_rejection"))
+    const older = measured("Earlier answer", 90_000)
+    const context = loaded(session, [
+      textUser("a".repeat(360_000)),
+      { ...older, content: [{ type: "reasoning" as const, text: "r".repeat(1_400_000) }, ...older.content] },
+      textUser("b".repeat(360_000)),
+      measured("Latest answer", 182_000),
+    ])
+    const compaction = yield* SessionCompaction.Service
+    expect(yield* compaction.compact({ reason: "manual", context, inputID: SessionMessage.ID.create() })).toEqual({
+      status: "completed",
+    })
+    expect(requests).toHaveLength(5)
+    expect(JSON.stringify(requests.at(-1)?.messages)).toContain("characters omitted")
+  }),
+)
+
+for (const oversized of [false, true]) {
+  it.effect(`summary measured recovery sizes the shortened prefix (oversized=${oversized})`, () =>
+    Effect.gen(function* () {
+      requests = []
+      const session = yield* insertSession(Session.ID.make(`ses_measured_tail_${oversized}`))
+      const older = measured("Earlier answer", oversized ? 220_000 : 160_000)
+      const messages = [
+        textUser("Earlier question"),
+        {
+          ...older,
+          content: [
+            ...(oversized ? [] : [{ type: "reasoning" as const, text: "r".repeat(900_000) }]),
+            ...older.content,
+          ],
+        },
+        textUser("Latest question. ".repeat(7_500)),
+        measured("Latest answer", oversized ? 240_000 : 190_000),
+      ]
+      const context = {
+        ...loaded(session, messages),
+        tools: {
+          definitions: [
+            ToolDefinition.make({ name: "read", description: "Read files", inputSchema: { type: "object" } }),
+          ],
+          execute: () => Effect.die("Compaction must not execute tools"),
+        },
+      }
+      const compaction = yield* SessionCompaction.Service
+      expect(yield* compaction.compact({ reason: "manual", context, inputID: SessionMessage.ID.create() })).toEqual({
+        status: "completed",
+      })
+      expect(requests).toHaveLength(1)
+      expect(requests[0].tools).toEqual(oversized ? [] : context.tools.definitions)
+      expect(JSON.stringify(requests[0].messages)).not.toContain("Latest question")
+      if (!oversized) {
+        expect(requests[0].messages.slice(0, -1)).toEqual(toLLMMessages(messages.slice(0, 2), resolved.ref))
+        expect(requests[0].generation?.maxTokens).toBe(30_000)
+      }
+    }),
+  )
+}
+
+it.effect("summary measured recovery counts hook growth after unsupported media removal", () =>
+  Effect.gen(function* () {
+    requests = []
+    const session = yield* insertSession(Session.ID.make("ses_measured_media_hook"))
+    const context = {
+      ...loaded(session, [
+        {
+          ...textUser("Earlier question"),
+          files: Array.from({ length: 100 }, () => ({
+            mime: "image/png",
+            data: "a",
+            source: { type: "inline" as const },
+          })),
+        },
+        measured("Latest answer", 156_000),
+      ]),
+      model: { ...resolved, capabilities: { ...resolved.capabilities, input: ["text" as const] } },
+      tools: {
+        definitions: [
+          ToolDefinition.make({ name: "read", description: "Read files", inputSchema: { type: "object" } }),
+        ],
+        execute: () => Effect.die("Compaction must not execute tools"),
+      },
+    }
+    const hooks = yield* PluginHooks.Service
+    yield* hooks.register("session", "compaction", (event) =>
+      Effect.sync(() => {
+        event.system.push({ type: "text", text: "Additional instructions. ".repeat(6_000) })
+      }),
+    )
+    const compaction = yield* SessionCompaction.Service
+    expect(yield* compaction.compact({ reason: "manual", context, inputID: SessionMessage.ID.create() })).toEqual({
+      status: "completed",
+    })
+    expect(requests).toHaveLength(1)
+    expect(requests[0].tools).toEqual([])
+  }),
+)
+
+it.effect("summary measured recovery does not reuse usage after an agent switch", () =>
+  Effect.gen(function* () {
+    requests = []
+    const session = yield* insertSession(Session.ID.make("ses_measured_agent_switch"))
+    const agent = Agent.ID.make("other")
+    const context = {
+      ...loaded(session, [textUser("Earlier question"), measured("Earlier answer", 156_000)]),
+      agent: { id: agent, info: { ...Agent.Info.default(agent), system: "s".repeat(780_000) } },
+    }
+    const compaction = yield* SessionCompaction.Service
+    expect(yield* compaction.compact({ reason: "manual", context, inputID: SessionMessage.ID.create() })).toEqual({
+      status: "completed",
+    })
+    expect(requests).toHaveLength(1)
+    expect(requests[0].generation?.maxTokens).toBeLessThanOrEqual(5_000)
+  }),
+)
 
 it.effect("background summaries stay off unless enabled", () =>
   Effect.gen(function* () {

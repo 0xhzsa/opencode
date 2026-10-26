@@ -467,30 +467,42 @@ export const layer = Layer.effect(
       const headings = SUMMARY_TEMPLATE.split("\n").filter((line) => line.startsWith("##"))
       const filled = (text: string) => text.split("\n").some((line) => headings.includes(line.trim()))
       const prepared = yield* prepare(context, messages, budget)
-      const anchor = context.messages.findLast((message) => hasMeasuredPrompt(message, context.model.ref))
-      // A background request ends immediately before the measured response; its input count covers that exact prefix.
-      // Foreground summaries also include the response and any local tool results or messages since it.
-      const measured =
-        anchor?.type === "assistant" &&
-        anchor.tokens &&
-        anchor.model.id === context.model.ref.id &&
-        anchor.model.variant === context.model.ref.variant &&
-        (!background || context.messages.indexOf(anchor) === messages.length)
-          ? background
-            ? { measured: anchor.tokens.input + anchor.tokens.cache.read + anchor.tokens.cache.write, estimated: 0 }
-            : estimatePrompt(context)
-          : undefined
-      // Account conservatively for hook additions without counting old reasoning again: providers can strip it.
+      const measured = measuredSummary(context, messages)
+      const base = transcript(context, messages)
+      // Compare the same media-normalized shapes so removed images cannot hide hook additions.
+      const growth = Math.max(
+        0,
+        estimateRequest(prepared.request) -
+          estimateRequest({
+            ...base,
+            tools: context.tools.definitions,
+            messages: SessionModelRequest.boundImages(
+              SessionModelRequest.unsupportedParts(
+                base.messages,
+                context.model.capabilities,
+                context.model.model.provider,
+              ),
+            ),
+          }),
+      )
       const estimate = measured && {
-        measured: measured.measured,
-        estimated:
-          measured.estimated +
-          Math.max(
-            0,
-            estimateRequest(prepared.request) -
-              estimateRequest({ ...transcript(context, messages), tools: context.tools.definitions }),
-          ),
+        ...measured,
+        estimated: measured.estimated + growth,
       }
+      const history = withoutTail(prepared.request, keepID)
+      // Prefer usage measured inside the shorter prefix. Without an earlier anchor, the full count is a safe upper
+      // bound; subtracting an estimated tail could subtract reasoning the provider already stripped.
+      const prefix =
+        history === prepared.request
+          ? measured
+          : (measuredSummary(
+              context,
+              messages.slice(
+                0,
+                messages.findIndex((message) => message.id === keepID),
+              ),
+            ) ?? measured)
+      const historyEstimate = prefix && { ...prefix, estimated: prefix.estimated + growth }
 
       // Hooks saw the request without the summary prompt, so it is appended here. A reply that ignores the
       // template gets one reminder before it counts as a failure.
@@ -533,7 +545,7 @@ export const layer = Layer.effect(
         prepared,
         budget - overhead,
         send,
-        { fit: fit - overhead, history: withoutTail(prepared.request, keepID), estimate },
+        { fit: fit - overhead, history, estimate, historyEstimate },
         background,
       )
       if (!keepID) return result
@@ -610,7 +622,12 @@ export const layer = Layer.effect(
       prepared: Prepared,
       target: number,
       send: (request: LLMRequest, estimate?: Estimate) => Effect.Effect<Result, AIError | Failure>,
-      shrink: { readonly fit: number; readonly history: LLMRequest; readonly estimate?: Estimate } = {
+      shrink: {
+        readonly fit: number
+        readonly history: LLMRequest
+        readonly estimate?: Estimate
+        readonly historyEstimate?: Estimate
+      } = {
         fit: target,
         history: prepared.request,
       },
@@ -628,11 +645,12 @@ export const layer = Layer.effect(
       while (true) {
         // A provider rejection invalidates the measurement; keep the existing overflow shrink sequence.
         const estimate = trigger.reason !== "overflow" && rejections === 0 ? shrink.estimate : undefined
+        const historyEstimate = trigger.reason !== "overflow" && rejections === 0 ? shrink.historyEstimate : undefined
         const unchanged = asText
           ? undefined
           : (estimate ? total(estimate) : estimateRequest(prepared.request)) <= fit
             ? prepared.request
-            : (!estimate || shrink.history !== prepared.request) && estimateRequest(shrink.history) <= target
+            : (historyEstimate ? total(historyEstimate) : estimateRequest(shrink.history)) <= target
               ? shrink.history
               : undefined
         const request =
@@ -653,7 +671,9 @@ export const layer = Layer.effect(
           })
         }
 
-        const attempt = yield* Effect.result(send(request, request === prepared.request ? estimate : undefined))
+        const requestEstimate =
+          request === prepared.request ? estimate : request === shrink.history ? historyEstimate : undefined
+        const attempt = yield* Effect.result(send(request, requestEstimate))
         if (Result.isSuccess(attempt)) return attempt.success
         const cause = attempt.failure
         if (!(cause instanceof AIError)) return yield* Effect.fail(cause)
@@ -668,7 +688,9 @@ export const layer = Layer.effect(
         if (tooLarge || isContextOverflowFailure(cause)) {
           const step = SHRINK_STEPS[rejections]
           if (step === undefined) return yield* Effect.fail<Failure>({ error })
-          rejected ??= estimateRequest(request)
+          rejected ??= requestEstimate ? total(requestEstimate) : estimateRequest(request)
+          // Do not retry the rejected measured prefix using a contradictory character estimate.
+          if (requestEstimate) asText = true
           target = Math.floor(rejected * step)
           fit = target
           rejections++
@@ -1136,6 +1158,26 @@ export const estimatePrompt = (context: SessionContext.Loaded): Estimate => {
     measured: tokens.input + tokens.cache.read + tokens.cache.write + tokens.output + tokens.reasoning,
     estimated: unmeasured.reduce((sum, message) => sum + estimateMessage(message), 0),
   }
+}
+
+/** Provider usage for this exact summary prefix, only while its model and agent still match. */
+const measuredSummary = (context: SessionContext.Loaded, messages: ReadonlyArray<SessionMessage.Info>) => {
+  // Background summaries stop just before a response, whose input usage measures that entire prefix.
+  const next = context.messages[messages.length]
+  const anchor =
+    next?.type === "assistant" ? next : messages.findLast((message) => hasMeasuredPrompt(message, context.model.ref))
+  if (
+    anchor?.type !== "assistant" ||
+    !anchor.tokens ||
+    !hasMeasuredPrompt(anchor, context.model.ref) ||
+    anchor.model.id !== context.model.ref.id ||
+    anchor.model.variant !== context.model.ref.variant ||
+    anchor.agent !== context.agent.id
+  )
+    return undefined
+  if (anchor === next)
+    return { measured: anchor.tokens.input + anchor.tokens.cache.read + anchor.tokens.cache.write, estimated: 0 }
+  return estimatePrompt({ ...context, messages })
 }
 
 /**
