@@ -1,6 +1,6 @@
 export * as CacheProbe from "./cache-probe.js"
 
-import type { ContentPart, LLMRequest, Message, ToolEntry } from "@opencode/ai"
+import type { ContentPart, LLMRequest, Message, ToolEntry } from "@opencode/ai/effect"
 import type { TokenUsage } from "@opencode/schema/token-usage"
 import { Hash } from "@opencode/util/hash"
 

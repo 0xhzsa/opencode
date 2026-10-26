@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { CacheHint, Media, Message, SystemPart, ToolDefinition } from "@opencode/ai"
+import { CacheHint, Media, Message, SystemPart, ToolDefinition } from "@opencode/ai/effect"
 import { CacheProbe } from "@opencode/core/session/cache-probe"
 
 const tool = (name: string, description = `${name} tool`) =>
