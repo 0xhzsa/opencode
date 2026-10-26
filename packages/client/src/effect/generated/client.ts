@@ -237,6 +237,8 @@ import type {
   ExperimentalPersistentPtyRemoveOutput,
   ExperimentalPersistentPtyConnectTokenInput,
   ExperimentalPersistentPtyConnectTokenOutput,
+  ExperimentalSessionTimelineInput,
+  ExperimentalSessionTimelineOutput,
   ShellListInput,
   ShellListOutput,
   ShellCreateInput,
@@ -1496,6 +1498,15 @@ const EndpointExperimentalPersistentPtyConnectToken =
       ),
     )
 
+const EndpointExperimentalSessionTimeline =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalSessionTimelineInput) =>
+    preserveEffect<ExperimentalSessionTimelineOutput>()(
+      raw["session.timeline"]({
+        params: { sessionID: input["sessionID"] },
+        query: { limit: input["limit"], order: input["order"], cursor: input["cursor"], type: input["type"] },
+      }).pipe(Effect.mapError(mapClientError)),
+    )
+
 const adaptGroupExperimental = (raw: RawClient["server.experimental"]) => ({
   persistentPty: {
     read: EndpointExperimentalPersistentPtyRead(raw),
@@ -1509,6 +1520,7 @@ const adaptGroupExperimental = (raw: RawClient["server.experimental"]) => ({
     remove: EndpointExperimentalPersistentPtyRemove(raw),
     connectToken: EndpointExperimentalPersistentPtyConnectToken(raw),
   },
+  session: { timeline: EndpointExperimentalSessionTimeline(raw) },
 })
 
 const EndpointShellList = (raw: RawClient["server.shell"]) => (input?: ShellListInput) =>
