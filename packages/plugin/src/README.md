@@ -125,10 +125,14 @@ await ctx.session.hook("retry", (event) => {
 
 When a Session finishes model work with no pending input, the `idle` hook runs just before it goes idle. It does not
 run after interruption, failure, or control-only work such as a manual compaction. Input the hook admits runs in the same execution instead of the Session going idle, so a
-plugin that always admits input must bound its own loop:
+plugin that always admits input must bound its own loop.
+
+`event.background` lists background shells and subagents still running for the Session or its descendants. When one
+finishes, its notice wakes the Session and the hook runs again, so a plugin that waits for background work can return:
 
 ```ts
 await ctx.session.hook("idle", async (event) => {
+  if (event.background.some((work) => work.kind === "subagent")) return
   await ctx.session.synthetic({ sessionID: event.sessionID, text: "Run the tests and fix any failures." })
 })
 ```
