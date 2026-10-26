@@ -225,6 +225,54 @@ describe("goal plugin", () => {
     }),
   )
 
+  it.live("does not wait on work a descendant owns, since only the descendant is woken", () =>
+    Effect.gen(function* () {
+      const session = yield* project()
+      const sessions = yield* Session.Service
+      const jobs = yield* Job.Service
+      const child = yield* sessions.create({ parentID: session.id, title: "Explore", agent: Agent.ID.make("build") })
+      const grandchild = yield* sessions.create({ parentID: child.id, title: "Dig", agent: Agent.ID.make("build") })
+      yield* jobs.start({
+        id: grandchild.id,
+        type: "subagent",
+        recovery: {
+          kind: "subagent",
+          parentSessionID: child.id,
+          childSessionID: grandchild.id,
+          agent: "explore",
+          description: "Dig",
+        },
+        run: Effect.never,
+      })
+      yield* jobs.background(grandchild.id)
+      yield* jobs.start({
+        id: "child-shell",
+        type: "shell",
+        recovery: { kind: "shell", sessionID: child.id, shellID: "child-shell", command: "bun run build" },
+        run: Effect.never,
+      })
+      yield* jobs.background("child-shell")
+      const prompts: string[] = []
+      const verdicts = reviewer(
+        '{"verdict":"wait","reason":"bun run build is still running."}',
+        '{"verdict":"done","reason":"The report is written."}',
+      )
+      yield* serve((request) => {
+        if (isReview(request)) prompts.push(JSON.stringify(request.messages.at(-1)))
+        return verdicts.respond(request)
+      })
+
+      yield* sessions.command({ sessionID: session.id, command: "goal", text: "Write the report" })
+      yield* sessions.wait(session.id)
+
+      // The grandchild reports to the child, so the reviewer runs. With none of the Session's own shells running,
+      // "wait" is not offered and counts as an unusable answer.
+      expect(verdicts.asked()).toBe(2)
+      expect(prompts[0]).toContain("No background shells are running.")
+      expect(yield* goal(session.id)).toMatchObject({ status: "complete", reason: "The report is written." })
+    }),
+  )
+
   it.live("drops the reviewer's verdict when the goal is paused while it runs", () =>
     Effect.gen(function* () {
       const session = yield* project()

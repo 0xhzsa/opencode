@@ -264,9 +264,9 @@ export namespace Execution {
 }
 
 /**
- * Follows `session.execution.succeeded` when no background subagent of the Session or its
- * descendants is still running, so the Session has nothing more coming on its own. A running
- * subagent's result wakes the Session later, and that execution settles instead.
+ * Follows `session.execution.succeeded` when none of the Session's own background subagents is
+ * still running, so the Session has nothing more coming on its own. A running subagent's result
+ * wakes the Session later, and that execution settles instead.
  */
 export const Settled = Event.ephemeral({ type: "session.settled", schema: Base })
 export type Settled = typeof Settled.Type

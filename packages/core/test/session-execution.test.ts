@@ -271,6 +271,46 @@ describe("SessionExecution lifecycle", () => {
     }),
   )
 
+  it.effect("settles while a grandchild subagent runs, since it reports to its own parent", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const bus = yield* Bus.Service
+      const jobs = yield* Job.Service
+      const parent = Session.ID.make("ses_settled_root")
+      const child = Session.ID.make("ses_settled_reported")
+      const grandchild = Session.ID.make("ses_settled_grandchild")
+      yield* seedSessions(database, [parent])
+      yield* seedSessions(database, [child], { parent_id: parent })
+      yield* seedSessions(database, [grandchild], { parent_id: child })
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(scope, () => Effect.void)
+      const execution = Context.get(context, SessionExecution.Service)
+      const settled: unknown[] = []
+      yield* bus.listen((event) =>
+        Effect.sync(() => {
+          if (event.type === "session.settled") settled.push(event.data)
+        }),
+      )
+      yield* jobs.start({
+        id: grandchild,
+        type: "subagent",
+        recovery: {
+          kind: "subagent",
+          parentSessionID: child,
+          childSessionID: grandchild,
+          agent: "general",
+          description: "Nested inspection",
+        },
+        run: Effect.never,
+      })
+      yield* jobs.background(grandchild)
+
+      yield* execution.resume(parent)
+      expect(settled).toEqual([{ sessionID: parent }])
+    }),
+  )
+
   it.effect("does not settle after a failed or interrupted execution", () =>
     Effect.gen(function* () {
       const database = yield* Database.Service

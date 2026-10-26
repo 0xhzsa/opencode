@@ -4,7 +4,6 @@ import { isContextOverflowFailure, Message } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import type { SessionIdleBackground } from "@opencode/plugin/effect/session"
 import type { Session } from "@opencode/schema/session"
-import type { SessionEvent } from "@opencode/schema/session-event"
 import { SessionGoal } from "@opencode/schema/session-goal"
 import { isExactRootFallback } from "@opencode/util/session-title-fallback"
 import { Cause, Clock, DateTime, Duration, Effect, FiberMap, Option, Schema, Stream } from "effect"
@@ -76,8 +75,8 @@ export const Plugin = define({
         Effect.flatMap((goal) => (goal?.status === "active" ? settle(sessionID, goal, "paused", reason) : Effect.void)),
       )
 
-    // One compaction per round when the reviewer's request is too large; a second overflow pauses instead. Keyed by
-    // Session, so it holds one round per Session that ever overflowed.
+    // One compaction per round when the reviewer's request is too large; a second overflow pauses instead. An entry
+    // lives only until the reviewer answers or the goal pauses.
     const compacted = new Map<Session.ID, string>()
 
     // Whether the model called any tool since the goal's last kickoff or continuation. Without that message in view,
@@ -98,9 +97,8 @@ export const Plugin = define({
     const judge = Effect.fn("GoalPlugin.judge")(function* (
       sessionID: Session.ID,
       goal: State,
-      background: ReadonlyArray<SessionIdleBackground>,
+      shells: ReadonlyArray<string>,
     ) {
-      const shells = background.flatMap((work) => (work.kind === "shell" ? [work.command] : []))
       const prompt = render(JUDGE, {
         objective: escape(goal.objective),
         background:
@@ -116,7 +114,11 @@ export const Plugin = define({
           shells.length === 0 ? "" : '{"verdict":"wait","reason":"<the running shell whose result the goal needs>"}\n',
       })
       const attempt = ctx.session.generate({ sessionID, prompt }).pipe(
-        Effect.map((result) => parseVerdict(result.text)),
+        Effect.map((result) => {
+          const verdict = parseVerdict(result.text)
+          // "wait" is only offered while a shell runs; without one, nothing would wake the Session to judge again.
+          return verdict?.verdict === "wait" && shells.length === 0 ? undefined : verdict
+        }),
         // The reviewer runs right after the last step, before the next step's automatic compaction, so a long final
         // step can leave more history than the model takes.
         Effect.catchIf(isContextOverflowFailure, () => Effect.succeed("overflow" as const)),
@@ -136,19 +138,28 @@ export const Plugin = define({
       if (goal?.status !== "active") return
       if (goal.boot !== boot())
         return yield* settle(sessionID, goal, "paused", "The server restarted while the goal was active")
-      // A running subagent's result wakes the Session, and the hook runs again then.
-      if (background.some((work) => work.kind === "subagent")) return
+      // The Session's own running subagent wakes it with its report, and the hook runs again then. A grandchild reports
+      // to its own parent, so it would never wake this Session.
+      if (background.some((work) => work.kind === "subagent" && work.sessionID === sessionID)) return
       if (goal.rounds >= goal.maxRounds)
         return yield* settle(sessionID, goal, "paused", `Reached the limit of ${goal.maxRounds} rounds`)
 
-      const verdict = yield* judge(sessionID, goal, background)
+      // Only the Session's own shells wake it when they finish. A subagent's leftover shell wakes the subagent, so
+      // waiting on it would leave this Session idle until the wait limit pauses the goal.
+      const shells = background.flatMap((work) =>
+        work.kind === "shell" && work.sessionID === sessionID ? [work.command] : [],
+      )
+      const verdict = yield* judge(sessionID, goal, shells)
+      if (verdict !== "overflow") compacted.delete(sessionID)
       // `/goal pause`, `clear` or a new goal may have landed while the reviewer ran.
       const latest = yield* read(sessionID)
       if (latest?.id !== goal.id || latest.status !== "active") return
       if (verdict === "overflow") {
         const key = `${latest.id}:${latest.rounds}`
-        if (compacted.get(sessionID) === key)
+        if (compacted.get(sessionID) === key) {
+          compacted.delete(sessionID)
           return yield* settle(sessionID, latest, "paused", "The goal reviewer's request is too large for the model")
+        }
         compacted.set(sessionID, key)
         // The runner compacts before going idle, then runs this hook again on the smaller history.
         yield* ctx.session.compact({ sessionID })
@@ -156,7 +167,7 @@ export const Plugin = define({
       }
       if (verdict === undefined)
         return yield* settle(sessionID, latest, "paused", "The goal reviewer gave no usable verdict")
-      if (verdict.verdict === "wait" && background.length > 0) return
+      if (verdict.verdict === "wait") return
       if (verdict.verdict === "done") return yield* settle(sessionID, latest, "complete", verdict.reason)
       if (verdict.verdict !== "continue") return yield* settle(sessionID, latest, "paused", verdict.reason)
 
@@ -249,44 +260,41 @@ export const Plugin = define({
         ),
       )
 
-    yield* ctx.event.subscribe().pipe(
-      Stream.filter(
-        (
-          event,
-        ): event is
-          | SessionEvent.Execution.Started
-          | SessionEvent.Execution.Succeeded
-          | SessionEvent.Execution.Interrupted
-          | SessionEvent.Execution.Failed =>
-          event.type === "session.execution.started" ||
-          event.type === "session.execution.succeeded" ||
-          event.type === "session.execution.interrupted" ||
-          event.type === "session.execution.failed",
-      ),
-      Stream.runForEach((event) => {
-        const sessionID = event.data.sessionID
-        if (event.type === "session.execution.started") return FiberMap.remove(timers, sessionID)
-        if (event.type === "session.execution.succeeded")
-          return watch(sessionID).pipe(
-            Effect.catchCause((cause) => Effect.logWarning("failed to watch a waiting goal", { sessionID, cause })),
+    yield* ctx.event
+      .subscribe({
+        types: [
+          "session.execution.started",
+          "session.execution.succeeded",
+          "session.execution.interrupted",
+          "session.execution.failed",
+        ],
+      })
+      .pipe(
+        Stream.runForEach((event) => {
+          const sessionID = event.data.sessionID
+          if (event.type === "session.execution.started") return FiberMap.remove(timers, sessionID)
+          if (event.type === "session.execution.succeeded")
+            return watch(sessionID).pipe(
+              Effect.catchCause((cause) => Effect.logWarning("failed to watch a waiting goal", { sessionID, cause })),
+            )
+          // Shutdown keeps the goal active; the next process sees the boot change and pauses it.
+          if (event.type === "session.execution.interrupted" && event.data.reason !== "user") return Effect.void
+          const reason =
+            event.type === "session.execution.failed"
+              ? `The session failed: ${event.data.error.message}`
+              : "Stopped by the user"
+          return pauseActive(event.data.sessionID, reason).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("failed to pause goal", { sessionID: event.data.sessionID, cause }),
+            ),
           )
-        // Shutdown keeps the goal active; the next process sees the boot change and pauses it.
-        if (event.type === "session.execution.interrupted" && event.data.reason !== "user") return Effect.void
-        const reason =
-          event.type === "session.execution.failed"
-            ? `The session failed: ${event.data.error.message}`
-            : "Stopped by the user"
-        return pauseActive(event.data.sessionID, reason).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("failed to pause goal", { sessionID: event.data.sessionID, cause }),
-          ),
-        )
-      }),
-      Effect.forkScoped({ startImmediately: true }),
-    )
+        }),
+        Effect.forkScoped({ startImmediately: true }),
+      )
 
     // A goal an earlier process left active would show as running while nothing drives it, unless something wakes the
-    // Session. Pause those among recent Sessions now; the boot check in the hook covers the rest when they wake.
+    // Session. Pause those among recent Sessions now; the boot check in the hook covers the rest when they wake. This
+    // assumes one server process per database: a second one would pause the first one's live goals.
     yield* ctx.session.list({ limit: SWEEP_LIMIT, order: "desc" }).pipe(
       Effect.flatMap((page) =>
         Effect.forEach(

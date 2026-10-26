@@ -122,9 +122,10 @@ export const layer = Layer.effect(
             const outcome = terminal(exit, reason)
             if (outcome.type === "succeeded") {
               yield* bus.publish(SessionEvent.Execution.Succeeded, { sessionID }, releaseOnCommit(sessionID))
-              // Background shells don't hold it back: a dev server would keep the Session from ever settling.
+              // Background shells don't hold it back: a dev server would keep the Session from ever settling. Only the
+              // Session's own subagents do, because only their reports wake it; a grandchild reports to its parent.
               const background = yield* SessionBackground.outstanding(jobs, store, sessionID)
-              if (!background.some((work) => work.kind === "subagent"))
+              if (!background.some((work) => work.kind === "subagent" && work.sessionID === sessionID))
                 yield* bus.publish(SessionEvent.Settled, { sessionID })
               return
             }

@@ -166,9 +166,11 @@ export type SessionIdleBackground =
  * Input admitted by the hook, such as a synthetic message, runs in the same execution instead
  * of the Session going idle.
  *
- * `background` lists work that is still running. When it finishes, its notice wakes the Session
- * and the hook runs again, so a plugin that waits for background work can simply return. Notices
- * admitted with `resume: false`, such as those recovered after a restart, wait for the next wake.
+ * `background` lists work that is still running. When the Session's own shell or subagent finishes,
+ * its notice wakes the Session and the hook runs again, so a plugin that waits for that work can
+ * simply return. Work a descendant owns, such as a shell a subagent left running, wakes that
+ * descendant instead, so it is listed for information only. Notices admitted with `resume: false`,
+ * such as those recovered after a restart, wait for the next wake.
  */
 export interface SessionIdle {
   readonly sessionID: Session.ID
