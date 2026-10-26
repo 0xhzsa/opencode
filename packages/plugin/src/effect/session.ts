@@ -44,6 +44,11 @@ export interface SessionCompactionResult {
 }
 
 export interface SessionCompaction extends SessionContext {
+  /**
+   * Whether the provider compacts natively. A native compaction may keep messages from this request in the
+   * replacement window that later requests replay, so a message added here can outlive this compaction.
+   */
+  readonly native?: boolean
   /** Set to use this compaction and skip the model request. */
   result?: SessionCompactionResult
 }
