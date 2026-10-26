@@ -1,9 +1,21 @@
 import { expect, test } from "bun:test"
 import type { SessionMessageInfo } from "@opencode/client/promise"
-import { batch, createMemo, createRoot, onCleanup } from "solid-js"
+import { DataContext, useData } from "@opencode/session-ui/context"
+import { MarkdownContext, useMarkdown, type ReadMarkdownImage } from "@opencode/session-ui/context/markdown"
+import {
+  batch,
+  createComponent,
+  createComputed,
+  createMemo,
+  createRoot,
+  onCleanup,
+  type Context,
+  type JSX,
+} from "solid-js"
 import { createStore } from "solid-js/store"
 import { ServerScope, SessionRouteKey, SessionStateKey } from "../src/runtime/server/scope"
 import { createTimelineCache } from "../src/session/timeline/cache"
+import { useWorkspaceLocation, WorkspaceLocationContext } from "../src/workspaces/location"
 
 function setup() {
   return createRoot((dispose) => {
@@ -24,57 +36,133 @@ function setup() {
 
     const disposed: string[] = []
 
-    const cache = createTimelineCache(
-      {
-        identity: {
-          params: {
-            get id() {
-              return state.id
-            },
-            serverKey: "local",
-          },
-          sessionID: () => state.id,
-          workspaceKey: () => SessionStateKey.from(ServerScope.local, SessionRouteKey.fromRoute(state.directory)),
-          sessionKey: () =>
-            SessionStateKey.from(ServerScope.local, SessionRouteKey.fromRoute(state.directory, state.id)),
-        },
-        data: {
-          info: createMemo(() => ({
-            id: state.id,
-            projectID: "project",
-            cost: 0,
-            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-            time: { created: 1, updated: 1 },
-            location: { directory: state.directory },
-          })),
-          parent: () => undefined,
-          parentID: () => undefined,
-          status: () => ({ type: "idle" }),
-        },
-        history: { messages: () => state.messages[state.id] ?? [] },
-      },
-      (source, active) => {
-        const id = source.identity.sessionID()!
-        const element = document.createElement("div")
-        createMemo(() =>
-          element.setAttribute(
-            "data-messages",
-            source.history
-              .messages()
-              .map((message) => message.id)
-              .join(","),
-          ),
-        )
-        views.set(id, { active, messages: source.history.messages, element })
-        onCleanup(() => disposed.push(id))
+    // The Location of every provider value each view reads, by the view's session and Location.
+    const reads: Record<string, string[]> = {}
+    const imageReaders = new Map<ReadMarkdownImage, string>()
 
-        return element
-      },
-      () => state.visible,
-      (id) => state.messages[id] ?? [],
+    const imageReader = createMemo(() => {
+      const read: ReadMarkdownImage = async () => undefined
+      imageReaders.set(read, state.directory)
+
+      return read
+    })
+
+    const location = createMemo(() => ({
+      directory: state.directory,
+      event: { on: () => () => {}, listen: () => () => {} },
+      ref: { directory: state.directory },
+      current: undefined,
+      missing: undefined,
+    }))
+
+    const provide = <T>(context: Context<T>, value: T, children: () => JSX.Element) =>
+      createComponent(context.Provider, {
+        value,
+        get children() {
+          return children()
+        },
+      })
+
+    let cache!: () => JSX.Element
+    provide(WorkspaceLocationContext, location, () =>
+      provide(
+        DataContext,
+        {
+          store: { session: [], session_status: {}, session_diff: {} },
+          get directory() {
+            return state.directory
+          },
+          sessionID: undefined,
+          agents: true,
+          backgroundCompaction: false,
+          navigateToSession: undefined,
+          sessionHref: undefined,
+          shellRunning: undefined,
+          shellOutput: undefined,
+          turnDiff: undefined,
+        },
+        () =>
+          provide(
+            MarkdownContext,
+            {
+              get readImage() {
+                return imageReader()
+              },
+            },
+            () => {
+              cache = createSessionTimelineCache()
+
+              return null
+            },
+          ),
+      ),
     )
 
-    return { state, setState, cache, views, disposed, dispose }
+    return { state, setState, cache, views, disposed, reads, dispose }
+
+    function createSessionTimelineCache() {
+      return createTimelineCache(
+        {
+          identity: {
+            params: {
+              get id() {
+                return state.id
+              },
+              serverKey: "local",
+            },
+            sessionID: () => state.id,
+            sessionKey: () =>
+              SessionStateKey.from(ServerScope.local, SessionRouteKey.fromRoute(state.directory, state.id)),
+          },
+          data: {
+            info: createMemo(() => ({
+              id: state.id,
+              projectID: "project",
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              time: { created: 1, updated: 1 },
+              location: { directory: state.directory },
+            })),
+            parent: () => undefined,
+            parentID: () => undefined,
+            status: () => ({ type: "idle" }),
+          },
+          history: { messages: () => state.messages[state.id] ?? [] },
+        },
+        (source, active) => {
+          const id = source.identity.sessionID()!
+          const element = document.createElement("div")
+          const workspace = useWorkspaceLocation()
+          const data = useData()
+          const markdown = useMarkdown()
+          createMemo(() =>
+            element.setAttribute(
+              "data-messages",
+              source.history
+                .messages()
+                .map((message) => message.id)
+                .join(","),
+            ),
+          )
+          const view = `${id} in ${state.directory}`
+          createComputed(() => {
+            const readImage = markdown?.readImage
+            reads[view] = [
+              ...(reads[view] ?? []),
+              workspace().directory,
+              data.directory,
+              (readImage && imageReaders.get(readImage)) ?? "",
+            ]
+          })
+          views.set(id, { active, messages: source.history.messages, element })
+          onCleanup(() => disposed.push(id))
+
+          return element
+        },
+        () => state.visible,
+        (id) => state.messages[id] ?? [],
+      )
+    }
   })
 }
 
@@ -144,47 +232,48 @@ test("suspends a detached mobile view and reuses it when the conversation return
   }
 })
 
-test("disposes views whose Location-scoped providers no longer match", () => {
-  const input = setup()
+for (const order of ["session-first", "workspace-first"] as const) {
+  test(`keeps views across Locations, each reading only its own Location, when updates are ${order}`, () => {
+    const input = setup()
 
-  try {
-    const first = input.cache()
-    input.setState("directory", "/other")
-    expect(input.cache()).not.toBe(first)
-    expect(input.disposed).toEqual(["ses_a"])
-    input.setState("directory", "/repo")
-    expect(input.cache()).not.toBe(first)
-    expect(input.disposed).toEqual(["ses_a", "ses_a"])
-  } finally {
-    input.dispose()
-  }
+    const select = (id: string, directory: string) => {
+      if (order === "workspace-first") input.setState("directory", directory)
+      input.setState("id", id)
 
-  expect(input.disposed).toHaveLength(3)
-})
+      if (order === "session-first") input.setState("directory", directory)
 
-test("disposes views on workspace changes while the destination is not rendered", () => {
-  const input = setup()
+      return input.cache()
+    }
 
-  try {
-    const first = input.cache()
-    input.setState("visible", false)
-    input.setState("directory", "/other")
-    expect(input.disposed).toEqual(["ses_a"])
-    input.setState("directory", "/repo")
-    input.setState("visible", true)
-    expect(input.cache()).not.toBe(first)
-  } finally {
-    input.dispose()
-  }
+    try {
+      const first = input.cache()
+      const second = select("ses_b", "/other")
+      expect(second).not.toBe(first)
+      expect(select("ses_a", "/repo")).toBe(first)
+      expect(select("ses_b", "/other")).toBe(second)
 
-  expect(input.disposed).toEqual(["ses_a", "ses_a"])
-})
+      // A Location change while the conversation is hidden keeps both views too.
+      input.setState("visible", false)
+      select("ses_a", "/repo")
+      input.setState("visible", true)
+      expect(input.cache()).toBe(first)
+
+      expect(input.disposed).toEqual([])
+      expect(Object.keys(input.reads).sort()).toEqual(["ses_a in /repo", "ses_b in /other"])
+      expect(new Set(input.reads["ses_a in /repo"])).toEqual(new Set(["/repo"]))
+      expect(new Set(input.reads["ses_b in /other"])).toEqual(new Set(["/other"]))
+    } finally {
+      input.dispose()
+    }
+
+    expect(input.disposed.sort()).toEqual(["ses_a", "ses_b"])
+  })
+}
 
 for (const order of ["session-first", "workspace-first"] as const) {
   test(`keeps views live across five workspaces when updates are ${order}`, () => {
     const input = setup()
     const render = createRoot((dispose) => ({ selected: createMemo(input.cache), dispose }))
-    const visited = ["ses_a"]
 
     try {
       ;["ses_b", "ses_c", "ses_d", "ses_e", "ses_a", "ses_c", "ses_b", "ses_e", "ses_d", "ses_a"].forEach(
@@ -195,14 +284,17 @@ for (const order of ["session-first", "workspace-first"] as const) {
 
             if (order === "session-first") input.setState("directory", `/repo/${id}`)
           })
-          expect(input.disposed).toEqual(visited)
+          expect(input.disposed).toEqual([])
           input.setState("messages", id, [
             { id: `msg_live_${index}`, type: "user", text: "Live update", time: { created: index + 3 } },
           ])
-          expect((render.selected() as HTMLDivElement).dataset.messages).toBe(`msg_live_${index}`)
+          render.selected()
+          expect(input.views.get(id)!.element.dataset.messages).toBe(`msg_live_${index}`)
           expect(input.views.get(id)!.active()).toBe(true)
-          visited.push(id)
         },
+      )
+      Object.entries(input.reads).forEach(([view, directories]) =>
+        expect(new Set(directories)).toEqual(new Set([view.split(" in ")[1]])),
       )
     } finally {
       render.dispose()

@@ -1,4 +1,5 @@
 import {
+  createComponent,
   createComputed,
   createMemo,
   createRoot,
@@ -7,19 +8,27 @@ import {
   onCleanup,
   untrack,
   type Accessor,
+  type Context,
   type JSX,
 } from "solid-js"
+import { DataContext, useData } from "@opencode/session-ui/context"
+import { MarkdownContext, useMarkdown } from "@opencode/session-ui/context/markdown"
 import { createScopedCache } from "@/runtime/server/scoped-cache"
+import { useWorkspaceLocation, WorkspaceLocationContext } from "@/workspaces/location"
 import type { TimelineSessionSource } from "./controller"
 
 export function createTimelineCache(
-  session: TimelineSessionSource & { identity: { workspaceKey: Accessor<string> } },
+  session: TimelineSessionSource,
   render: (source: TimelineSessionSource, active: Accessor<boolean>) => JSX.Element,
   visible: Accessor<boolean>,
   transcript: (sessionID: string) => readonly unknown[],
 ) {
   const owner = getOwner()
-  let workspace = untrack(session.identity.workspaceKey)
+  // These providers follow the selected Location. Each view reads its own copies, which hold while it is detached,
+  // so a view kept while another Location is selected never reads that Location's providers.
+  const location = useWorkspaceLocation()
+  const data = useData()
+  const markdown = useMarkdown()
 
   const cache = createScopedCache(
     (key) =>
@@ -46,8 +55,19 @@ export function createTimelineCache(
           ),
         )
 
-        return {
-          value: render(
+        const store = select(() => data.store)
+        const directory = select(() => data.directory)
+        const sessionID = select(() => data.sessionID)
+        const agents = select(() => data.agents)
+        const backgroundCompaction = select(() => data.backgroundCompaction)
+        const readImage = select(() => markdown?.readImage)
+        const openLocalFile = select(() => markdown?.openLocalFile)
+        const localFileExists = select(() => markdown?.localFileExists)
+        const openSession = select(() => markdown?.openSession)
+        const sessionTitle = select(() => markdown?.sessionTitle)
+
+        const view = () =>
+          render(
             {
               identity: {
                 params: session.identity.params,
@@ -63,6 +83,57 @@ export function createTimelineCache(
               history: { messages: select(session.history.messages) },
             },
             active,
+          )
+
+        return {
+          value: provide(WorkspaceLocationContext, select(location), () =>
+            provide(
+              DataContext,
+              {
+                get store() {
+                  return store()
+                },
+                get directory() {
+                  return directory()
+                },
+                get sessionID() {
+                  return sessionID()
+                },
+                get agents() {
+                  return agents()
+                },
+                get backgroundCompaction() {
+                  return backgroundCompaction()
+                },
+                navigateToSession: data.navigateToSession,
+                sessionHref: data.sessionHref,
+                shellRunning: data.shellRunning,
+                shellOutput: data.shellOutput,
+                turnDiff: data.turnDiff,
+              },
+              () =>
+                provide(
+                  MarkdownContext,
+                  {
+                    get readImage() {
+                      return readImage()
+                    },
+                    get openLocalFile() {
+                      return openLocalFile()
+                    },
+                    get localFileExists() {
+                      return localFileExists()
+                    },
+                    get openSession() {
+                      return openSession()
+                    },
+                    get sessionTitle() {
+                      return sessionTitle()
+                    },
+                  },
+                  view,
+                ),
+            ),
           ),
           dispose,
         }
@@ -72,21 +143,15 @@ export function createTimelineCache(
 
   onCleanup(cache.clear)
 
-  const syncWorkspace = (key: string) => {
-    if (workspace === key) return
-    workspace = key
-    cache.clear()
-  }
+  return () => cache.get(session.identity.sessionKey()).value
+}
 
-  // Providers follow the selected Location even while its history is loading.
-  // Dispose detached views before their effects can read the new Location.
-  createComputed(on(session.identity.workspaceKey, syncWorkspace, { defer: true }))
-
-  return () => {
-    // A tab's render can run before the workspace watcher in the same batch.
-    // Clear the old workspace here, and let that later watcher keep this view.
-    syncWorkspace(session.identity.workspaceKey())
-
-    return cache.get(session.identity.sessionKey()).value
-  }
+// Untracked like a component: the provider keeps one view rather than rendering another when a read changes.
+function provide<T>(context: Context<T>, value: T, children: () => JSX.Element) {
+  return createComponent(context.Provider, {
+    value,
+    get children() {
+      return untrack(children)
+    },
+  })
 }
