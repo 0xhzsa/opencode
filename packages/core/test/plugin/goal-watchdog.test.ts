@@ -38,7 +38,6 @@ const run = Effect.fnUntraced(function* (metadata: Record<string, unknown> = {})
   const state = { metadata }
   const events = yield* Queue.unbounded<Watched>()
   const commands: CommandDefinition[] = []
-  const hooks = new Map<string, (event: unknown) => Effect.Effect<void>>()
   const info = (id: Session.ID = sessionID) =>
     // SAFETY: the plugin reads only the id, parent, title, creation time and metadata of a Session.
     ({
@@ -49,9 +48,8 @@ const run = Effect.fnUntraced(function* (metadata: Record<string, unknown> = {})
       metadata: id === sessionID ? state.metadata : {},
     }) as unknown as Session.Info
   const session: Partial<Plugin.Context["session"]> = {
-    // SAFETY: tests call the captured hooks with the event fields the plugin reads.
-    hook: ((name: string, callback: (event: unknown) => Effect.Effect<void>) =>
-      Effect.sync(() => void hooks.set(name, callback))) as never,
+    // SAFETY: these tests drive the plugin through events and commands, not its session hooks.
+    hook: (() => Effect.void) as never,
     get: (input) => Effect.sync(() => info(input.sessionID)),
     // SAFETY: the startup sweep reads only `data`.
     list: () => Effect.sync(() => ({ data: [info()], cursor: {} })) as never,
@@ -82,7 +80,6 @@ const run = Effect.fnUntraced(function* (metadata: Record<string, unknown> = {})
       Effect.forEach(commands, (definition) =>
         definition.execute({ sessionID, prompt: { text }, delivery: "steer" }).pipe(Effect.orDie),
       ),
-    hook: (name: string, event: unknown) => hooks.get(name)?.(event) ?? Effect.die(`no ${name} hook`),
     emit: (type: Execution["type"]) =>
       Queue.offer(events, execution(type)).pipe(Effect.andThen(Effect.yieldNow), Effect.andThen(Effect.yieldNow)),
     step: (stepSessionID: Session.ID) =>
@@ -157,22 +154,6 @@ describe("goal plugin waiting", () => {
         status: "paused",
         reason: "Nothing ran for 30 minutes while the goal waited on background work",
       })
-    }),
-  )
-
-  it.effect("asks a summary to keep the goal, but not in a native compaction", () =>
-    Effect.gen(function* () {
-      const plugin = yield* run()
-      yield* plugin.command("Ship the release")
-      const summary = { sessionID, messages: [] as unknown[], native: false }
-      const native = { sessionID, messages: [] as unknown[], native: true }
-
-      yield* plugin.hook("compaction", summary)
-      yield* plugin.hook("compaction", native)
-
-      expect(JSON.stringify(summary.messages)).toContain("This session has an active goal that the user set.")
-      // A native window may replay this message after the goal is gone, so nothing is added.
-      expect(native.messages).toEqual([])
     }),
   )
 

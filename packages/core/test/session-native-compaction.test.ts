@@ -378,10 +378,8 @@ it.live("compaction hooks supply the summary instead of provider compaction", ()
   Effect.gen(function* () {
     const fixture = yield* setup()
     yield* fixture.prompt("Original user")
-    const native: Array<boolean | undefined> = []
     yield* fixture.hooks.register("session", "compaction", (event) =>
       Effect.sync(() => {
-        native.push(event.native)
         event.result = {
           summary: "## Objective\n- hooked summary",
           native: { responseId: "plugin" },
@@ -392,8 +390,6 @@ it.live("compaction hooks supply the summary instead of provider compaction", ()
     )
     expect(yield* fixture.compact).toEqual({ status: "completed" })
     expect(fixture.state.calls).toBe(0)
-    // Hooks learn the compaction is native, since messages they add could survive in the replacement window.
-    expect(native).toEqual([true])
     expect((yield* fixture.load).messages.at(-1)).toMatchObject({
       type: "compaction",
       status: "completed",

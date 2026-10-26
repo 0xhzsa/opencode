@@ -7,7 +7,6 @@ import type { Session } from "@opencode/schema/session"
 import { SessionGoal } from "@opencode/schema/session-goal"
 import { isExactRootFallback } from "@opencode/util/session-title-fallback"
 import { Cause, Clock, DateTime, Duration, Effect, FiberMap, Option, Schema, Stream } from "effect"
-import COMPACTION from "./goal/compaction.txt"
 import CONTINUATION from "./goal/continuation.txt"
 import JUDGE from "./goal/judge.txt"
 import KICKOFF from "./goal/kickoff.txt"
@@ -202,18 +201,6 @@ export const Plugin = define({
                 Effect.catchCause(() => Effect.void),
               ),
         ),
-      ),
-    )
-
-    // Compaction can summarize the kickoff away. Ask the summary to keep the goal and its progress.
-    yield* ctx.session.hook("compaction", (event) =>
-      read(event.sessionID).pipe(
-        Effect.map((goal) => {
-          // A native compaction may keep this message in the window later requests replay, after the goal is gone.
-          if (goal?.status !== "active" || event.native) return
-          event.messages.push(Message.user(render(COMPACTION, { objective: escape(goal.objective) })))
-        }),
-        Effect.catchCause((cause) => Effect.logWarning("failed to keep the goal in the summary", { cause })),
       ),
     )
 

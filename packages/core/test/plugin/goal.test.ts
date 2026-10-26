@@ -289,7 +289,7 @@ describe("goal plugin", () => {
     }),
   )
 
-  it.live("keeps the goal through a compaction and reminds the model until a continuation restates it", () =>
+  it.live("reminds the model of the goal after a compaction until a continuation restates it", () =>
     Effect.gen(function* () {
       const session = yield* project()
       const sessions = yield* Session.Service
@@ -318,12 +318,6 @@ describe("goal plugin", () => {
 
       yield* sessions.compact({ sessionID: session.id })
       yield* sessions.wait(session.id)
-      const compaction = (yield* llm.requests()).findLast(summarize)
-      // The note sits right before the summary prompt, after the conversation.
-      expect(JSON.stringify(compaction?.messages.at(-2))).toContain(
-        "This session has an active goal that the user set.",
-      )
-      expect(JSON.stringify(compaction?.messages.at(-2))).toContain("Make CI green")
 
       const before = (yield* llm.requests()).length
       yield* sessions.prompt({ sessionID: session.id, text: "Carry on" })
