@@ -1,6 +1,6 @@
 export * as SessionTitle from "./title.js"
 
-import { isDeepStrictEqual } from "node:util"
+import { isDeepStrictEqual, stripVTControlCharacters } from "node:util"
 import { LLMClient, LLMEvent, Message, SystemPart } from "@opencode/ai/effect"
 import type { Agent } from "@opencode/schema/agent"
 import { Context, DateTime, Effect, Layer, Stream } from "effect"
@@ -29,7 +29,13 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionTitle") {}
 
-const truncate = (value: string) => (value.length <= MAX_LENGTH ? value : `${value.slice(0, MAX_LENGTH - 3)}...`)
+// Titles come from model output and are printed to terminals, so drop escape sequences and control characters.
+const cleanTitle = (title: string) => {
+  const value = stripVTControlCharacters(title)
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .trim()
+  return value.length <= MAX_LENGTH ? value : `${value.slice(0, MAX_LENGTH - 3)}...`
+}
 // Framing the input as text to name keeps models from answering or carrying out the request instead.
 const messagePrompt = (text: string) =>
   `Here is the first message of the conversation:\n\n<message>\n${text}\n</message>\n\nReply with only the title.`
@@ -132,21 +138,23 @@ export const layer = Layer.effect(
         : messagePrompt(firstUser.text)
       const selection = yield* context.selectTitle(session)
       if (!selection) return
-      const title =
+      const title = cleanTitle(
         (yield* attempt({ session, agent: selection.agent, text, model: selection.selected })) ??
-        (selection.primary && !isDeepStrictEqual(selection.selected.ref, selection.primary.ref)
-          ? yield* attempt({ session, agent: selection.agent, text, model: selection.primary })
-          : undefined)
+          (selection.primary && !isDeepStrictEqual(selection.selected.ref, selection.primary.ref)
+            ? yield* attempt({ session, agent: selection.agent, text, model: selection.primary })
+            : undefined) ??
+          "",
+      )
       if (!title) return
       const expectedSequence = (yield* Bus.latestSequence(db, sessionID)) + 1
       const current = yield* store.get(sessionID)
-      if (!current || current.title !== session.title || current.title === truncate(title)) return
+      if (!current || current.title !== session.title || current.title === title) return
       yield* bus
         .publish(
           SessionEvent.Renamed,
           {
             sessionID: session.id,
-            title: truncate(title),
+            title,
           },
           { commit: (sequence) => (sequence === expectedSequence ? Effect.void : Effect.die(titleChanged)) },
         )

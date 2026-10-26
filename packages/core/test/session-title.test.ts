@@ -233,6 +233,29 @@ it.effect("generates a title from the sole user message and renames the session"
   }),
 )
 
+it.effect("strips terminal escape sequences and control characters from a generated title", () =>
+  Effect.gen(function* () {
+    yield* enableTitleAgent
+    const sessionID = Session.ID.make("ses_title_escapes")
+    yield* insertSession(sessionID)
+    yield* prompt(sessionID, "Summarise this page")
+    titleStream = () =>
+      Stream.make(
+        LLMEvent.textDelta({
+          id: "title",
+          text: "\u001b]52;c;ZWNobyBwd25lZA==\u0007\u001b]0;PWNED\u0007\u001b[2KSafe\u0008 \u009b31mTitle\u0000\n",
+        }),
+        LLMEvent.finish({ reason: { normalized: "stop" } }),
+      )
+
+    const title = yield* SessionTitle.Service
+    yield* title.generate(sessionID)
+
+    const store = yield* SessionStore.Service
+    expect((yield* store.get(sessionID))?.title).toBe("Safe Title")
+  }),
+)
+
 it.effect("runs title hooks instead of context hooks", () =>
   Effect.gen(function* () {
     yield* enableTitleAgent

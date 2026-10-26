@@ -9,6 +9,7 @@ import type {
 } from "@opencode/client/promise"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { EOL } from "node:os"
+import { stripVTControlCharacters } from "node:util"
 import { readFile } from "node:fs/promises"
 import { nonEmptyToolContent, toolOutputText, type MiniToolPart } from "@opencode/tui/mini/tool"
 import { UI } from "./ui"
@@ -105,7 +106,7 @@ export async function runNonInteractivePrompt(input: Input) {
 
   const writeText = (part: { text: string; [key: string]: unknown }, timestamp: number) => {
     if (emit("text", timestamp, { part })) return
-    const text = part.text.trim()
+    const text = printable(part.text)
     if (!text) return
     if (!process.stdout.isTTY) {
       process.stdout.write(text + EOL)
@@ -118,7 +119,7 @@ export async function runNonInteractivePrompt(input: Input) {
 
   const writeReasoning = (part: { text: string; [key: string]: unknown }, timestamp: number) => {
     if (emit("reasoning", timestamp, { part })) return
-    const text = part.text.trim()
+    const text = printable(part.text)
     if (!text) return
     const line = `Thinking: ${text}`
     if (!process.stdout.isTTY) return void process.stdout.write(line + EOL)
@@ -784,6 +785,15 @@ export async function runNonInteractivePrompt(input: Input) {
     if (input.compatibility === "v1") await stream.return?.(undefined).catch(() => {})
     else void stream.return?.(undefined).catch(() => {})
   }
+}
+
+// Model output can be steered by untrusted content, so terminal escape sequences (clipboard writes,
+// window titles, cursor movement) and other control characters must not reach the terminal.
+function printable(text: string) {
+  return stripVTControlCharacters(text)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
+    .trim()
 }
 
 function sameLocation(left: LocationRef | undefined, right: LocationRef) {

@@ -211,6 +211,7 @@ async function run(input: {
   pendingForms?: FormInfo[]
   attached?: boolean
   format?: "default" | "json"
+  thinking?: boolean
   compatibility?: "v1"
   cancel?: (input: { sessionID: string; formID: string }) => Promise<void>
   renderTool?: (part: SessionMessageAssistantTool) => Promise<void>
@@ -274,7 +275,7 @@ async function run(input: {
     location,
     message: "hello",
     files: [],
-    thinking: false,
+    thinking: input.thinking ?? false,
     format: input.format ?? "default",
     auto: false,
     attached: input.attached ?? false,
@@ -374,6 +375,35 @@ describe("runNonInteractivePrompt", () => {
         .filter(Boolean)
         .map((line) => JSON.parse(line)),
     ).toEqual([expect.objectContaining({ type: "text", part: expect.objectContaining({ text: "projected answer" }) })])
+  })
+
+  test("strips terminal escape sequences from assistant text and reasoning", async () => {
+    const output = await capture({
+      thinking: true,
+      turn: (messageID) => [prompted(messageID), settled()],
+      messages: (messageID) => [
+        {
+          id: "msg_assistant",
+          type: "assistant",
+          agent: "build",
+          model: { providerID: "test", id: "test-model" },
+          content: [
+            { type: "reasoning", text: "\u001b]0;PWNED\u0007plan\u0008ning" },
+            { type: "text", text: "\u001b]52;c;ZWNobyBwd25lZA==\u0007done\r\n\u001b[2Kline\ttwo\u009b1A\u0000" },
+          ],
+          finish: "stop",
+          time: { created: 2, completed: 3 },
+        },
+        { id: messageID, type: "user", text: "hello", time: { created: 1 } },
+      ],
+    })
+
+    const printed = output.stdout + output.stderr
+    expect(printed).toContain("Thinking: planning")
+    expect(printed).toContain("done\nline\ttwo")
+    expect(printed).not.toContain("PWNED")
+    expect(printed).not.toContain("]52;")
+    expect(printed).not.toMatch(/[\u0000\u0007\u0008\r\u009b]/)
   })
 
   test("reports an observed execution failure before prompt promotion", async () => {
