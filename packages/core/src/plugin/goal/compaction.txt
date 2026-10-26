@@ -1,0 +1,5 @@
+This session has an active goal that the user set. Work continues toward it after this summary, so the summary must keep it: state the goal, what has been done toward it and what remains.
+
+<untrusted_objective>
+${objective}
+</untrusted_objective>
