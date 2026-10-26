@@ -3,7 +3,7 @@ export * as WebFetchTool from "./webfetch.js"
 import type { Context } from "@opencode/plugin/effect/plugin"
 import { ToolFailure } from "@opencode/ai/effect"
 import { Duration, Effect, Schema } from "effect"
-import { HttpClient, type HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http"
+import { FetchHttpClient, HttpClient, type HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { Parser } from "htmlparser2"
 import { Mime } from "../../mime.js"
 import { Permission } from "../../permission.js"
@@ -14,6 +14,7 @@ export const name = "webfetch"
 export const MAX_RESPONSE_BYTES = MAX_MARKDOWN_BYTES
 export const DEFAULT_TIMEOUT_SECONDS = 30
 export const MAX_TIMEOUT_SECONDS = 120
+export const MAX_REDIRECTS = 10
 
 export const description = `Fetch content from an HTTP or HTTPS URL and return it as text, markdown, or HTML. Markdown is the default.
 
@@ -72,8 +73,17 @@ const assertHttpUrl = (url: URL) => {
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("URL must use http:// or https://")
 }
 
+// Redirects are followed by hand so every hop passes the same URL and permission checks as the requested URL.
 const execute = (http: HttpClient.HttpClient, url: string, format: Format, userAgent = openCodeUserAgent) =>
-  http.execute(request(url, format, userAgent)).pipe(Effect.flatMap(HttpClientResponse.filterStatusOk))
+  http.execute(request(url, format, userAgent)).pipe(
+    Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+    Effect.flatMap((response) =>
+      redirectLocation(response) === undefined ? HttpClientResponse.filterStatusOk(response) : Effect.succeed(response),
+    ),
+  )
+
+const redirectLocation = (response: HttpClientResponse.HttpClientResponse) =>
+  [301, 302, 303, 307, 308].includes(response.status) ? response.headers["location"] || undefined : undefined
 
 const collectBody = (response: HttpClientResponse.HttpClientResponse) =>
   collectBoundedResponseBody(
@@ -108,39 +118,57 @@ export const Plugin = {
           output: Output,
           execute: (input, context) =>
             Effect.gen(function* () {
-              yield* Effect.try({
-                try: () => assertHttpUrl(new URL(input.url)),
-                catch: (error) => error,
-              })
-
-              yield* permission.assert({
-                action: name,
-                resources: [input.url],
-                save: ["*"],
-                metadata: input,
-                sessionID: context.sessionID,
-                agent: context.agent,
-                source: { type: "tool", messageID: context.messageID, id: context.id },
-              })
-
-              const { body, contentType } = yield* Effect.gen(function* () {
-                const response = yield* execute(http, input.url, input.format).pipe(
-                  Effect.catchIf(isCloudflareChallenge, () => execute(http, input.url, input.format, "opencode")),
+              const authorize = (url: string) =>
+                Effect.try({
+                  try: () => assertHttpUrl(new URL(url)),
+                  catch: (error) => error,
+                }).pipe(
+                  Effect.andThen(
+                    permission.assert({
+                      action: name,
+                      resources: [url],
+                      save: ["*"],
+                      metadata: url === input.url ? input : { ...input, url },
+                      sessionID: context.sessionID,
+                      agent: context.agent,
+                      source: { type: "tool", messageID: context.messageID, id: context.id },
+                    }),
+                  ),
                 )
-                const contentType = response.headers["content-type"] || ""
-                const mime = mimeFrom(contentType)
-                if (isImageAttachment(mime))
-                  return yield* Effect.fail(new Error(`Unsupported fetched image content type: ${mime}`))
-                if (!Mime.isTextual(mime))
-                  return yield* Effect.fail(new Error(`Unsupported fetched file content type: ${mime}`))
-                return { body: yield* collectBody(response), contentType }
-              }).pipe(
-                Effect.timeoutOrElse({
-                  duration: Duration.seconds(input.timeout ?? DEFAULT_TIMEOUT_SECONDS),
-                  orElse: () => Effect.fail(new Error("Request timed out")),
-                }),
-              )
-              const content = new TextDecoder().decode(body)
+
+              // Each hop is timed on its own so waiting for a redirect target's permission does not count.
+              const fetchOnce = (url: string) =>
+                Effect.gen(function* () {
+                  const response = yield* execute(http, url, input.format).pipe(
+                    Effect.catchIf(isCloudflareChallenge, () => execute(http, url, input.format, "opencode")),
+                  )
+                  const location = redirectLocation(response)
+                  if (location !== undefined)
+                    return { type: "redirect", url: new URL(location, url).toString() } as const
+                  const contentType = response.headers["content-type"] || ""
+                  const mime = mimeFrom(contentType)
+                  if (isImageAttachment(mime))
+                    return yield* Effect.fail(new Error(`Unsupported fetched image content type: ${mime}`))
+                  if (!Mime.isTextual(mime))
+                    return yield* Effect.fail(new Error(`Unsupported fetched file content type: ${mime}`))
+                  return { type: "page", body: yield* collectBody(response), contentType } as const
+                }).pipe(
+                  Effect.timeoutOrElse({
+                    duration: Duration.seconds(input.timeout ?? DEFAULT_TIMEOUT_SECONDS),
+                    orElse: () => Effect.fail(new Error("Request timed out")),
+                  }),
+                )
+
+              yield* authorize(input.url)
+              let page = yield* fetchOnce(input.url)
+              for (let redirects = 0; page.type === "redirect"; redirects++) {
+                if (redirects === MAX_REDIRECTS)
+                  return yield* Effect.fail(new Error(`Too many redirects (exceeds ${MAX_REDIRECTS})`))
+                yield* authorize(page.url)
+                page = yield* fetchOnce(page.url)
+              }
+              const contentType = page.contentType
+              const content = new TextDecoder().decode(page.body)
               const output = yield* Effect.try({
                 try: () => convert(content, contentType, input.format),
                 catch: (error) => error,
