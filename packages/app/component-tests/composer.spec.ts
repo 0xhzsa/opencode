@@ -762,3 +762,37 @@ story.describe("mobile variant drawer", () => {
     })
   }
 })
+
+story("measures control overflow in an animation frame, not while mounting", async ({ mount, page }) => {
+  await page.addInitScript(() => {
+    const reads: boolean[] = []
+    let inFrame = false
+    const request = window.requestAnimationFrame.bind(window)
+    window.requestAnimationFrame = (callback) =>
+      request((time) => {
+        inFrame = true
+
+        try {
+          callback(time)
+        } finally {
+          inFrame = false
+        }
+      })
+    const original = Object.getOwnPropertyDescriptor(Element.prototype, "scrollWidth")!
+    Object.defineProperty(Element.prototype, "scrollWidth", {
+      configurable: true,
+      get() {
+        if (this.getAttribute("data-slot") === "composer-controls") {
+          reads.push(inFrame)
+          document.documentElement.dataset.controlReads = reads.join()
+        }
+
+        return original.get!.call(this)
+      },
+    })
+  })
+  const component = await mount("opencode-composer-flow--mixed-attachments")
+  await expect(component.getByRole("textbox", { name: "Prompt", exact: true })).toBeVisible()
+  await expect(component.locator('[data-slot="composer-controls"]')).toHaveAttribute("data-overflow-end", /.+/)
+  await expect(page.locator("html")).toHaveAttribute("data-control-reads", /^true/)
+})

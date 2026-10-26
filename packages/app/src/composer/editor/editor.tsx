@@ -25,6 +25,7 @@ import { Button } from "@opencode/ui/button"
 import { Keybind } from "@opencode/ui/keybind"
 import { Menu } from "@opencode/ui/menu"
 import { Tooltip } from "@opencode/ui/tooltip"
+import { frameLoop } from "@opencode/ui/motion"
 import { AttachmentCard } from "@opencode/session-ui/attachment-card"
 import { ProgressCircle } from "@opencode/ui/progress-circle"
 import type { Upload } from "../attachments/uploads"
@@ -119,13 +120,15 @@ export function ComposerEditor(props: ComposerEditorProps) {
     onCleanup(() => cancelAnimationFrame(frame))
   })
 
-  const updateOverflow = () => {
-    const offset = Math.abs(controlsViewport.scrollLeft)
-    setOverflow({
-      start: offset > 1,
-      end: controlsViewport.scrollWidth - controlsViewport.clientWidth - offset > 1,
-    })
-  }
+  const measureOverflow = () => ({
+    offset: Math.abs(controlsViewport.scrollLeft),
+    scrollable: controlsViewport.scrollWidth - controlsViewport.clientWidth,
+  })
+
+  const showOverflow = (measured: ReturnType<typeof measureOverflow>) =>
+    setOverflow({ start: measured.offset > 1, end: measured.scrollable - measured.offset > 1 })
+
+  const updateOverflow = () => showOverflow(measureOverflow())
 
   // The bottom fade shrinks with the remaining scroll so the last line ends clear of it.
   const [fadeBottom, setFadeBottom] = createSignal(0)
@@ -141,12 +144,25 @@ export function ComposerEditor(props: ComposerEditorProps) {
     const observer = new ResizeObserver(updateOverflow)
     observer.observe(controlsViewport)
     observer.observe(controlsContent)
-    updateOverflow()
+
+    // Mounting happens beside other writes, so read in the shared frame loop's read phase instead of forcing layout here.
+    let measured: ReturnType<typeof measureOverflow> | undefined
+
+    const initial = frameLoop.addMeasured(
+      () => (measured = measureOverflow()),
+      () => {
+        if (measured) showOverflow(measured)
+
+        return false
+      },
+    )
+
     // Typing and width changes both resize the editor, so it is the only element that needs watching.
     const scrollObserver = new ResizeObserver(updateScroll)
 
     if (editor) scrollObserver.observe(editor)
     onCleanup(() => {
+      initial()
       observer.disconnect()
       scrollObserver.disconnect()
     })
