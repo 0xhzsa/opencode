@@ -64,9 +64,9 @@ const layer = Layer.effect(
       let continuing = input.continuation !== undefined
       let step = input.continuation?.step ?? 1
       let entering = true
-      let stepped = false
+      let stepped = input.stepped ?? false
       const promotable = input.promotable ?? "input"
-      if (!force && !continuing) {
+      if (!force && !continuing && !stepped) {
         const pending = yield* SessionInbox.nextPromotable(db, sessionID, "input")
         if (!pending) return DrainResult.Complete()
         const control = pending.type === "compaction" || pending.type === "move"
@@ -82,7 +82,11 @@ const layer = Layer.effect(
             while (true) {
               if (lifecycle.isClosed()) {
                 yield* restore(modelTransport.close(sessionID))
-                return DrainResult.Reloaded({ force, continuation: continuing ? { step } : undefined })
+                return DrainResult.Reloaded({
+                  force,
+                  continuation: continuing ? { step } : undefined,
+                  stepped: !continuing && stepped ? true : undefined,
+                })
               }
               // Location entry and idle boundaries allow queued controls, not necessarily queued prompts.
               const pending = yield* SessionInbox.serialized(
@@ -116,7 +120,10 @@ const layer = Layer.effect(
                 step = 1
               }
               if (pending?.type === "move")
-                return DrainResult.Moved({ continuation: continuing ? { step } : undefined })
+                return DrainResult.Moved({
+                  continuation: continuing ? { step } : undefined,
+                  stepped: !continuing && stepped ? true : undefined,
+                })
               if (pending?.type === "compaction") {
                 const compacted = yield* restore(
                   Effect.gen(function* () {
