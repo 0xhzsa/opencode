@@ -692,7 +692,7 @@ export function createData(config: CreateDataInput) {
 
   function handleEvent(event: OpenCodeEvent) {
     let gap = false
-    if ("durable" in event && event.durable && event.type.startsWith("session.")) {
+    if (config.sessionHeads?.() && "durable" in event && event.durable && event.type.startsWith("session.")) {
       const sessionID = event.durable.aggregateID
       const seq = event.durable.seq
       if (event.type === "session.created") {
@@ -1839,7 +1839,8 @@ export function createData(config: CreateDataInput) {
               limit: config.initialMessageLimit?.() ?? messagePageLimit,
               order: "desc",
             })
-            if (response.seq != null) sessionSeq.set(sessionID, response.seq)
+            if (response.seq != null)
+              sessionSeq.set(sessionID, Math.max(sessionSeq.get(sessionID) ?? -1, response.seq))
             const fetched = response.data.toReversed().map(stored)
             // Same protection as the pending sync: a re-fetch racing an
             // admission must not wipe its local transcript row.
