@@ -187,4 +187,21 @@ describe("SessionStore", () => {
       ).toEqual([])
     }),
   )
+
+  it.effect("reads a message page and its sequence atomically while events land", () =>
+    Effect.gen(function* () {
+      const sessionID = Session.ID.make("ses_page")
+      const bus = yield* seedSessions([{ id: sessionID, updated: 0 }])
+      const store = yield* SessionStore.Service
+      const pages = yield* Effect.all(
+        Array.from({ length: 50 }, (_, index) => [
+          bus.publish(SessionEvent.Synthetic, { sessionID, text: String(index) }).pipe(Effect.as(undefined)),
+          store.messagePage({ sessionID, order: "asc" }),
+        ]).flat(),
+        { concurrency: "unbounded" },
+      )
+      // Created and Renamed hold seq 0 and 1; every later event adds one message.
+      for (const page of pages) if (page) expect(page.messages.length).toBe(page.seq - 1)
+    }),
+  )
 })

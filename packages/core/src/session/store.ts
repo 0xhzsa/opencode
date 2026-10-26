@@ -52,11 +52,19 @@ export type MessagesInput = {
   }
 }
 
+/** A page of messages and the latest durable session sequence it reflects. */
+export type MessagePage<Message> = { readonly seq: number; readonly messages: Message[] }
+
 export interface Interface {
   readonly get: (sessionID: Session.ID) => Effect.Effect<Session.Info | undefined>
   readonly list: (input?: ListInput) => Effect.Effect<Session.Info[]>
-  readonly sequence: (sessionID: Session.ID) => Effect.Effect<number>
   readonly messages: (input: MessagesInput) => Effect.Effect<SessionMessage.Info[], MessageDecodeError>
+  /** {@link Interface.messages} and the sequence read in one transaction, so no durable event lands between them. */
+  readonly messagePage: (input: MessagesInput) => Effect.Effect<MessagePage<SessionMessage.Info>, MessageDecodeError>
+  /** {@link Interface.messagePage} with files stored in `blob` left as `media:` refs. */
+  readonly messagePageWithRefs: (
+    input: MessagesInput,
+  ) => Effect.Effect<MessagePage<SessionMessage.MediaInfo>, MessageDecodeError>
   readonly context: (sessionID: Session.ID) => Effect.Effect<SessionMessage.Info[], MessageDecodeError>
   readonly message: (
     messageID: SessionMessage.ID,
@@ -139,6 +147,11 @@ const layer = Layer.effect(
     const messageRow = (messageID: SessionMessage.ID) =>
       db.select().from(SessionMessageTable).where(eq(SessionMessageTable.id, messageID)).get().pipe(Effect.orDie)
 
+    const atSequence = <Message>(sessionID: Session.ID, read: Effect.Effect<Message[], MessageDecodeError>) =>
+      db
+        .transaction(() => Effect.all({ seq: Bus.latestSequence(db, sessionID), messages: read }))
+        .pipe(Effect.catch((error) => (error instanceof MessageDecodeError ? Effect.fail(error) : Effect.die(error))))
+
     return Service.of({
       get: Effect.fnUntraced(function* (sessionID) {
         const row = yield* db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get().pipe(Effect.orDie)
@@ -187,10 +200,21 @@ const layer = Layer.effect(
         )
         return (direction === "previous" ? rows.toReversed() : rows).map((row) => fromRow(row))
       }),
-      sequence: Effect.fn("SessionStore.sequence")((sessionID) => Bus.latestSequence(db, sessionID)),
       messages: Effect.fn("SessionStore.messages")(function* (input) {
         return yield* SessionHistory.decodeMessageRows(db, yield* messageRows(input))
       }),
+      messagePage: Effect.fn("SessionStore.messagePage")((input) =>
+        atSequence(
+          input.sessionID,
+          messageRows(input).pipe(Effect.flatMap((rows) => SessionHistory.decodeMessageRows(db, rows))),
+        ),
+      ),
+      messagePageWithRefs: Effect.fn("SessionStore.messagePageWithRefs")((input) =>
+        atSequence(
+          input.sessionID,
+          messageRows(input).pipe(Effect.flatMap((rows) => SessionHistory.decodeMessageRowsWithRefs(db, rows))),
+        ),
+      ),
       messagesWithRefs: Effect.fn("SessionStore.messagesWithRefs")(function* (input) {
         return yield* SessionHistory.decodeMessageRowsWithRefs(db, yield* messageRows(input))
       }),
