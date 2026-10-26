@@ -413,9 +413,11 @@ export function ActiveSessionComposerRegion(props: {
   )
 
   const todos = createMemo(() => sessionTodos(props.session.history.messages(), props.session.data.revertMessageID()))
+
   // Like the old dock: the plan shows while the turn runs and still has work left, so stale todos never linger.
   const todosVisible = () =>
     todoEnabled() && props.session.data.working() && todos().length > 0 && !todos().every(todoFinished)
+
   // Matches the server: the highest-priority document that sets `experimental` decides. Migrated V1 sessions keep their
   // old `todowrite` calls, so without this check their last plan would come back.
   const todoEnabled = () =>
