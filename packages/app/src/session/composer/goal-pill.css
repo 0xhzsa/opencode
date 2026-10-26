@@ -1,0 +1,85 @@
+[data-color-scheme="dark"] [data-slot="session-goal-pill"] {
+  background: var(--v2-background-bg-layer-01);
+}
+
+/* The todo capsule's overlays and focus ring. */
+[data-slot="session-goal-pill"] {
+  &:focus-visible {
+    outline: 2px solid var(--v2-border-border-focus);
+    outline-offset: 2.5px;
+  }
+
+  @media (hover: hover) {
+    &:hover:not(:active, [data-expanded]) {
+      background-image: linear-gradient(var(--v2-overlay-simple-overlay-hover), var(--v2-overlay-simple-overlay-hover));
+    }
+  }
+
+  &:is(:active, [data-expanded]) {
+    background-image: linear-gradient(
+      var(--v2-overlay-simple-overlay-pressed),
+      var(--v2-overlay-simple-overlay-pressed)
+    );
+  }
+}
+
+[data-slot="session-goal-panel"] {
+  width: 320px;
+  max-width: calc(100vw - 56px);
+  padding-top: 8px;
+  border: 0.5px solid var(--v2-border-border-muted);
+  border-radius: 10px;
+  background: var(--v2-background-bg-layer-01);
+  box-shadow: var(--v2-elevation-floating);
+  transform-origin: var(--kb-popover-content-transform-origin);
+  animation: session-goal-panel-in 150ms ease-out;
+}
+
+@keyframes session-goal-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+:is([data-slot="session-goal-glyph"], [data-slot="session-goal-status"]) {
+  color: var(--v2-icon-icon-accent);
+
+  &[data-status="paused"] {
+    color: var(--v2-state-fg-warning);
+  }
+
+  &[data-status="complete"] {
+    color: var(--v2-state-fg-success);
+  }
+}
+
+[data-slot="session-goal-glyph"][data-status="active"] [data-slot="session-goal-core"] {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: session-goal-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes session-goal-pulse {
+  50% {
+    transform: scale(0.6);
+    opacity: 0.55;
+  }
+}
+
+:root[data-motion="reduce"] :is([data-slot="session-goal-core"], [data-slot="session-goal-panel"]) {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="session-goal-core"],
+  [data-slot="session-goal-panel"] {
+    animation: none;
+  }
+}
+
+@media (hover: none) {
+  [data-slot="session-goal-pill"] {
+    min-height: 44px;
+  }
+}
