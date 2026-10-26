@@ -369,7 +369,38 @@ describe("Schedule", () => {
       yield* TestClock.adjust("1 minute")
       yield* schedules.tick
       expect(yield* pending).toEqual([])
-      expect((yield* schedules.list())[0]).toMatchObject({ status: "active", runCount: 0 })
+      expect((yield* schedules.list())[0]).toMatchObject({ runCount: 0 })
+    }),
+  )
+
+  it.effect("pauses a due schedule when its location has the flag off, so later ticks skip it", () =>
+    Effect.gen(function* () {
+      const schedules = yield* setup(disabledDirectory)
+      const { db } = yield* Database.Service
+      const id = Schedule.ID.create()
+      yield* db
+        .insert(ScheduleTable)
+        .values({
+          id,
+          session_id: sessionID,
+          action: { type: "prompt", prompt: "poll" },
+          when: { type: "every", every: "1 minute" },
+          tz: "UTC",
+          next_due_at: 60_000,
+          time_created: 0,
+          time_updated: 0,
+        })
+        .run()
+        .pipe(Effect.orDie)
+      yield* TestClock.adjust("1 minute")
+      yield* schedules.tick
+      const paused = yield* schedules.get(id)
+      expect(paused).toMatchObject({ status: "paused", runCount: 0, nextDueAt: DateTime.makeUnsafe(60_000) })
+
+      yield* TestClock.adjust("5 minutes")
+      yield* schedules.tick
+      expect(yield* schedules.get(id)).toEqual(paused)
+      expect(yield* pending).toEqual([])
     }),
   )
 
@@ -549,9 +580,12 @@ describe("Schedule", () => {
       const fiber = yield* Effect.forkChild(schedules.run)
       yield* Effect.yieldNow
       yield* TestClock.adjust("10 seconds")
-      // Let the loop finish both ticks without moving the clock.
-      for (let i = 0; i < 50; i++) yield* Effect.yieldNow
-      expect(yield* pending).toEqual([messageID(first, 1), messageID(second, 1)])
+      // Without moving the clock again, the loop must tick a second time on its own.
+      const ids = yield* Effect.yieldNow.pipe(
+        Effect.andThen(pending),
+        Effect.repeat({ until: (ids) => ids.length >= 2, times: 1000 }),
+      )
+      expect(ids).toEqual([messageID(first, 1), messageID(second, 1)])
       yield* Fiber.interrupt(fiber)
     }),
   )

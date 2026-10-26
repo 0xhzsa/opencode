@@ -262,7 +262,11 @@ const layer = Layer.effect(
       const due = row.next_due_at
       if (due === null || row.session_id === null) return
       const session = yield* sessions.get(row.session_id)
-      if (!(yield* settings(session)).enabled) return
+      if (!(yield* settings(session)).enabled) {
+        // Reading the flag boots the Session's location, so pause instead of checking again every tick.
+        yield* update(row, { status: "paused", time_updated: now })
+        return
+      }
       if (row.last_message_id !== null && (yield* pending(row.last_message_id))) {
         // The wake that followed admission may have been lost; waking again is harmless.
         yield* execution.wake(session.id)
@@ -301,7 +305,7 @@ const layer = Layer.effect(
 
     const tick = Effect.flatMap(Clock.currentTimeMillis, tickAt)
 
-    // Rows due by `from` that could not fire (flag off, a failed prompt) are retried after MAX_SLEEP, not in a spin.
+    // Rows due by `from` that could not fire (a failed prompt) are retried after MAX_SLEEP, not in a spin.
     const nextWake = Effect.fnUntraced(function* (from: number) {
       const row = yield* db
         .select({ at: min(ScheduleTable.next_due_at) })
