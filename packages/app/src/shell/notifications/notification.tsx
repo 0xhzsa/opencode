@@ -271,7 +271,8 @@ export function createServerNotificationState(input: {
       return
     }
 
-    if (event.type === "session.execution.succeeded") handleSessionIdle(event.data.sessionID, event.id)
+    // Settled, not succeeded: a Session waiting on background subagents is not done yet.
+    if (event.type === "session.settled") handleSessionIdle(event.data.sessionID, event.id)
   })
 
   onCleanup(() => {

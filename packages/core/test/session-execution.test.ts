@@ -216,6 +216,98 @@ describe("SessionExecution lifecycle", () => {
     }),
   )
 
+  it.effect("settles only once no background subagent of the Session is running", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const bus = yield* Bus.Service
+      const jobs = yield* Job.Service
+      const parent = Session.ID.make("ses_settled_parent")
+      const child = Session.ID.make("ses_settled_child")
+      yield* seedSessions(database, [parent])
+      yield* seedSessions(database, [child], { parent_id: parent })
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(scope, () => Effect.void)
+      const execution = Context.get(context, SessionExecution.Service)
+      const lifecycle: unknown[] = []
+      yield* bus.listen((event) =>
+        Effect.sync(() => {
+          if (event.type === "session.execution.succeeded" || event.type === "session.settled")
+            lifecycle.push({ type: event.type, data: event.data })
+        }),
+      )
+      const succeeded = { type: "session.execution.succeeded", data: { sessionID: parent } }
+      const done = yield* Deferred.make<string>()
+      yield* jobs.start({
+        id: child,
+        type: "subagent",
+        recovery: {
+          kind: "subagent",
+          parentSessionID: parent,
+          childSessionID: child,
+          agent: "general",
+          description: "Background inspection",
+        },
+        run: Deferred.await(done),
+      })
+      yield* jobs.background(child)
+      // A long-running background shell, such as a dev server, never holds the Session back.
+      yield* jobs.start({
+        id: "shell-dev",
+        type: "shell",
+        recovery: { kind: "shell", sessionID: parent, shellID: "shell-dev", command: "bun dev" },
+        run: Effect.never,
+      })
+      yield* jobs.background("shell-dev")
+
+      yield* execution.resume(parent)
+      expect(lifecycle).toEqual([succeeded])
+
+      // The subagent's notice wakes the parent, and that execution settles.
+      yield* Deferred.succeed(done, "Found it")
+      yield* jobs.wait({ id: child })
+      yield* execution.resume(parent)
+      expect(lifecycle).toEqual([succeeded, succeeded, { type: "session.settled", data: { sessionID: parent } }])
+    }),
+  )
+
+  it.effect("does not settle after a failed or interrupted execution", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const bus = yield* Bus.Service
+      const failing = Session.ID.make("ses_settled_failed")
+      const stopped = Session.ID.make("ses_settled_interrupted")
+      yield* seedSessions(database, [failing, stopped])
+      const draining = yield* Deferred.make<void>()
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(scope, ({ sessionID }) =>
+        sessionID === failing
+          ? Effect.fail(
+              new AIError({
+                reason: new TransportError({ message: "Disconnected", transport: "http", operation: "request" }),
+              }),
+            )
+          : Deferred.succeed(draining, undefined).pipe(Effect.andThen(Effect.never)),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+      const settled: unknown[] = []
+      yield* bus.listen((event) =>
+        Effect.sync(() => {
+          if (event.type === "session.settled") settled.push(event.data)
+        }),
+      )
+
+      yield* execution.resume(failing).pipe(Effect.exit)
+      yield* execution.resume(stopped).pipe(Effect.forkScoped)
+      yield* Deferred.await(draining)
+      yield* execution.interrupt(stopped)
+      yield* execution.awaitIdle(stopped)
+
+      expect(settled).toEqual([])
+    }),
+  )
+
   it.effect("starts every claimed execution without waiting for earlier drains to finish", () =>
     Effect.gen(function* () {
       const database = yield* Database.Service

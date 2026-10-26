@@ -13,6 +13,7 @@ import { SessionSchema } from "./schema.js"
 import { SessionStore } from "./store.js"
 import { toSessionError } from "./to-session-error.js"
 import { SessionInbox } from "./inbox.js"
+import { SessionBackground } from "./background.js"
 
 export interface Interface {
   /** Snapshots active execution owned by this process. */
@@ -121,6 +122,10 @@ export const layer = Layer.effect(
             const outcome = terminal(exit, reason)
             if (outcome.type === "succeeded") {
               yield* bus.publish(SessionEvent.Execution.Succeeded, { sessionID }, releaseOnCommit(sessionID))
+              // Background shells don't hold it back: a dev server would keep the Session from ever settling.
+              const background = yield* SessionBackground.outstanding(jobs, store, sessionID)
+              if (!background.some((work) => work.kind === "subagent"))
+                yield* bus.publish(SessionEvent.Settled, { sessionID })
               return
             }
             if (outcome.type === "interrupted") {

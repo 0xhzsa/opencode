@@ -57,7 +57,7 @@ beforeAll(async () => {
 })
 
 test.each([
-  ["session.execution.succeeded", "notification.session.responseReady.title"],
+  ["session.settled", "notification.session.responseReady.title"],
   ["session.execution.failed", "notification.session.error.title"],
 ] as const)("system alert for %s requires an open session tab", async (type, title) => {
   alerts.length = 0
