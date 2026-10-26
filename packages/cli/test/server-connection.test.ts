@@ -306,6 +306,51 @@ test("connects to an already-running service on the configured port without spaw
   }
 })
 
+test("reconnecting reuses the configured server instead of spawning a contender", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-configured-reconnect-"))
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      if (request.headers.get("authorization") !== `Basic ${btoa("opencode:configured-secret")}`)
+        return Response.json({ _tag: "UnauthorizedError", message: "Unauthorized" }, { status: 401 })
+      return Response.json({ version: OPENCODE_VERSION, pid: process.pid, urls: [] })
+    },
+  })
+  const configDir = path.join(root, "config")
+  const stateDir = path.join(root, "state")
+  const layer = Global.layerWith({ home: root, config: configDir, state: stateDir })
+  const runPromise = <A, E>(effect: Effect.Effect<A, E, Global.Service | FileSystem.FileSystem | Scope.Scope>) =>
+    Effect.runPromise(effect.pipe(Effect.provide(layer), Effect.provide(NodeFileSystem.layer), Effect.scoped))
+  try {
+    await fs.mkdir(configDir, { recursive: true })
+    await fs.writeFile(
+      path.join(configDir, ServiceConfig.filename()),
+      JSON.stringify({
+        hostname: "127.0.0.1",
+        port: server.port,
+        password: "configured-secret",
+        // A contender spawned by a regression stays inside this test's directory.
+        env: { HOME: root, OPENCODE_DB: path.join(root, "opencode.db"), XDG_DATA_HOME: path.join(root, "data") },
+      }),
+    )
+    const endpoint = {
+      url: `http://127.0.0.1:${server.port}`,
+      auth: { type: "basic" as const, username: "opencode", password: "configured-secret" },
+    }
+
+    const resolved = await runPromise(ServerConnection.resolve())
+    expect(resolved.endpoint).toEqual(endpoint)
+    if (!resolved.service) throw new Error("Expected managed service capabilities")
+
+    expect(await runPromise(resolved.service.reconnect().pipe(Effect.timeout("5 seconds")))).toEqual(endpoint)
+    expect(await Bun.file(path.join(stateDir, ServiceConfig.filename())).exists()).toBe(false)
+  } finally {
+    await server.stop(true)
+    await fs.rm(root, { recursive: true, force: true })
+  }
+}, 30_000)
+
 test("a build ignores another channel's service config and never sends it that password", async () => {
   expect(ServiceConfig.filename()).not.toBe("service.json")
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-channel-isolation-"))

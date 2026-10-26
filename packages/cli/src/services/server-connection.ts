@@ -59,13 +59,15 @@ function warnVersionMismatch(url: string, version: string) {
 }
 
 function managedService(options: EnsureOptions) {
-  const reconnectOptions = { ...options, version: undefined }
+  // Reconnects run under a live UI, so they find the server the same way as the first connection but stay quiet
+  // about version mismatches.
+  const reconnect = () => resolveManaged({ ...options, version: undefined }, "ignore", () => {})
   return {
-    reconnect: () => Service.ensure(reconnectOptions),
+    reconnect,
     restart: () =>
       Effect.gen(function* () {
         yield* Service.stop({ file: options.file, pty: "handoff" })
-        yield* Service.ensure(reconnectOptions)
+        yield* reconnect()
       }),
   }
 }
@@ -81,17 +83,21 @@ export const shutdownPersistentPty = Effect.fn("cli.server-connection.shutdown-p
   yield* Effect.tryPromise(() => client.experimental.persistentPty.shutdown())
 })
 
-const resolveManaged = Effect.fnUntraced(function* (options: EnsureOptions, mismatch: NonNullable<Args["mismatch"]>) {
+const resolveManaged = Effect.fnUntraced(function* (
+  options: EnsureOptions,
+  mismatch: NonNullable<Args["mismatch"]>,
+  warn: (url: string, version: string) => void = warnVersionMismatch,
+) {
   if (mismatch === "ignore") {
     const registered = yield* Service.reuse({ ...options, version: undefined })
     if (registered !== undefined) {
       const version = yield* ServiceConfig.registeredVersion(options.file)
-      if (version !== undefined && version !== OPENCODE_VERSION) warnVersionMismatch(registered.url, version)
+      if (version !== undefined && version !== OPENCODE_VERSION) warn(registered.url, version)
       return registered
     }
     const configured = yield* ServiceConfig.probeConfigured({ file: options.file })
     if (configured?.state === "ready") {
-      if (configured.version !== OPENCODE_VERSION) warnVersionMismatch(configured.endpoint.url, configured.version)
+      if (configured.version !== OPENCODE_VERSION) warn(configured.endpoint.url, configured.version)
       return configured.endpoint
     }
     if (configured?.state === "unauthorized") return yield* Effect.fail(unauthorizedError(configured.endpoint))
@@ -106,7 +112,7 @@ const resolveManaged = Effect.fnUntraced(function* (options: EnsureOptions, mism
   if (compatible !== undefined) {
     if (options.version === undefined) {
       const version = yield* ServiceConfig.registeredVersion(options.file)
-      if (version !== undefined && version !== OPENCODE_VERSION) warnVersionMismatch(compatible.url, version)
+      if (version !== undefined && version !== OPENCODE_VERSION) warn(compatible.url, version)
     }
     return compatible
   }
@@ -121,7 +127,7 @@ const resolveManaged = Effect.fnUntraced(function* (options: EnsureOptions, mism
   if (configured?.state === "ready") {
     if (mismatch === "error" && configured.version !== OPENCODE_VERSION)
       return yield* Effect.fail(new Error("Background server version does not match this client"))
-    if (configured.version !== OPENCODE_VERSION) warnVersionMismatch(configured.endpoint.url, configured.version)
+    if (configured.version !== OPENCODE_VERSION) warn(configured.endpoint.url, configured.version)
     return configured.endpoint
   }
   if (configured?.state === "unauthorized") return yield* Effect.fail(unauthorizedError(configured.endpoint))
