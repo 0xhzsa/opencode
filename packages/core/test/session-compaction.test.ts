@@ -1070,8 +1070,10 @@ for (const background of [false, true]) {
 
 it.effect("summary cache prefix still flattens genuinely oversized measured input", () =>
   Effect.gen(function* () {
-    const size = summaryWindow + summaryBuffer
-    const fixture = yield* summaryFixture([textUser(tokenText(size)), measured("Latest answer", size)])
+    const fixture = yield* summaryFixture([
+      textUser(tokenText(summaryCeiling)),
+      measured("Latest answer", summaryWindow + summaryBuffer),
+    ])
     expect(yield* fixture.run()).toEqual({ status: "completed" })
     expect(requests).toHaveLength(1)
     expect(requests[0].tools).toEqual([])
@@ -1100,7 +1102,8 @@ it.effect("summary measured recovery shrinks from the rejected measured size", (
       }),
     )
     expect(yield* fixture.run()).toEqual({ status: "completed" })
-    expect(requests.length).toBeGreaterThan(1)
+    // The retained exchange fits the 85% and 70% targets; 50% of the measured input forces truncation.
+    expect(requests).toHaveLength(4)
     expect(JSON.stringify(requests.at(-1)?.messages)).toContain("characters omitted")
   }),
 )
@@ -1155,9 +1158,9 @@ it.effect("summary measured recovery counts hook growth after unsupported media 
   }),
 )
 
-it.effect("summary measured recovery does not reuse usage after an agent switch", () =>
+it.effect("summary measured recovery reuses usage only for the matching agent", () =>
   Effect.gen(function* () {
-    const fixture = yield* summaryFixture([textUser("Earlier question"), measured("Earlier answer", summaryInput)])
+    const fixture = yield* summaryFixture([textUser("Earlier question"), oldReasoning()])
     const agent = Agent.ID.make("other")
     const context = {
       ...fixture.context,
@@ -1169,6 +1172,17 @@ it.effect("summary measured recovery does not reuse usage after an agent switch"
     expect(yield* fixture.run(context)).toEqual({ status: "completed" })
     expect(requests).toHaveLength(1)
     expect(requests[0].generation?.maxTokens).toBeLessThanOrEqual(summaryBuffer / 5)
+    // Switching back restores the measured prefix; discarding usage for every agent is not sufficient.
+    expect(yield* fixture.run()).toEqual({ status: "completed" })
+    expect(requests).toHaveLength(2)
+    expect(requests[1]).toMatchObject({
+      tools: fixture.context.tools.definitions,
+      messages: [
+        ...toLLMMessages(fixture.context.messages, resolved.ref),
+        Message.user(SessionCompaction.buildPrompt(false)),
+      ],
+      generation: { maxTokens: summaryBuffer },
+    })
   }),
 )
 
