@@ -12,12 +12,14 @@ import { SessionEvent } from "@opencode/schema/session-event"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Deferred, Effect, Exit, Fiber, Layer, Option, Schema, Scope, Stream } from "effect"
 import { HttpRouter, HttpServer } from "effect/http"
-import { HttpApiBuilder } from "effect/http-api"
+import { HttpApi, HttpApiBuilder } from "effect/http-api"
 import { it } from "../../core/test/lib/effect"
-import { Api } from "../src/api"
+import { EventGroup } from "@opencode/protocol/groups/event"
 import { EventFeed } from "../src/event-feed"
 import { EventHandler } from "../src/handlers/event"
 import { schemaErrorLayer } from "../src/middleware/schema-error"
+
+const EventApi = HttpApi.make("event").add(EventGroup)
 
 const Internal = Bus.ephemeral({ type: "test.internal", schema: { value: Schema.String } })
 
@@ -298,7 +300,7 @@ describe("EventFeed", () => {
       const source = makeSource()
       const feed = yield* EventFeed.make(source.observe)
       const webHandler = HttpRouter.toWebHandler(
-        HttpApiBuilder.layer(Api).pipe(
+        HttpApiBuilder.layer(EventApi).pipe(
           Layer.provide(EventHandler),
           Layer.provide(Layer.succeed(EventFeed.Service, feed)),
           Layer.provide(schemaErrorLayer),
