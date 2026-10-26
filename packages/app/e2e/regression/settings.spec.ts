@@ -592,6 +592,7 @@ test("shortcuts list Search sessions once and unbind a shortcut while recording 
   await expect(binding).toHaveText("Press keys")
   await expect(unbind).toHaveCount(0)
 })
+
 for (const own of [false, true]) {
   test(`shortcuts list a command that shares Close tab only with its own shortcut: ${own}`, async ({ page }) => {
     const { settings } = await open(page, {
