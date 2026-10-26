@@ -27,7 +27,6 @@ import { Integration } from "@opencode/core/integration"
 import { Environment } from "@opencode/core/environment/index"
 import { EnvironmentUnavailable } from "@opencode/core/environment/unavailable"
 import { Location } from "@opencode/core/location"
-import { Workspace } from "@opencode/core/workspace"
 import { Mcp } from "@opencode/core/mcp/index"
 import { McpClient } from "@opencode/core/mcp/client"
 import { McpStdio } from "@opencode/core/mcp/stdio"
@@ -60,7 +59,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { ExitCode, makeHandle, ProcessId } from "effect/process/ChildProcessSpawner"
 import { Image } from "@opencode/core/image"
 import { Global } from "@opencode/util/global"
-import { ProcessGuard } from "@opencode/util/process-guard"
 import { advance, drain } from "./lib/clock"
 import { testEffect } from "./lib/effect"
 import { registerIntegrationPolicy } from "./fixture/policy"
@@ -779,8 +777,9 @@ test("lists paginated prompts and invokes them through the MCP client", async ()
   expect(result.result).toEqual({ messages: [{ role: "user", content: { type: "text", text: "Effect" } }] })
 })
 
-const recordLocalSpawn = async (placement: Layer.Layer<never> = Layer.empty) => {
+test("spawns local MCP servers through the location environment", async () => {
   const spawns: Array<ChildProcess.Command> = []
+  const cwd = path.join(import.meta.dir, "fixture")
   const config = new ConfigMCP.Local({
     type: "local",
     command: [process.execPath, path.join(import.meta.dir, "fixture/mcp-output-schema.ts")],
@@ -794,43 +793,16 @@ const recordLocalSpawn = async (placement: Layer.Layer<never> = Layer.empty) => 
         const connection = yield* McpClient.connect("environment", config, import.meta.dir)
         yield* connection.tools()
       }),
-    ).pipe(Effect.provide(Layer.merge(recordingEnvironmentLayer(spawns), placement))),
+    ).pipe(Effect.provide(recordingEnvironmentLayer(spawns))),
   )
 
   expect(spawns).toHaveLength(1)
   const command = spawns[0]
   if (!command || !ChildProcess.isStandardCommand(command)) throw new Error("Expected a standard process command")
-  expect(command.options.cwd).toBe(path.join(import.meta.dir, "fixture"))
+  expect(command.command).toBe(process.execPath)
+  expect(command.options.cwd).toBe(cwd)
   expect(command.options.extendEnv).toBe(true)
   expect(command.options.env).toEqual({ MCP_LOCATION_TEST: "configured" })
-  return command
-}
-
-test("spawns local MCP servers through the location environment, guarded against outliving opencode", async () => {
-  const command = await recordLocalSpawn()
-  const script = path.join(import.meta.dir, "fixture/mcp-output-schema.ts")
-  if (process.platform === "win32") {
-    expect([command.command, ...command.args]).toEqual([process.execPath, script])
-    return
-  }
-  expect({ command: command.command, args: command.args }).toEqual(ProcessGuard.wrap(process.execPath, [script]))
-  expect(command.options.additionalFds).toEqual({ fd3: { type: "input" } })
-})
-
-test("does not guard MCP servers that a workspace runs", async () => {
-  const command = await recordLocalSpawn(
-    Layer.succeed(
-      Location.Service,
-      Location.Service.of(
-        location({ directory: AbsolutePath.make(import.meta.dir), workspaceID: Workspace.ID.make("wrk_test") }),
-      ),
-    ),
-  )
-  expect([command.command, ...command.args]).toEqual([
-    process.execPath,
-    path.join(import.meta.dir, "fixture/mcp-output-schema.ts"),
-  ])
-  expect(command.options.additionalFds).toBeUndefined()
 })
 
 test("reports a local MCP server as failed when the location has no execution plane", async () => {

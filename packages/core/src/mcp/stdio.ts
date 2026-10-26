@@ -1,6 +1,5 @@
 export * as McpStdio from "./stdio.js"
 
-import { ProcessGuard } from "@opencode/util/process-guard"
 import { ReadBuffer, serializeMessage, type JSONRPCMessage, type Transport } from "@modelcontextprotocol/client"
 import { Cause, Duration, Effect, Fiber, Option, Queue, Scope, Stream } from "effect"
 import { ChildProcess } from "effect/process"
@@ -18,6 +17,18 @@ const MAX_FRAME_BYTES = 16 * 1024 * 1024
 // An unexpected exit is reported with its exit code and the end of stderr, which usually names the cause.
 const EXIT_WAIT = Duration.seconds(1)
 const STDERR_TAIL = 1_000
+// Runs the server in the background of a process-group leader `sh`. A watcher blocks on fd 3, a pipe
+// whose parent end the kernel closes however opencode exits (even SIGKILL), then kills its own group.
+// Stdin goes through fd 4 because a background command's stdin is otherwise /dev/null.
+const GUARD = `exec 4<&0
+(read _ <&3; kill -KILL 0) >/dev/null 2>&1 &
+guard=$!
+"$@" 3<&- <&4 4<&- &
+exec 3<&- 4<&-
+wait $!
+code=$?
+kill $guard
+exit $code`
 
 export interface Options {
   /** Server name; only used to attribute logs. */
@@ -46,17 +57,12 @@ export interface Options {
  */
 export const make = Effect.fnUntraced(function* (options: Options) {
   const environment = yield* Environment.Service
-  // A server spawned on this host is guarded so it cannot outlive a crashed or SIGKILLed opencode.
-  // Windows has no process groups to signal, and a workspace runs servers on its own execution plane.
-  const guarded =
-    process.platform !== "win32" &&
-    Option.match(yield* Effect.serviceOption(Location.Service), {
-      onNone: () => true,
-      onSome: (location) => location.workspaceID === undefined,
-    })
-  const command = guarded
-    ? ProcessGuard.wrap(options.command, options.args)
-    : { command: options.command, args: [...options.args] }
+  // Only a server spawned on this POSIX host is a child of this process; workspaces run their own.
+  const location = yield* Effect.serviceOption(Location.Service)
+  const guarded = process.platform !== "win32" && Option.isSome(location) && !location.value.workspaceID
+  const [command, ...args] = guarded
+    ? ["/bin/sh", "-c", GUARD, options.command, options.command, ...options.args]
+    : [options.command, ...options.args]
   const scope = yield* Effect.scope
   // Outgoing frames are queued rather than written to `handle.stdin` directly: the sink closes the
   // stream it is run with, and stdin must stay open across the whole session.
@@ -95,14 +101,13 @@ export const make = Effect.fnUntraced(function* (options: Options) {
       startup = Effect.runPromise(
         Effect.gen(function* () {
           const handle = yield* environment.spawner.spawn(
-            ChildProcess.make(command.command, command.args, {
+            ChildProcess.make(command, args, {
               cwd: options.cwd,
               env: options.environment,
               extendEnv: true,
               stdin: { stream: Stream.encodeText(Stream.fromQueue(outgoing)), endOnDone: true },
               stdout: "pipe",
               stderr: "pipe",
-              // Never written: the parent's end closes only when this process exits.
               additionalFds: guarded ? { fd3: { type: "input" } } : undefined,
               forceKillAfter: FORCE_KILL_AFTER,
             }),
