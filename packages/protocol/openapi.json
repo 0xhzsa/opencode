@@ -13376,6 +13376,14 @@
               ]
             },
             "required": false
+          },
+          {
+            "name": "untracked",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Vcs.Untracked"
+            },
+            "required": false
           }
         ],
         "security": [],
@@ -15768,6 +15776,10 @@
           "status": {
             "type": "string",
             "enum": ["added", "deleted", "modified"]
+          },
+          "more": {
+            "type": "boolean",
+            "enum": [true]
           }
         },
         "required": ["file", "patch", "additions", "deletions", "status"],
@@ -21360,6 +21372,10 @@
       "Vcs.Mode": {
         "type": "string",
         "enum": ["working", "branch", "committed"]
+      },
+      "Vcs.Untracked": {
+        "type": "string",
+        "enum": ["files", "folders"]
       },
       "VcsInitNotSupportedErrorEncoded": {
         "type": "object",

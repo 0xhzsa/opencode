@@ -66,6 +66,7 @@ export type FileDiffInfo = {
   additions: number
   deletions: number
   status: "added" | "deleted" | "modified"
+  more?: true
 }
 
 export type SessionsCursor = string
@@ -3313,6 +3314,7 @@ export type SessionImportInput = {
           readonly additions: number
           readonly deletions: number
           readonly status: "added" | "deleted" | "modified"
+          readonly more?: true
         }>
       }
       readonly location: { readonly directory: string }
@@ -3366,6 +3368,7 @@ export type SessionImportInput = {
           readonly additions: number
           readonly deletions: number
           readonly status: "added" | "deleted" | "modified"
+          readonly more?: true
         }>
       }
       readonly location: { readonly directory: string }
@@ -3419,6 +3422,7 @@ export type SessionImportInput = {
           readonly additions: number
           readonly deletions: number
           readonly status: "added" | "deleted" | "modified"
+          readonly more?: true
         }>
       }
       readonly location: { readonly directory: string }
@@ -6026,25 +6030,36 @@ export type VcsDiffInput = {
     readonly mode: "working" | "branch" | "committed"
     readonly base?: string | undefined
     readonly context?: number | undefined
+    readonly untracked?: ("files" | "folders") | undefined
   }["location"]
   readonly mode: {
     readonly location?: { readonly directory?: string | undefined } | undefined
     readonly mode: "working" | "branch" | "committed"
     readonly base?: string | undefined
     readonly context?: number | undefined
+    readonly untracked?: ("files" | "folders") | undefined
   }["mode"]
   readonly base?: {
     readonly location?: { readonly directory?: string | undefined } | undefined
     readonly mode: "working" | "branch" | "committed"
     readonly base?: string | undefined
     readonly context?: number | undefined
+    readonly untracked?: ("files" | "folders") | undefined
   }["base"]
   readonly context?: {
     readonly location?: { readonly directory?: string | undefined } | undefined
     readonly mode: "working" | "branch" | "committed"
     readonly base?: string | undefined
     readonly context?: number | undefined
+    readonly untracked?: ("files" | "folders") | undefined
   }["context"]
+  readonly untracked?: {
+    readonly location?: { readonly directory?: string | undefined } | undefined
+    readonly mode: "working" | "branch" | "committed"
+    readonly base?: string | undefined
+    readonly context?: number | undefined
+    readonly untracked?: ("files" | "folders") | undefined
+  }["untracked"]
 }
 
 export type VcsDiffOutput = { location: LocationPublicRef; data: Array<FileDiffInfo> }
