@@ -267,7 +267,7 @@ export function createNewSessionWorkspaceController(input: {
       visible,
       branch,
     },
-    branches: (search: string, signal: AbortSignal) =>
+    branches: (search: string, signal?: AbortSignal) =>
       serverSDK.api.vcs.branch
         .list({ location: { directory: projectRoot() }, search, limit: 50 }, { signal })
         .then((response) => response.data),
