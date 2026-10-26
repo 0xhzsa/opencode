@@ -50,7 +50,7 @@ import { createTimelineCache } from "./timeline/cache"
 import { createPanelMotion, holdLandingWidth, panelOpacity } from "@/shell/panel-motion"
 
 export function SessionScreenView(props: { session: SessionModel }) {
-  // The timeline cache captures its owner when created, so link handling must be provided above it.
+  // Link handling for the rest of the screen; each cached timeline provides its own for its session.
   const mounted = createMountedSession(props.session)
 
   return (
@@ -274,41 +274,43 @@ function SessionScreenContent(props: {
       }, untrack(props.view))
 
       return (
-        <MessageTimeline
-          active={active()}
-          hideHeader={!isDesktop()}
-          registerHeaderGap={registerHeaderGap}
-          session={source}
-          view={own()}
-          screen={props.screen}
-          background={composer.requests.background}
-          actions={composer.actions.timeline}
-          scroll={timeline.scroll}
-          onResumeScroll={timeline.actions.resume}
-          setScrollRef={timeline.view.setScrollRef}
-          onScheduleScrollState={timeline.view.scheduleScrollState}
-          onPin={timeline.view.pin}
-          onUnpin={timeline.view.unpin}
-          onUserScroll={timeline.view.markUserScroll}
-          onHistoryScroll={timeline.view.onHistoryScroll}
-          onSelectionInteraction={timeline.view.selectionInteraction}
-          pinned={timeline.view.pinned()}
-          centered={screen.centered()}
-          reserveReviewToggle={!sideVisible()}
-          setContentRef={timeline.view.setContentRef}
-          bottomInset={timeline.inset()}
-          setVisibleRef={timeline.view.setVisibleRef}
-          anchor={timeline.view.anchor}
-          setRevealMessage={timeline.view.setRevealMessage}
-          setRevealPart={timeline.view.setRevealPart}
-          reveal={timeline.view.reveal}
-          setScrollToEnd={timeline.view.setScrollToEnd}
-          search={
-            <Show when={active()}>
-              <TimelineSearchBar controller={timelineSearch} />
-            </Show>
-          }
-        />
+        <ExtensionLinks session={own()} active={active()}>
+          <MessageTimeline
+            active={active()}
+            hideHeader={!isDesktop()}
+            registerHeaderGap={registerHeaderGap}
+            session={source}
+            view={own()}
+            screen={props.screen}
+            background={composer.requests.background}
+            actions={composer.actions.timeline}
+            scroll={timeline.scroll}
+            onResumeScroll={timeline.actions.resume}
+            setScrollRef={timeline.view.setScrollRef}
+            onScheduleScrollState={timeline.view.scheduleScrollState}
+            onPin={timeline.view.pin}
+            onUnpin={timeline.view.unpin}
+            onUserScroll={timeline.view.markUserScroll}
+            onHistoryScroll={timeline.view.onHistoryScroll}
+            onSelectionInteraction={timeline.view.selectionInteraction}
+            pinned={timeline.view.pinned()}
+            centered={screen.centered()}
+            reserveReviewToggle={!sideVisible()}
+            setContentRef={timeline.view.setContentRef}
+            bottomInset={timeline.inset()}
+            setVisibleRef={timeline.view.setVisibleRef}
+            anchor={timeline.view.anchor}
+            setRevealMessage={timeline.view.setRevealMessage}
+            setRevealPart={timeline.view.setRevealPart}
+            reveal={timeline.view.reveal}
+            setScrollToEnd={timeline.view.setScrollToEnd}
+            search={
+              <Show when={active()}>
+                <TimelineSearchBar controller={timelineSearch} />
+              </Show>
+            }
+          />
+        </ExtensionLinks>
       )
     },
     () => conversationVisible() && messagesReady(),

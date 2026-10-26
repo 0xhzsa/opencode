@@ -95,11 +95,8 @@ export function SessionUIProvider(
       .at(-1)?.background_compaction === true
 
   // Turn diffs live in the tab's in-memory state, so they outlast timeline remounts and go when the tab closes.
-  const turnDiffs = () => {
-    const id = params.id
-
-    if (!id) return
-
+  // Keyed by the asking timeline's session, which a cached timeline keeps while another session is routed.
+  const turnDiffs = (id: string) => {
     const tab =
       tabs.store.find(
         (item) =>
@@ -137,8 +134,8 @@ export function SessionUIProvider(
         shellRunning={(id) => !!data.shell.get(id)}
         shellOutput={(input) => serverSDK.api.shell.output(input)}
         turnDiff={{
-          get: (input) => turnDiffs()?.get(input),
-          load: (input) => turnDiffs()?.load(input, () => serverSDK.api.session.diff(input)),
+          get: (input) => turnDiffs(input.sessionID).get(input),
+          load: (input) => turnDiffs(input.sessionID).load(input, () => serverSDK.api.session.diff(input)),
         }}
         onNavigateToSession={navigateToSession}
         onSessionHref={href}

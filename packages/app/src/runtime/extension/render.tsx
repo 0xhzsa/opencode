@@ -5,6 +5,7 @@ import { SourcesProvider } from "@opencode/session-ui/context/sources"
 import { sourcesExperiment } from "@opencode/session-ui/sources/experiment"
 import { ExtensionContext, Slot, Style, type MountedSession, type SlotMap } from "@opencode/gui-extensions/sdk"
 import { useExtensionHost } from "./host"
+import { createLinkCheck } from "./link-check"
 
 /**
  * Renders one extension contribution with its context and error isolation: a contribution that throws records the
@@ -70,16 +71,21 @@ export function ExtensionStyles() {
  * Routes local markdown links in the session to extension LinkHandler contributions, keeping image loading. A turn's
  * sources chip opens its turn through the Sources extension's handler.
  */
-export function ExtensionLinks(props: ParentProps<{ session: MountedSession }>) {
+export function ExtensionLinks(props: ParentProps<{ session: MountedSession; active?: boolean }>) {
   const host = useExtensionHost()
   const markdown = useMarkdown()
+
+  // Checks untracked: markdown calls this inside its render effect, which must not follow the routed session.
+  const localFileExists = createLinkCheck(
+    () => props.active !== false,
+    (href) => host.links.exists({ href, session: props.session }),
+  )
 
   return (
     <MarkdownProvider
       readImage={markdown?.readImage}
       openLocalFile={(href) => void host.links.open({ href, session: props.session })}
-      // Untracked: markdown calls this inside its render effect, which must not follow the routed session.
-      localFileExists={(href) => untrack(() => host.links.exists({ href, session: props.session }))}
+      localFileExists={localFileExists}
     >
       <SourcesProvider
         enabled={sourcesExperiment.enabled}

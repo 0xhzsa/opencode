@@ -55,29 +55,27 @@ export function createTimelineCache(
           ),
         )
 
-        // Like `select`, but read only when the view reads it, so a pending value suspends the reader as it would
-        // through the live provider.
-        const hold = <T>(read: Accessor<T>) => {
-          let last: { value: T } | undefined
+        const store = select(() => data.store)
+        const directory = select(() => data.directory)
+        const sessionID = select(() => data.sessionID)
+        const agents = select(() => data.agents)
+        const readImage = select(() => markdown?.readImage)
+        const openLocalFile = select(() => markdown?.openLocalFile)
+        const localFileExists = select(() => markdown?.localFileExists)
+        const openSession = select(() => markdown?.openSession)
+        const sessionTitle = select(() => markdown?.sessionTitle)
 
-          return () => {
-            if (last && !active()) return last.value
-            last = { value: read() }
+        // The Location's config is a query: read it in the reader and only while selected, so a pending config
+        // suspends that reader as the live provider would rather than this view's owner, the whole screen.
+        let compaction = false
 
-            return last.value
-          }
+        const backgroundCompaction = () => {
+          if (!active()) return compaction
+
+          compaction = data.backgroundCompaction
+
+          return compaction
         }
-
-        const store = hold(() => data.store)
-        const directory = hold(() => data.directory)
-        const sessionID = hold(() => data.sessionID)
-        const agents = hold(() => data.agents)
-        const backgroundCompaction = hold(() => data.backgroundCompaction)
-        const readImage = hold(() => markdown?.readImage)
-        const openLocalFile = hold(() => markdown?.openLocalFile)
-        const localFileExists = hold(() => markdown?.localFileExists)
-        const openSession = hold(() => markdown?.openSession)
-        const sessionTitle = hold(() => markdown?.sessionTitle)
 
         const view = () =>
           render(
@@ -99,7 +97,7 @@ export function createTimelineCache(
           )
 
         return {
-          value: provide(WorkspaceLocationContext, hold(location), () =>
+          value: provide(WorkspaceLocationContext, select(location), () =>
             provide(
               DataContext,
               {
@@ -121,7 +119,10 @@ export function createTimelineCache(
                 navigateToSession: data.navigateToSession,
                 sessionHref: data.sessionHref,
                 shellRunning: data.shellRunning,
-                shellOutput: data.shellOutput,
+                // A hidden running shell stops polling its output and resumes from its cursor once selected.
+                get shellOutput() {
+                  return active() ? data.shellOutput : undefined
+                },
                 turnDiff: data.turnDiff,
               },
               () =>

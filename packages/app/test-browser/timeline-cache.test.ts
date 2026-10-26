@@ -23,11 +23,13 @@ function setup() {
       id: string
       directory: string
       visible: boolean
+      deferred: boolean
       messages: Partial<Record<string, SessionMessageInfo[]>>
     }>({
       id: "ses_a",
       directory: "/repo",
       visible: true,
+      deferred: false,
       messages: {
         ses_a: [{ id: "msg_a", type: "user", text: "First session", time: { created: 1 } }],
         ses_b: [{ id: "msg_b", type: "user", text: "Second session", time: { created: 2 } }],
@@ -44,6 +46,10 @@ function setup() {
     // The Location of every provider value each view reads, by the view's session and Location.
     const reads: Record<string, string[]> = {}
     const imageReaders = new Map<ReadMarkdownImage, string>()
+    // What each view reads once a deferred part of it, like a Markdown block, first renders.
+    const deferredReads: Record<string, string[]> = {}
+    const shellOutput = async () => ({ data: { cursor: 0, size: 0, output: "" } })
+    const shells: Record<string, boolean[]> = {}
 
     const imageReader = createMemo(() => {
       const read: ReadMarkdownImage = async () => undefined
@@ -79,11 +85,13 @@ function setup() {
           },
           sessionID: undefined,
           agents: true,
-          backgroundCompaction: false,
+          get backgroundCompaction() {
+            return state.directory === "/other"
+          },
           navigateToSession: undefined,
           sessionHref: undefined,
           shellRunning: undefined,
-          shellOutput: undefined,
+          shellOutput,
           turnDiff: undefined,
         },
         () =>
@@ -103,7 +111,7 @@ function setup() {
       ),
     )
 
-    return { state, setState, cache, views, disposed, reads, dispose }
+    return { state, setState, cache, views, disposed, reads, deferredReads, shells, dispose }
 
     function createSessionTimelineCache() {
       return createTimelineCache(
@@ -158,6 +166,19 @@ function setup() {
               data.directory,
               (readImage && imageReaders.get(readImage)) ?? "",
             ]
+          })
+          createComputed(() => {
+            if (!state.deferred) return
+            const readImage = markdown?.readImage
+            deferredReads[view] = [
+              workspace().directory,
+              data.directory,
+              (readImage && imageReaders.get(readImage)) ?? "",
+              data.backgroundCompaction ? "/other" : "/repo",
+            ]
+          })
+          createComputed(() => {
+            shells[view] = [...(shells[view] ?? []), data.shellOutput === shellOutput]
           })
           views.set(id, { active, messages: source.history.messages, element })
           onCleanup(() => disposed.push(id))
@@ -307,6 +328,60 @@ for (const order of ["session-first", "workspace-first"] as const) {
     }
   })
 }
+
+test("a view first reading its providers while another Location is selected reads its own", () => {
+  const input = setup()
+
+  try {
+    input.cache()
+    input.setState("id", "ses_b")
+    input.setState("directory", "/other")
+    input.cache()
+    input.setState("deferred", true)
+    expect(input.deferredReads).toEqual({
+      "ses_a in /repo": ["/repo", "/repo", "/repo", "/repo"],
+      "ses_b in /other": ["/other", "/other", "/other", "/other"],
+    })
+  } finally {
+    input.dispose()
+  }
+})
+
+test("a detached view's readers stay still when another Location is selected", () => {
+  const input = setup()
+
+  try {
+    input.cache()
+    const runs = input.reads["ses_a in /repo"]!.length
+    input.setState("id", "ses_b")
+    input.setState("directory", "/other")
+    input.cache()
+    input.setState("id", "ses_c")
+    input.setState("directory", "/third")
+    input.cache()
+    expect(input.reads["ses_a in /repo"]!.length).toBe(runs)
+  } finally {
+    input.dispose()
+  }
+})
+
+test("a detached view's shells stop reading output until it is selected again", () => {
+  const input = setup()
+
+  try {
+    input.cache()
+    input.setState("id", "ses_b")
+    input.cache()
+    expect(input.shells["ses_a in /repo"]!.at(-1)).toBe(false)
+    expect(input.shells["ses_b in /repo"]!.at(-1)).toBe(true)
+    input.setState("id", "ses_a")
+    input.cache()
+    expect(input.shells["ses_a in /repo"]!.at(-1)).toBe(true)
+    expect(input.shells["ses_b in /repo"]!.at(-1)).toBe(false)
+  } finally {
+    input.dispose()
+  }
+})
 
 test("evicts the least recently selected view and disposes all retained owners", () => {
   const input = setup()
