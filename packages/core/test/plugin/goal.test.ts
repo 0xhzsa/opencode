@@ -1,4 +1,6 @@
 import { describe, expect } from "bun:test"
+import path from "path"
+import { pathToFileURL } from "url"
 import { Deferred, Effect, Layer, Option, Schedule, Schema, Stream } from "effect"
 import { LanguageModel, type LLMRequest } from "@opencode/ai/effect"
 import { OpenAIChat } from "@opencode/ai/protocols/openai-chat"
@@ -10,11 +12,11 @@ import { Watcher } from "@opencode/core/filesystem/watcher"
 import { Job } from "@opencode/core/job"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { Model } from "@opencode/core/model"
-import { GoalPlugin } from "@opencode/core/plugin/goal"
 import { Provider } from "@opencode/core/provider"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
 import { SessionRunnerModel } from "@opencode/core/session/runner/model"
+import { SessionGoal } from "@opencode/schema/session-goal"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Global } from "@opencode/util/global"
 import { tempGlobalLayer } from "../fixture/global"
@@ -74,16 +76,18 @@ describe("goal plugin", () => {
         reason: "All 12 tests pass.",
         rounds: 1,
       })
-      const messages = yield* sessions.messages({ sessionID: session.id })
-      const user = messages.find((message) => message.type === "user")
-      expect(user?.type === "user" && user.text).toContain(
-        "<untrusted_objective>\nMake the test suite pass\n</untrusted_objective>",
-      )
-      const continued = messages.filter((message) => message.type === "synthetic")
-      expect(continued).toMatchObject([
+      const messages = yield* sessions.messages({ sessionID: session.id, order: "asc" })
+      // The kickoff is a notice, so timelines show the objective rather than the whole template.
+      expect(messages.filter((message) => message.type === "user")).toEqual([])
+      const notices = messages.filter((message) => message.type === "synthetic")
+      expect(notices).toMatchObject([
+        { description: "Goal: Make the test suite pass", metadata: { source: "goal", goalID: expect.any(String) } },
         { description: "Continuing goal (1/20)", metadata: { source: "goal", goalID: expect.any(String) } },
       ])
-      expect(continued[0]?.type === "synthetic" && continued[0].text).toContain(
+      expect(notices[0]?.type === "synthetic" && notices[0].text).toContain(
+        "<untrusted_objective>\nMake the test suite pass\n</untrusted_objective>",
+      )
+      expect(notices[1]?.type === "synthetic" && notices[1].text).toContain(
         "The parser test still fails.\nNext step: Fix the date parser.",
       )
       // Continuations run inside the same execution, so the Session went idle once.
@@ -184,8 +188,10 @@ describe("goal plugin", () => {
 
       expect(yield* goal(session.id)).toMatchObject({ status: "paused", reason: "Paused by the user", rounds: 0 })
       expect(
-        (yield* sessions.messages({ sessionID: session.id })).filter((message) => message.type === "synthetic"),
-      ).toEqual([])
+        (yield* sessions.messages({ sessionID: session.id, order: "asc" })).flatMap((message) =>
+          message.type === "synthetic" ? [message.description] : [],
+        ),
+      ).toEqual(["Goal: Rename the module"])
     }),
   )
 
@@ -216,7 +222,7 @@ describe("goal plugin", () => {
       yield* sessions.setMetadata({
         sessionID: session.id,
         metadata: {
-          [GoalPlugin.KEY]: {
+          [SessionGoal.KEY]: {
             id: "goal-earlier",
             sessionID: session.id,
             objective: "Migrate the database",
@@ -257,12 +263,50 @@ describe("goal plugin", () => {
       expect(verdicts.asked()).toBe(1)
 
       expect(
-        Option.getOrUndefined(decodeGoal((yield* sessions.get(child.id)).metadata?.[GoalPlugin.KEY])),
+        Option.getOrUndefined(decodeGoal((yield* sessions.get(child.id)).metadata?.[SessionGoal.KEY])),
       ).toMatchObject({ sessionID: session.id, status: "active" })
       yield* sessions.prompt({ sessionID: child.id, text: "Help out" })
       yield* sessions.wait(child.id)
 
       expect(verdicts.asked()).toBe(1)
+    }),
+  )
+
+  it.live("sets the objective inside quotes", () =>
+    Effect.gen(function* () {
+      const session = yield* project()
+      const sessions = yield* Session.Service
+      yield* serve(reviewer('{"verdict":"done","reason":"Released."}').respond)
+
+      yield* sessions.command({ sessionID: session.id, command: "goal", text: '"Ship the release"' })
+      yield* sessions.wait(session.id)
+
+      expect(yield* goal(session.id)).toMatchObject({ objective: "Ship the release", status: "complete" })
+    }),
+  )
+
+  it.live("sends the kickoff as the user's message when the goal has attachments", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      const file = path.join(tmp.path, "spec.md")
+      yield* Effect.promise(() => Bun.write(file, "# Spec"))
+      const session = yield* project()
+      const sessions = yield* Session.Service
+      yield* serve(reviewer('{"verdict":"done","reason":"Implemented."}').respond)
+
+      yield* sessions.command({
+        sessionID: session.id,
+        command: "goal",
+        text: "Implement the spec",
+        files: [{ uri: pathToFileURL(file).href, name: "spec.md" }],
+      })
+      yield* sessions.wait(session.id)
+
+      const messages = yield* sessions.messages({ sessionID: session.id, order: "asc" })
+      expect(messages.filter((message) => message.type === "user")).toMatchObject([
+        { metadata: { source: "goal" }, files: [{ name: "spec.md" }] },
+      ])
+      expect(messages.filter((message) => message.type === "synthetic")).toEqual([])
     }),
   )
 
@@ -288,10 +332,10 @@ describe("goal plugin", () => {
       expect(yield* goal(session.id)).toMatchObject({ status: "active", rounds: 1 })
       yield* sessions.wait(session.id)
       expect(yield* goal(session.id)).toMatchObject({ status: "complete", rounds: 1 })
-      const resumed = (yield* sessions.messages({ sessionID: session.id })).filter(
+      const resumed = (yield* sessions.messages({ sessionID: session.id, order: "asc" })).filter(
         (message) => message.type === "synthetic",
       )
-      expect(resumed).toMatchObject([{ description: "Resuming goal" }])
+      expect(resumed).toMatchObject([{ description: "Goal: Update the changelog" }, { description: "Resuming goal" }])
 
       yield* sessions.command({ sessionID: session.id, command: "goal", text: "clear" })
       expect(yield* goal(session.id)).toBeUndefined()
@@ -324,11 +368,11 @@ function serve(respond: (request: LLMRequest) => TestLLM.Response) {
   return TestLLM.Test.use((llm) => llm.serve(respond))
 }
 
-const decodeGoal = Schema.decodeUnknownOption(GoalPlugin.State)
+const decodeGoal = Schema.decodeUnknownOption(SessionGoal.State)
 
 function goal(sessionID: Session.ID) {
   return Session.Service.use((sessions) => sessions.get(sessionID)).pipe(
-    Effect.map((session) => Option.getOrUndefined(decodeGoal(session.metadata?.[GoalPlugin.KEY]))),
+    Effect.map((session) => Option.getOrUndefined(decodeGoal(session.metadata?.[SessionGoal.KEY]))),
   )
 }
 

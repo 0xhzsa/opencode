@@ -4,32 +4,18 @@ import { define } from "@opencode/plugin/effect/plugin"
 import type { SessionIdleBackground } from "@opencode/plugin/effect/session"
 import type { Session } from "@opencode/schema/session"
 import type { SessionEvent } from "@opencode/schema/session-event"
+import { SessionGoal } from "@opencode/schema/session-goal"
 import { Cause, Clock, Effect, Option, Schema, Stream } from "effect"
 import CONTINUATION from "./goal/continuation.txt"
 import JUDGE from "./goal/judge.txt"
 import KICKOFF from "./goal/kickoff.txt"
 
-/** Session metadata key holding the goal, so clients can read it from the Session. */
-export const KEY = "opencode.goal"
 export const MAX_OBJECTIVE = 4_000
 export const MAX_ROUNDS = 20
 // Identifies this server process. A goal armed by an earlier process comes back paused instead of resuming on its own.
 const boot = crypto.randomUUID()
 
-export const State = Schema.Struct({
-  id: Schema.String,
-  // Children and forks copy their parent's metadata, so a goal only belongs to the Session that set it.
-  sessionID: Schema.String,
-  objective: Schema.String,
-  status: Schema.Literals(["active", "paused", "complete"]),
-  reason: Schema.optionalKey(Schema.String),
-  rounds: Schema.Number,
-  maxRounds: Schema.Number,
-  boot: Schema.String,
-  updatedAt: Schema.Number,
-})
-export type State = typeof State.Type
-const decodeState = Schema.decodeUnknownOption(State)
+type State = SessionGoal.State
 
 const Verdict = Schema.Struct({
   verdict: Schema.Literals(["done", "continue", "blocked", "paused", "wait"]),
@@ -45,16 +31,14 @@ export const Plugin = define({
   id: "opencode.goal",
   effect: Effect.fn(function* (ctx) {
     const read = Effect.fn("GoalPlugin.read")(function* (sessionID: Session.ID) {
-      const session = yield* ctx.session.get({ sessionID })
-      const goal = Option.getOrUndefined(decodeState(session.metadata?.[KEY]))
-      return goal?.sessionID === sessionID ? goal : undefined
+      return SessionGoal.fromMetadata(sessionID, (yield* ctx.session.get({ sessionID })).metadata)
     })
 
     // Metadata updates replace the whole record, so keep the keys other writers own.
     const write = Effect.fn("GoalPlugin.write")(function* (sessionID: Session.ID, goal: State | undefined) {
       const metadata = (yield* ctx.session.get({ sessionID })).metadata ?? {}
-      const others = Object.fromEntries(Object.entries(metadata).filter(([key]) => key !== KEY))
-      yield* ctx.session.update({ sessionID, metadata: goal ? { ...others, [KEY]: goal } : others })
+      const others = Object.fromEntries(Object.entries(metadata).filter(([key]) => key !== SessionGoal.KEY))
+      yield* ctx.session.update({ sessionID, metadata: goal ? { ...others, [SessionGoal.KEY]: goal } : others })
     })
 
     const settle = Effect.fn("GoalPlugin.settle")(function* (
@@ -179,7 +163,7 @@ export const Plugin = define({
         description: "keep working until an objective is met [pause|resume|clear]",
         execute: (input) =>
           Effect.gen(function* () {
-            const text = input.prompt.text.trim()
+            const text = unquote(input.prompt.text.trim())
             const control = text.toLowerCase()
             const goal = yield* read(input.sessionID)
             if (text === "") return yield* Effect.fail(new Error(goal ? `${describe(goal)}\n${USAGE}` : USAGE))
@@ -229,10 +213,26 @@ export const Plugin = define({
               updatedAt: yield* Clock.currentTimeMillis,
             }
             yield* write(input.sessionID, created)
-            yield* ctx.session.prompt({
-              ...input.prompt,
+            const kickoff = render(KICKOFF, { objective: escape(text) })
+            const metadata = { source: "goal", goalID: created.id }
+            const attached = [input.prompt.files, input.prompt.agents, input.prompt.skills].some(
+              (items) => items !== undefined && items.length > 0,
+            )
+            // Timelines show a described synthetic message as one notice row instead of the whole kickoff. Only a
+            // prompt can carry attachments, so those still go through as the user's message.
+            if (attached)
+              return yield* ctx.session.prompt({
+                ...input.prompt,
+                sessionID: input.sessionID,
+                text: kickoff,
+                metadata,
+                delivery: input.delivery,
+              })
+            yield* ctx.session.synthetic({
               sessionID: input.sessionID,
-              text: render(KICKOFF, { objective: escape(text) }),
+              text: kickoff,
+              description: `Goal: ${text.length > 120 ? `${text.slice(0, 119)}…` : text}`,
+              metadata,
               delivery: input.delivery,
             })
           }).pipe(Effect.asVoid),
@@ -266,6 +266,14 @@ function parseVerdict(text: string): Verdict | undefined {
   const end = text.lastIndexOf("}")
   if (start === -1 || end < start) return undefined
   return Option.getOrUndefined(decodeVerdict(text.slice(start, end + 1)))
+}
+
+// `/goal "Ship the release"` and `/goal Ship the release` set the same objective.
+function unquote(text: string) {
+  const quoted = /^(["'“‘])([\s\S]*)(["'”’])$/.exec(text)
+  if (!quoted) return text
+  const pairs: Record<string, string> = { '"': '"', "'": "'", "“": "”", "‘": "’" }
+  return pairs[quoted[1] ?? ""] === quoted[3] ? (quoted[2] ?? "").trim() : text
 }
 
 // One pass, so an objective that contains a placeholder is not expanded again.
