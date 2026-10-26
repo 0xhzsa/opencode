@@ -120,6 +120,7 @@ export class VoiceTools {
 
       const seen = new Set<string>()
       const tabs = new Set(this.screen.tabs())
+
       // Best match first; among equal matches, top-level sessions with an open tab, then the most recent.
       const rank = (session: SessionInfo) =>
         (search.score(session) ?? 0) * 4 + (session.parentID ? 0 : 2) + (tabs.has(session.id) ? 1 : 0)

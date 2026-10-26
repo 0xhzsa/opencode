@@ -296,12 +296,14 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     // and the open tabs ask again on reconnect (a restarted server forgets its watches). Older servers lack the route.
     const watch = (input: string) => {
       const file = path.normalize(input)
+
       if (!file || path.absolute(file)) return
       void serverSDK.api.experimental.file.watch({ path: file, location: { directory: scope() } }).catch(() => {})
     }
 
     const unwatch = (input: string) => {
       const file = path.normalize(input)
+
       if (!file || path.absolute(file)) return
       void serverSDK.api.experimental.file.unwatch({ path: file, location: { directory: scope() } }).catch(() => {})
     }
