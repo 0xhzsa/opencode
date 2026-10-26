@@ -8,6 +8,7 @@ import { AbsolutePath, PositiveInt, RelativePath } from "@opencode/schema/schema
 import { Database } from "../database/database.js"
 import { Bus } from "../bus.js"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
+import { SessionBlob } from "./blob.js"
 import { SessionHistory } from "./history.js"
 import { MessageDecodeError } from "./error.js"
 import { SessionMessage } from "./message.js"
@@ -147,10 +148,19 @@ const layer = Layer.effect(
     const messageRow = (messageID: SessionMessage.ID) =>
       db.select().from(SessionMessageTable).where(eq(SessionMessageTable.id, messageID)).get().pipe(Effect.orDie)
 
-    const atSequence = <Message>(sessionID: Session.ID, read: Effect.Effect<Message[], MessageDecodeError>) =>
+    // Only the SQL reads share the transaction; decoding runs after it so the connection is not held across yields.
+    const atSequence = <Loaded>(
+      input: MessagesInput,
+      load: (rows: ReadonlyArray<typeof SessionMessageTable.$inferSelect>) => Effect.Effect<Loaded>,
+    ) =>
       db
-        .transaction(() => Effect.all({ seq: Bus.latestSequence(db, sessionID), messages: read }))
-        .pipe(Effect.catch((error) => (error instanceof MessageDecodeError ? Effect.fail(error) : Effect.die(error))))
+        .transaction(() =>
+          Effect.all({
+            seq: Bus.latestSequence(db, input.sessionID),
+            loaded: messageRows(input).pipe(Effect.flatMap(load)),
+          }),
+        )
+        .pipe(Effect.orDie)
 
     return Service.of({
       get: Effect.fnUntraced(function* (sessionID) {
@@ -203,18 +213,14 @@ const layer = Layer.effect(
       messages: Effect.fn("SessionStore.messages")(function* (input) {
         return yield* SessionHistory.decodeMessageRows(db, yield* messageRows(input))
       }),
-      messagePage: Effect.fn("SessionStore.messagePage")((input) =>
-        atSequence(
-          input.sessionID,
-          messageRows(input).pipe(Effect.flatMap((rows) => SessionHistory.decodeMessageRows(db, rows))),
-        ),
-      ),
-      messagePageWithRefs: Effect.fn("SessionStore.messagePageWithRefs")((input) =>
-        atSequence(
-          input.sessionID,
-          messageRows(input).pipe(Effect.flatMap((rows) => SessionHistory.decodeMessageRowsWithRefs(db, rows))),
-        ),
-      ),
+      messagePage: Effect.fn("SessionStore.messagePage")(function* (input) {
+        const { seq, loaded } = yield* atSequence(input, (rows) => SessionBlob.hydrate(db, rows))
+        return { seq, messages: yield* SessionHistory.decodeHydratedRows(loaded) }
+      }),
+      messagePageWithRefs: Effect.fn("SessionStore.messagePageWithRefs")(function* (input) {
+        const { seq, loaded } = yield* atSequence(input, (rows) => SessionBlob.keepRefs(db, rows))
+        return { seq, messages: yield* SessionHistory.decodeKeptRows(loaded) }
+      }),
       messagesWithRefs: Effect.fn("SessionStore.messagesWithRefs")(function* (input) {
         return yield* SessionHistory.decodeMessageRowsWithRefs(db, yield* messageRows(input))
       }),
