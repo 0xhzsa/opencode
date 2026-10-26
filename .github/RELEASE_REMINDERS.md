@@ -16,7 +16,7 @@ Read this before cutting a minor or major release, act on every item in its sect
     - `client.mcp.{add,remove,connect,disconnect}` and `client.mcp.client.token`
     - `client.file.{watch,unwatch}` and, in the Promise client only, `client.file.write`
     - `client.config.update`
-  - SDK types renamed with an `Experimental` prefix (`packages/client/src/promise/deprecated.ts`, `packages/client/src/effect/deprecated.ts`, and `GenerateApi` in `packages/client/src/promise/api.ts`), for example `SessionWaitInput` → `ExperimentalSessionWaitInput`.
+  - SDK types renamed with an `Experimental` prefix (`packages/client/src/promise/deprecated.ts`, `packages/client/src/effect/deprecated.ts`, and `GenerateApi` in `packages/client/src/promise/api.ts`), for example `SessionWaitInput` → `ExperimentalSessionWaitInput`. `packages/client/src/effect/deprecated.ts` also augments the Effect group interfaces (`AppApi`, `SessionApi`, `IntegrationApi`, `McpApi`, `FileApi`, `ConfigApi`) with the old members.
   - Plugin `Context` paths (`packages/plugin/src/{effect,promise}/{plugin,session}.ts`, wired in `packages/core/src/plugin/host.ts`, `packages/plugin/src/promise/adapter.ts` and `packages/core/test/plugin/host.ts`), each now under `ctx.experimental`:
     - `ctx.generate`
     - `ctx.session.wait`

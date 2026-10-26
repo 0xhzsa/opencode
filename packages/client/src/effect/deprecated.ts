@@ -217,3 +217,64 @@ export type VoiceSessionOperation<E = never> = Experimental.ExperimentalVoiceSes
 
 /** @deprecated Use `ExperimentalVoiceSessionOutput`. Removed in the next minor. */
 export type VoiceSessionOutput = Experimental.ExperimentalVoiceSessionOutput
+
+// The group interfaces keep their pre-experimental members too, so code typed against them still compiles.
+declare module "./api/api.js" {
+  interface AppApi<E> {
+    /** @deprecated Use `client.experimental.generate`. Removed in the next minor. */
+    readonly generate: ExperimentalGenerateApi<E>
+    /** @deprecated Use `client.experimental.voice`. Removed in the next minor. */
+    readonly voice: ExperimentalVoiceApi<E>
+    /** @deprecated Use `client.experimental.migration`. Removed in the next minor. */
+    readonly migration: ExperimentalMigrationApi<E>
+    /** @deprecated Use `client.experimental.usage`. Removed in the next minor. */
+    readonly usage: ExperimentalUsageApi<E>
+  }
+
+  interface SessionApi<E> {
+    /** @deprecated Use `client.experimental.session.stats`. Removed in the next minor. */
+    readonly stats: ExperimentalSessionApi<E>["stats"]
+    /** @deprecated Use `client.experimental.session.import`. Removed in the next minor. */
+    readonly import: ExperimentalSessionApi<E>["import"]
+    /** @deprecated Use `client.experimental.session.export`. Removed in the next minor. */
+    readonly export: ExperimentalSessionApi<E>["export"]
+    /** @deprecated Use `client.experimental.session.skill`. Removed in the next minor. */
+    readonly skill: ExperimentalSessionApi<E>["skill"]
+    /** @deprecated Use `client.experimental.session.wait`. Removed in the next minor. */
+    readonly wait: ExperimentalSessionApi<E>["wait"]
+    /** @deprecated Use `client.experimental.session.instructions`. Removed in the next minor. */
+    readonly instructions: ExperimentalSessionApi<E>["instructions"]
+    /** @deprecated Use `client.experimental.session.log`. Removed in the next minor. */
+    readonly log: ExperimentalSessionApi<E>["log"]
+  }
+
+  interface IntegrationApi<E> {
+    /** @deprecated Use `client.experimental.integration.wellknown`. Removed in the next minor. */
+    readonly wellknown: ExperimentalIntegrationApi<E>["wellknown"]
+  }
+
+  interface McpApi<E> {
+    /** @deprecated Use `client.experimental.mcp.add`. Removed in the next minor. */
+    readonly add: ExperimentalMcpApi<E>["add"]
+    /** @deprecated Use `client.experimental.mcp.remove`. Removed in the next minor. */
+    readonly remove: ExperimentalMcpApi<E>["remove"]
+    /** @deprecated Use `client.experimental.mcp.connect`. Removed in the next minor. */
+    readonly connect: ExperimentalMcpApi<E>["connect"]
+    /** @deprecated Use `client.experimental.mcp.disconnect`. Removed in the next minor. */
+    readonly disconnect: ExperimentalMcpApi<E>["disconnect"]
+    /** @deprecated Use `client.experimental.mcp.client`. Removed in the next minor. */
+    readonly client: ExperimentalMcpApi<E>["client"]
+  }
+
+  interface FileApi<E> {
+    /** @deprecated Use `client.experimental.file.watch`. Removed in the next minor. */
+    readonly watch: ExperimentalFileApi<E>["watch"]
+    /** @deprecated Use `client.experimental.file.unwatch`. Removed in the next minor. */
+    readonly unwatch: ExperimentalFileApi<E>["unwatch"]
+  }
+
+  interface ConfigApi<E> {
+    /** @deprecated Use `client.experimental.config.update`. Removed in the next minor. */
+    readonly update: ExperimentalConfigApi<E>["update"]
+  }
+}
