@@ -23,7 +23,7 @@ export const experiments: Experiment[] = [
   {
     id: "client-mcp",
     title: "TUI tools",
-    description: "Let the agent open terminals in this TUI (requires server support)",
+    description: "Let the agent open terminals in this TUI and type commands into them (requires server support)",
   },
 ]
 

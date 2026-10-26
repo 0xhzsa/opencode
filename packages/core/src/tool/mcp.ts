@@ -68,6 +68,24 @@ export const layer = Layer.effect(
                         id: context.id,
                       },
                     })
+                    // The TUI's terminal tool types into the user's interactive shell, so shell rules govern it too.
+                    if (name(tool.server, tool.name) === "tui_write_terminal") {
+                      const text = (input as { text?: unknown } | undefined)?.text
+                      const command = typeof text === "string" ? text.trim() : ""
+                      yield* permission.assert({
+                        action: "shell",
+                        resources: [command],
+                        save: [command],
+                        metadata: { input: { command } },
+                        sessionID: context.sessionID,
+                        agent: context.agent,
+                        source: {
+                          type: "tool",
+                          messageID: context.messageID,
+                          id: context.id,
+                        },
+                      })
+                    }
                     const result = yield* mcp
                       .callTool({
                         server: tool.server,

@@ -26,6 +26,8 @@ import { executeTool, toolIdentity } from "./lib/tool"
 // Attached clients are never OAuth integrations.
 const unused = () => Effect.die("unused integration service")
 
+const policy: { rules: Permission.Ruleset } = { rules: [] }
+
 const it = testEffect(
   AppNodeBuilder.build(LayerNode.group([Tool.node, McpTool.node, Mcp.node, Bus.node]), [
     Location.node.replace(tempLocationLayer),
@@ -48,7 +50,17 @@ const it = testEffect(
       }),
     ),
     Credential.node.replace(Layer.mock(Credential.Service, {})),
-    Permission.node.replace(Layer.mock(Permission.Service, { assert: () => Effect.void })),
+    // Evaluates the real rule matcher against `policy`, so tests can prove which action and resource a tool asserts.
+    Permission.node.replace(
+      Layer.mock(Permission.Service, {
+        assert: (input) =>
+          input.resources.some((resource) => Permission.evaluate(input.action, resource, policy.rules).effect === "deny")
+            ? Effect.fail(
+                new Permission.BlockedError({ rules: [], permission: input.action, resources: input.resources }),
+              )
+            : Effect.void,
+      }),
+    ),
     Image.node.replace(imagePassthrough),
   ]),
 )
@@ -117,7 +129,7 @@ const registered = (id: string, present = true) =>
   }).pipe(Effect.retry({ times: 500, schedule: Schedule.spaced("2 millis") }))
 
 // Attached tools use Code Mode by default, like any MCP server's tools.
-const call = (path: string, sessionID = Session.ID.make("ses_client_mcp")) =>
+const call = (path: string, sessionID = Session.ID.make("ses_client_mcp"), input: Record<string, unknown> = {}) =>
   Effect.gen(function* () {
     return yield* executeTool(yield* Tool.Service, {
       sessionID,
@@ -126,7 +138,7 @@ const call = (path: string, sessionID = Session.ID.make("ses_client_mcp")) =>
         type: "tool-call",
         id: "call_client_mcp",
         name: "execute",
-        input: { code: `return await tools.${path}({})` },
+        input: { code: `return await tools.${path}(${JSON.stringify(input)})` },
       },
     })
   })
@@ -146,6 +158,30 @@ it.live("attaches a client MCP server and routes its tools with the session", ()
     expect(result.status).toBe("completed")
     expect(result.output?.output).toBe("tui:open_terminal")
     expect(client.sessions).toEqual(["ses_attached"])
+  }),
+)
+
+it.live("checks the TUI's write_terminal against shell rules with the typed command", () =>
+  Effect.gen(function* () {
+    const mcp = yield* Mcp.Service
+    const client = yield* clientServer("tui", ["write_terminal"])
+    yield* mcp.attach("tui", client.client)
+    yield* registered("tui_write_terminal")
+    yield* Effect.addFinalizer(() => Effect.sync(() => (policy.rules = [])))
+    const write = (text: string) => call("tui.write_terminal", Session.ID.make("ses_terminal"), { text })
+
+    policy.rules = [{ action: "shell", resource: "*", effect: "deny" }]
+    expect((yield* write("ls\n")).output?.output).toBe("Unable to execute tui_write_terminal")
+    expect(client.sessions).toEqual([])
+
+    policy.rules = [
+      { action: "shell", resource: "*", effect: "allow" },
+      { action: "shell", resource: "rm *", effect: "deny" },
+    ]
+    expect((yield* write("rm -rf /\n")).output?.output).toBe("Unable to execute tui_write_terminal")
+    expect(client.sessions).toEqual([])
+    expect((yield* write("ls\n")).output?.output).toBe("tui:write_terminal")
+    expect(client.sessions).toEqual(["ses_terminal"])
   }),
 )
 
