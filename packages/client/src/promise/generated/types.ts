@@ -1576,15 +1576,6 @@ export type SessionUsageUpdated = {
   data: { sessionID: SessionID; cost: MoneyUSD; tokens: TokenUsageInfo }
 }
 
-export type SessionSettled = {
-  id: EventID
-  created: number
-  metadata?: { [x: string]: any }
-  type: "session.settled"
-  location?: LocationRef
-  data: { sessionID: SessionID }
-}
-
 export type SessionTextDelta = {
   id: EventID
   created: number
@@ -2657,7 +2648,6 @@ export type V2Event =
   | SessionExecutionSucceeded
   | SessionExecutionFailed
   | SessionExecutionInterrupted
-  | SessionSettled
   | SessionInstructionsUpdated
   | SessionSynthetic
   | SessionSkillActivated
@@ -4037,7 +4027,6 @@ export type EventSubscribeInput = {
         | "session.execution.succeeded"
         | "session.execution.failed"
         | "session.execution.interrupted"
-        | "session.settled"
         | "session.instructions.updated"
         | "session.synthetic"
         | "session.skill.activated"
