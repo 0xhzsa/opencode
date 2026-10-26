@@ -17,7 +17,10 @@ export const State = Schema.Struct({
   reason: Schema.optionalKey(Schema.String),
   /** Continuations sent since the goal was set or last resumed. */
   rounds: Schema.Number,
+  /** A backstop for loops that stall detection misses. */
   maxRounds: Schema.Number,
+  /** Rounds in a row without progress: no tool calls, or the same reason as the round before. */
+  stalls: Schema.optionalKey(Schema.Number),
   /** The server process that armed the goal. */
   boot: Schema.String,
   updatedAt: Schema.Number,
