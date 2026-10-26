@@ -293,6 +293,14 @@ export type SessionStatus =
 
 export type PersistentPtyHandoff = { directory: string; instanceID: string; ticket: string; expiresAt: number }
 
+export type DebugRuntime = {
+  pid: number
+  uptimeSeconds: number
+  memory: { rss: number; heapTotal: number; heapUsed: number; external: number; arrayBuffers: number }
+  locations: number
+  gauges: { [x: string]: number }
+}
+
 export type ReferenceGitSource = { type: "git"; repository: string; branch?: string }
 
 export type VcsBranch = { current?: string; default?: string }
@@ -4089,6 +4097,8 @@ export type ExperimentalPersistentPtyConnectTokenOutput = { data: PtyTicketConne
 export type ExperimentalMediaGetInput = { readonly hash: string }
 
 export type ExperimentalMediaGetOutput = globalThis.Uint8Array
+
+export type ExperimentalDebugRuntimeOutput = DebugRuntime
 
 export type ShellListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
 

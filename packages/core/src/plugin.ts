@@ -11,6 +11,7 @@ import { KV } from "./kv.js"
 import { PluginHost } from "./plugin/host.js"
 import { type Failure, type Generation, Service } from "./plugin/service.js"
 import { State } from "./state.js"
+import { RuntimeStats } from "./runtime-stats.js"
 
 export { awaitActivation, type Generation, type Interface, Service } from "./plugin/service.js"
 
@@ -38,6 +39,7 @@ const layer = Layer.effect(
     }
     const hold = () => Effect.sync(holdUnsafe)
     const pendingFailures = yield* Queue.unbounded<PendingFailure>()
+    yield* RuntimeStats.gauge("plugin", () => ({ active: active.size, pending: pending.size }))
     let discovered: readonly Failure[] = []
     let inventory: Plugin.Info[] = []
     const publish = State.changes(
