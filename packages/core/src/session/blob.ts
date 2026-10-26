@@ -145,7 +145,7 @@ export interface Meta {
 }
 
 /**
- * For clients that fetch media themselves: refs stay in `rows`, except those whose blob is gone, which become the
+ * For clients that fetch media themselves: refs stay in `rows`, except those whose blob is gone or not referenced (the media route only serves referenced blobs), which become the
  * same unavailable placeholder {@link hydrate} gives. Returns the size and dimensions of every blob still named.
  */
 export const keepRefs = Effect.fnUntraced(function* (db: DatabaseService, rows: ReadonlyArray<MessageRow>) {
@@ -170,7 +170,17 @@ const loadMeta = Effect.fnUntraced(function* (db: DatabaseService, hashes: Reado
     const found = yield* db
       .select({ hash: BlobTable.hash, bytes: BlobTable.bytes, width: BlobTable.width, height: BlobTable.height })
       .from(BlobTable)
-      .where(inArray(BlobTable.hash, all.slice(offset, offset + 500)))
+      .where(
+        and(
+          inArray(BlobTable.hash, all.slice(offset, offset + 500)),
+          exists(
+            db
+              .select({ one: sql`1` })
+              .from(BlobRefTable)
+              .where(eq(BlobRefTable.hash, BlobTable.hash)),
+          ),
+        ),
+      )
       .all()
       .pipe(Effect.orDie)
     for (const { hash, ...rest } of found) meta.set(hash, rest)

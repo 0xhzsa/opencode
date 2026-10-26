@@ -11870,7 +11870,7 @@
     "/api/experimental/media/{hash}": {
       "get": {
         "tags": ["experimental"],
-        "operationId": "media.get",
+        "operationId": "experimental.media.get",
         "parameters": [
           {
             "name": "hash",

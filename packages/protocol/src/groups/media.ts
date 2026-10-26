@@ -13,7 +13,7 @@ export const MediaGetEndpoint = HttpApiEndpoint.get("media.get", "/api/experimen
   error: [FileNotFoundError, InvalidRequestError],
 }).annotateMerge(
   OpenApi.annotations({
-    identifier: "media.get",
+    identifier: "experimental.media.get",
     summary: "Read media blob",
     description:
       "Read a content-addressed media blob by SHA-256 hash with immutable Cache-Control, ETag, and 304 Not Modified support. Only blobs a stored message or inbox item still references are served. Experimental: may change without compatibility guarantees.",

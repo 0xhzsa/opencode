@@ -243,7 +243,24 @@ it.live("serves stored media as refs only to clients that opt in while experimen
 
         // A ref whose blob is gone reaches opted-in clients as the same placeholder inline readers get.
         const gone = "e".repeat(64)
+        const orphan = "d".repeat(64)
         const db = new Sqlite(database)
+        db.run("INSERT INTO blob (hash, mime, bytes, data, time_created) VALUES (?, 'image/png', 3, ?, 1)", [
+          orphan,
+          Buffer.from("abc"),
+        ])
+        db.run(
+          "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, 'user', 1001, 1001, 1001, ?)",
+          [
+            "msg_orphan_media",
+            sessionID,
+            JSON.stringify({
+              text: "orphan",
+              files: [{ uri: `media:${orphan}`, mime: "image/png", name: "gone.png", source: { type: "inline" } }],
+              time: { created: 1001 },
+            }),
+          ],
+        )
         db.run(
           "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, 'user', 1000, 1000, 1000, ?)",
           [
@@ -267,6 +284,11 @@ it.live("serves stored media as refs only to clients that opt in while experimen
           files: [placeholder],
         })
         expect(await plain.session.message.get({ sessionID, messageID: "msg_gone_media" })).toMatchObject({
+          files: [placeholder],
+        })
+        // A stored blob nothing references is not served by the route, so it is not offered as a ref either.
+        expect((await handler(new Request(route(orphan)))).status).toBe(404)
+        expect(await opted.session.message.get({ sessionID, messageID: "msg_orphan_media" })).toMatchObject({
           files: [placeholder],
         })
       })
