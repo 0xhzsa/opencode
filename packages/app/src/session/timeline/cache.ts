@@ -55,16 +55,29 @@ export function createTimelineCache(
           ),
         )
 
-        const store = select(() => data.store)
-        const directory = select(() => data.directory)
-        const sessionID = select(() => data.sessionID)
-        const agents = select(() => data.agents)
-        const backgroundCompaction = select(() => data.backgroundCompaction)
-        const readImage = select(() => markdown?.readImage)
-        const openLocalFile = select(() => markdown?.openLocalFile)
-        const localFileExists = select(() => markdown?.localFileExists)
-        const openSession = select(() => markdown?.openSession)
-        const sessionTitle = select(() => markdown?.sessionTitle)
+        // Like `select`, but read only when the view reads it, so a pending value suspends the reader as it would
+        // through the live provider.
+        const hold = <T>(read: Accessor<T>) => {
+          let last: { value: T } | undefined
+
+          return () => {
+            if (last && !active()) return last.value
+            last = { value: read() }
+
+            return last.value
+          }
+        }
+
+        const store = hold(() => data.store)
+        const directory = hold(() => data.directory)
+        const sessionID = hold(() => data.sessionID)
+        const agents = hold(() => data.agents)
+        const backgroundCompaction = hold(() => data.backgroundCompaction)
+        const readImage = hold(() => markdown?.readImage)
+        const openLocalFile = hold(() => markdown?.openLocalFile)
+        const localFileExists = hold(() => markdown?.localFileExists)
+        const openSession = hold(() => markdown?.openSession)
+        const sessionTitle = hold(() => markdown?.sessionTitle)
 
         const view = () =>
           render(
@@ -86,7 +99,7 @@ export function createTimelineCache(
           )
 
         return {
-          value: provide(WorkspaceLocationContext, select(location), () =>
+          value: provide(WorkspaceLocationContext, hold(location), () =>
             provide(
               DataContext,
               {
