@@ -300,6 +300,34 @@ export function fromPromise(plugin: Plugin) {
               }),
             )
 
+        const experimental: PromiseContext["experimental"] = {
+          generate: {
+            text: adaptApiMethod(GenerateEndpoints["generate.text"], host.experimental.generate.text),
+          },
+          session: {
+            wait: adaptApiMethod(SessionEndpoints["session.wait"], host.experimental.session.wait),
+            instructions: {
+              entry: {
+                list: adaptApiMethod(
+                  SessionEndpoints["session.instructions.entry.list"],
+                  host.experimental.session.instructions.entry.list,
+                ),
+                put: adaptApiMethod(
+                  SessionEndpoints["session.instructions.entry.put"],
+                  host.experimental.session.instructions.entry.put,
+                ),
+                remove: adaptApiMethod(
+                  SessionEndpoints["session.instructions.entry.remove"],
+                  host.experimental.session.instructions.entry.remove,
+                ),
+              },
+            },
+          },
+          terminal: {
+            read: adaptApiMethod(ExperimentalEndpoints["persistentPty.read"], host.experimental.terminal.read),
+          },
+        }
+
         const context2: PromiseContext = {
           app: host.app,
           location: host.location,
@@ -348,33 +376,9 @@ export function fromPromise(plugin: Plugin) {
                 options,
               ),
           },
-          experimental: {
-            generate: {
-              text: adaptApiMethod(GenerateEndpoints["generate.text"], host.experimental.generate.text),
-            },
-            session: {
-              wait: adaptApiMethod(SessionEndpoints["session.wait"], host.experimental.session.wait),
-              instructions: {
-                entry: {
-                  list: adaptApiMethod(
-                    SessionEndpoints["session.instructions.entry.list"],
-                    host.experimental.session.instructions.entry.list,
-                  ),
-                  put: adaptApiMethod(
-                    SessionEndpoints["session.instructions.entry.put"],
-                    host.experimental.session.instructions.entry.put,
-                  ),
-                  remove: adaptApiMethod(
-                    SessionEndpoints["session.instructions.entry.remove"],
-                    host.experimental.session.instructions.entry.remove,
-                  ),
-                },
-              },
-            },
-            terminal: {
-              read: adaptApiMethod(ExperimentalEndpoints["persistentPty.read"], host.experimental.terminal.read),
-            },
-          },
+          experimental,
+          // Deprecated pre-experimental path; removed in the next minor (.github/RELEASE_REMINDERS.md).
+          generate: experimental.generate,
           model: {
             list: adaptApiMethod(ModelEndpoints["model.list"], host.model.list),
             default: adaptApiMethod(ModelEndpoints["model.default"], host.model.default),
@@ -638,6 +642,9 @@ export function fromPromise(plugin: Plugin) {
             update: adaptApiMethod(SessionEndpoints["session.update"], host.session.update),
             move: adaptApiMethod(SessionEndpoints["session.move"], host.session.move),
             context: adaptApiMethod(SessionEndpoints["session.context"], host.session.context),
+            // Deprecated pre-experimental paths; removed in the next minor (.github/RELEASE_REMINDERS.md).
+            wait: experimental.session.wait,
+            instructions: experimental.session.instructions,
           },
           shell: {
             hook: (name, callback) =>

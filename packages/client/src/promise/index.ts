@@ -1,6 +1,7 @@
 import type { OpenCode } from "./client.js"
 
 export * from "./generated/index.js"
+export type * from "./deprecated.js"
 export { OpenCode } from "./client.js"
 export type {
   AgentApi,

@@ -845,9 +845,10 @@ const entries = await ctx.experimental.session.instructions.entry.list({ session
 await ctx.experimental.session.instructions.entry.remove({ sessionID, key: "deploy-target" })
 ```
 
-Endpoints under `/api/experimental` reach plugins only through `ctx.experimental`: `ctx.experimental.generate`,
+Endpoints under `/api/experimental` reach plugins through `ctx.experimental`: `ctx.experimental.generate`,
 `ctx.experimental.session.wait`, `ctx.experimental.session.instructions` and `ctx.experimental.terminal.read`. They
-may change between releases.
+may change between releases. The older `ctx.generate`, `ctx.session.wait` and `ctx.session.instructions` still work
+but are deprecated and will be removed in the next minor release.
 
 #### Reference
 
@@ -879,11 +880,11 @@ interface ExperimentalSessionContext {
   instructions: {
     entry: {
       list(
-        input: SessionInstructionsEntryListInput,
+        input: ExperimentalSessionInstructionsEntryListInput,
         requestOptions?: RequestOptions,
       ): Promise<readonly InstructionEntryInfo[]>
-      put(input: SessionInstructionsEntryPutInput, requestOptions?: RequestOptions): Promise<void>
-      remove(input: SessionInstructionsEntryRemoveInput, requestOptions?: RequestOptions): Promise<void>
+      put(input: ExperimentalSessionInstructionsEntryPutInput, requestOptions?: RequestOptions): Promise<void>
+      remove(input: ExperimentalSessionInstructionsEntryRemoveInput, requestOptions?: RequestOptions): Promise<void>
     }
   }
 }

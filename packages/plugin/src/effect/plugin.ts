@@ -46,6 +46,8 @@ export interface Context {
   readonly integration: IntegrationDomain
   readonly mcp: MCPDomain
   readonly model: ModelDomain
+  /** @deprecated Use `ctx.experimental.generate`. Removed in the next minor. */
+  readonly generate: ExperimentalGenerateApi<unknown>
   readonly permission: PermissionDomain
   readonly plugin: Pick<PluginApi<unknown>, "list">
   readonly provider: ProviderDomain

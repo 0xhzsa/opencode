@@ -2,6 +2,7 @@ export * as OpenCode from "./client.js"
 
 import { Cause, Context, Effect, Stream } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/http"
+import { DeprecatedAliases } from "../deprecated-aliases.js"
 import { SharedEvents } from "../shared-events.js"
 import { ClientError, OpenCode } from "./generated/index.js"
 import type { EventSubscribeInput } from "./api.js"
@@ -49,6 +50,7 @@ export const make = Effect.fn("OpenCode.make")(function* (options?: { readonly b
     )
   return {
     ...raw,
+    ...DeprecatedAliases.make(raw),
     event: { ...raw.event, subscribe },
     rpc: Object.assign(
       RpcClientRuntime.make(

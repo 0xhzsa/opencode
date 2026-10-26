@@ -33,18 +33,22 @@ test("exposes every standard HTTP API group", () => {
     "debug",
     "websearch",
     "config",
+    "generate",
+    "voice",
+    "migration",
+    "usage",
   ])
   expect(Object.keys(client.debug)).toEqual(["heapDump", "location"])
   expect(Object.keys(client.debug.location)).toEqual(["list", "evict"])
   expect(Object.keys(client.message)).toEqual(["list"])
-  expect(Object.keys(client.integration)).toEqual(["list", "get", "connect", "oauth", "command"])
+  expect(Object.keys(client.integration)).toEqual(["list", "get", "connect", "oauth", "command", "wellknown"])
   expect(Object.keys(client.integration.connect)).toEqual(["key", "external"])
   expect(Object.keys(client.integration.oauth)).toEqual(["connect", "status", "complete", "cancel"])
   expect(Object.keys(client.integration.command)).toEqual(["connect", "status", "cancel"])
   expect(Object.keys(client.websearch)).toEqual(["providers", "query"])
-  expect(Object.keys(client.file)).toEqual(["read", "list", "find"])
-  expect(Object.keys(client.mcp)).toEqual(["list", "resource"])
-  expect(Object.keys(client.config)).toEqual(["get", "shells"])
+  expect(Object.keys(client.file)).toEqual(["read", "list", "find", "watch", "unwatch", "write"])
+  expect(Object.keys(client.mcp)).toEqual(["list", "resource", "add", "remove", "connect", "disconnect", "client"])
+  expect(Object.keys(client.config)).toEqual(["get", "shells", "update"])
   expect(Object.keys(client.vcs)).toEqual(["init", "get", "base", "status", "branch", "diff"])
   expect(Object.keys(client.pty)).toEqual(["list", "create", "get", "update", "remove", "connect"])
   expect(Object.keys(client.pty.connect)).toEqual(["token"])
@@ -94,6 +98,7 @@ test("nests a method under client.experimental exactly when its route is experim
     { get: (_target, key) => (key === "signal" || key === "headers" || key === "onActivity" ? undefined : "x") },
   )
   const routes: Array<{ readonly method: string; readonly experimentalRoute: boolean }> = []
+  const deprecated: Array<string> = []
   const visit = async (node: object, path: ReadonlyArray<string>): Promise<void> => {
     for (const [name, value] of Object.entries(node)) {
       // `rpc` is a callable that also carries its generated routes.
@@ -101,10 +106,19 @@ test("nests a method under client.experimental exactly when its route is experim
         await visit(value, [...path, name])
         continue
       }
+      const target = [...path, name].reduce<unknown>(
+        (parent, key) => (parent as Record<string, unknown> | undefined)?.[key],
+        client.experimental,
+      )
+      if (path[0] !== "experimental" && target === value) {
+        deprecated.push([...path, name].join("."))
+        continue
+      }
       url = undefined
       const result: unknown = value(input)
       if (typeof result === "object" && result !== null && Symbol.asyncIterator in result) {
-        await (result as AsyncIterable<unknown>)[Symbol.asyncIterator]()
+        await (result as AsyncIterable<unknown>)
+          [Symbol.asyncIterator]()
           .next()
           .catch(() => undefined)
       } else await Promise.resolve(result).catch(() => undefined)
@@ -121,6 +135,33 @@ test("nests a method under client.experimental exactly when its route is experim
       .filter((route) => route.experimentalRoute !== route.method.startsWith("experimental."))
       .map((route) => route.method),
   ).toEqual([])
+  // Pre-experimental paths kept as deprecated aliases until the next minor (.github/RELEASE_REMINDERS.md).
+  expect(deprecated.toSorted()).toEqual([
+    "config.update",
+    "file.unwatch",
+    "file.watch",
+    "file.write",
+    "generate.text",
+    "integration.wellknown.add",
+    "mcp.add",
+    "mcp.client.token",
+    "mcp.connect",
+    "mcp.disconnect",
+    "mcp.remove",
+    "migration.v1.status",
+    "session.export",
+    "session.import",
+    "session.instructions.entry.list",
+    "session.instructions.entry.put",
+    "session.instructions.entry.remove",
+    "session.log",
+    "session.skill",
+    "session.stats",
+    "session.wait",
+    "usage.limits",
+    "voice.models",
+    "voice.session",
+  ])
   expect(Object.keys(client.shell)).toEqual(["list", "create", "get", "output", "remove"])
   expect(Object.keys(client.project)).toEqual(["list", "update"])
   expect(Object.keys(client.worktree)).toEqual(["list", "create", "remove", "refresh"])

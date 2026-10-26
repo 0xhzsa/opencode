@@ -630,7 +630,7 @@ interface IntegrationEditor {
   }
 }
 
-interface IntegrationDomain extends IntegrationApi<unknown> {
+interface IntegrationDomain extends Omit<IntegrationApi<unknown>, "wellknown"> {
   readonly transform: Transform<IntegrationEditor>
   readonly reload: () => Effect.Effect<void>
   readonly connection: {
@@ -900,9 +900,10 @@ type SessionDomain = Pick<
 >
 ```
 
-Endpoints under `/api/experimental` reach plugins only through `ctx.experimental`: `ctx.experimental.generate`,
+Endpoints under `/api/experimental` reach plugins through `ctx.experimental`: `ctx.experimental.generate`,
 `ctx.experimental.session.wait`, `ctx.experimental.session.instructions` and `ctx.experimental.terminal.read`. They
-may change between releases.
+may change between releases. The older `ctx.generate`, `ctx.session.wait` and `ctx.session.instructions` still work
+but are deprecated and will be removed in the next minor release.
 
 ### Skills
 

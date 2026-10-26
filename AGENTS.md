@@ -170,8 +170,13 @@ const table = sqliteTable("session", {
 - An experimental field or parameter on a stable endpoint goes under an `experimental` key (`experimental.<name>`), the same way config does (`config.experimental.*`).
 - New endpoints and new default behaviors start experimental.
 - To graduate one, move the route out of `/api/experimental`, drop the `experimental.` prefix, and note it in `CHANGELOG.md`.
-- Experimental changes ship without deprecated aliases: rename or remove, then update the callers.
-- Plugins reach experimental endpoints only through `ctx.experimental` (`ctx.experimental.session.wait`, `ctx.experimental.generate`), in both the Effect and Promise `Context`, with no alias elsewhere on `ctx`. Experimental hooks are named `experimental.*` (`experimental.ws.handshake`). `packages/core/test/plugin/experimental-namespace.test.ts` checks this against the Promise adapter's endpoint mapping.
+- Experimental HTTP routes change without aliases: rename or remove the route, then update the callers.
+- A breaking move of shipped SDK or plugin API (including moving it under `experimental`) keeps the old path as a deprecated alias of the new one until the next minor. Mark the alias `@deprecated`, naming the replacement and "Removed in the next minor", and add its removal to `.github/RELEASE_REMINDERS.md`.
+- Plugins reach experimental endpoints through `ctx.experimental` (`ctx.experimental.session.wait`, `ctx.experimental.generate`), in both the Effect and Promise `Context`; any other path to them on `ctx` is a deprecated alias. Experimental hooks are named `experimental.*` (`experimental.ws.handshake`). `packages/core/test/plugin/experimental-namespace.test.ts` checks this against the Promise adapter's endpoint mapping.
+
+## Releases
+
+- Before cutting a minor or major release, read `.github/RELEASE_REMINDERS.md` and act on its section for that release.
 
 ## Testing
 

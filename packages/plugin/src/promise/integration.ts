@@ -91,7 +91,7 @@ export interface IntegrationEditor {
   }
 }
 
-export interface IntegrationDomain extends IntegrationApi {
+export interface IntegrationDomain extends Omit<IntegrationApi, "wellknown"> {
   readonly transform: Transform<IntegrationEditor>
   readonly reload: () => Promise<void>
   readonly connection: {
