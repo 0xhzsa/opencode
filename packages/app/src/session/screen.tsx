@@ -303,6 +303,7 @@ function SessionScreenContent(props: {
           setRevealPart={timeline.view.setRevealPart}
           reveal={timeline.view.reveal}
           setScrollToEnd={timeline.view.setScrollToEnd}
+          setPage={timeline.view.setPage}
           search={
             <Show when={active()}>
               <TimelineSearchBar controller={timelineSearch} />
