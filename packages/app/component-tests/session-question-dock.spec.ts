@@ -1,5 +1,6 @@
 import type { Locator } from "@playwright/test"
-import { expect, story } from "../../stories/playwright/story"
+import type { MotionKnob } from "@opencode/ui/motion-tuning"
+import { expect, sourceURL, story } from "../../stories/playwright/story"
 
 story("resizes the dock to fit different answer counts", async ({ mount }) => {
   const component = await mount("app-current-session-surface--question-answer-counts")
@@ -553,4 +554,39 @@ story("brings the question switch motion back with the Question dock motion knob
 
   const frames = await act(question, "key:ArrowRight")
   expect(frames.some((frame) => !frame.still && frame.animations > 0)).toBe(true)
+})
+
+story("stops a switch where it is when the knob turns off", async ({ mount, page }) => {
+  await page.addInitScript(() => localStorage.setItem("opencode.motion.v2", JSON.stringify({ "question.motion": 1 })))
+  const component = await mount("app-current-session-surface--question-request")
+  const question = component.locator('[data-component="dock-prompt"][data-kind="question"]')
+  await expect(question.getByRole("radio", { name: /Focused/ })).toBeFocused()
+
+  const frames = await question.evaluate(
+    async (root, tuning) => {
+      const { motionTuning } = await import(tuning)
+      const knob = motionTuning.list().find((item: MotionKnob) => item.id === "question.motion")
+      const frame = () => new Promise((resolve) => requestAnimationFrame(resolve))
+
+      const sample = () => ({
+        animations: document.getAnimations().length,
+        heights: [...root.querySelectorAll<HTMLElement>("*")].filter((el) => el.style.height).length,
+      })
+
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
+      )
+      await frame()
+      const moving = sample()
+      motionTuning.set(knob, false)
+      await frame()
+      await frame()
+
+      return { moving, after: sample() }
+    },
+    sourceURL(new URL("../../ui/src/motion-tuning.ts", import.meta.url)),
+  )
+
+  expect(frames.moving.animations).toBeGreaterThan(0)
+  expect(frames.after).toEqual({ animations: 0, heights: 0 })
 })

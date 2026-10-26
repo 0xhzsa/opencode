@@ -580,6 +580,13 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
     })
   }
 
+  // Turning the knob off lands the slide and any running pick or dash transition at once.
+  createEffect(() => {
+    if (questionMotion()) return
+    arrivals.length = 0
+    root?.getAnimations({ subtree: true }).forEach((animation) => animation.cancel())
+  })
+
   const jump = (tab: number) => {
     if (sending() || tab === store.tab) return
     const step = Math.sign(tab - store.tab)
