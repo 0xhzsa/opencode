@@ -1256,6 +1256,42 @@ describe("SessionRunnerLLM", () => {
     ])
   })
 
+  scenario("runs the idle hook after a move delivered at the idle boundary", function* (s) {
+    const runner = yield* SessionRunner.Service
+    const hooks = yield* PluginHooks.Service
+    const idles: Session.ID[] = []
+    yield* hooks.register("session", "idle", (event) => Effect.sync(() => idles.push(event.sessionID)))
+    yield* s.admit("Before moving")
+    yield* s.llm.push(TestLLM.text("Done", "text-done"))
+    const stream = yield* s.llm.gate
+    const run = yield* runner.drain({ sessionID, force: false }).pipe(Effect.forkChild)
+    yield* stream.started
+    yield* s.sessionInbox.admit({
+      id: SessionMessage.ID.create(),
+      sessionID,
+      item: {
+        type: "move",
+        payload: {
+          location: Location.Ref.make({ directory: AbsolutePath.make("/project") }),
+          projectID: Project.ID.global,
+        },
+        delivery: "queue",
+      },
+    })
+    yield* stream.release
+    const moved = yield* Fiber.join(run)
+
+    expect(moved).toEqual(SessionRunner.DrainResult.Moved({ stepped: true }))
+    expect(idles).toEqual([])
+    if (moved._tag !== "Moved") throw new Error("Expected a Location handoff")
+
+    // The destination drain has nothing to promote but still owes the idle hook for the step before the move.
+    yield* runner.drain({ sessionID, force: false, stepped: moved.stepped })
+
+    expect(idles).toEqual([sessionID])
+    expect(s.requests).toHaveLength(1)
+  })
+
   scenario("passes no background work to the idle hook when none is running", function* (s) {
     const hooks = yield* PluginHooks.Service
     const events: SessionHooks["idle"][] = []
@@ -4426,7 +4462,7 @@ describe("SessionRunnerLLM", () => {
     yield* stream.release
 
     expect({ result: yield* Fiber.join(run), location: (yield* s.session.get(sessionID)).location }).toEqual({
-      result: SessionRunner.DrainResult.Moved({}),
+      result: SessionRunner.DrainResult.Moved({ stepped: true }),
       location,
     })
     expect(s.requests.map(userTexts)).toEqual([["A"], ["A"]])
