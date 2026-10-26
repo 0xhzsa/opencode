@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test"
-import { RGBA, TextRenderable } from "@opentui/core"
+import { RGBA, TextRenderable, type Renderable } from "@opentui/core"
 import { testRender } from "@opentui/solid"
 import type { Context } from "@opencode/plugin/tui/context"
 import { createSignal } from "solid-js"
@@ -109,12 +109,7 @@ test("prompt footer can hide details", async () => {
   const app = await testRender(
     () => (
       <box width="100%" flexDirection="row" justifyContent="space-between" gap={2}>
-        <PromptFooter
-          context={context}
-          sessionID={sessionID()}
-          mode="normal"
-          showDetails={showDetails()}
-        />
+        <PromptFooter context={context} sessionID={sessionID()} mode="normal" showDetails={showDetails()} />
       </box>
     ),
     {
@@ -142,3 +137,81 @@ test("prompt footer can hide details", async () => {
     app.renderer.destroy()
   }
 })
+
+test("prompt footer shows the session's goal without its objective and opens it on click", async () => {
+  const muted = RGBA.fromInts(100, 100, 100)
+  const warning = RGBA.fromInts(200, 200, 0)
+  const goal = {
+    id: "goal",
+    sessionID: "session",
+    objective: "Make the test suite pass",
+    status: "active",
+    rounds: 3,
+    maxRounds: 50,
+    boot: "boot",
+    updatedAt: 0,
+  }
+  const [metadata, setMetadata] = createSignal<Record<string, unknown>>({ "opencode.goal": goal })
+  const dialogs: unknown[] = []
+  const context = {
+    location: { directory: "/workspace" },
+    theme: {
+      text: {
+        base: RGBA.fromInts(200, 200, 200),
+        muted,
+        feedback: { warning: { base: warning }, success: { base: muted } },
+      },
+    },
+    keymap: { shortcuts: () => [] },
+    ui: { dialog: { show: (render: unknown) => dialogs.push(render) }, toast: { show: () => {} } },
+    data: {
+      session: {
+        family: () => ["session"],
+        status: () => "idle",
+        get: () => ({ id: "session", location: { directory: "/workspace" }, metadata: metadata() }),
+        cost: () => 0,
+        message: { list: () => [] },
+      },
+      shell: { list: () => [] },
+      location: { model: { list: () => [] } },
+    },
+  } as unknown as Context
+  const app = await testRender(
+    () => <PromptFooter context={context} sessionID="session" mode="normal" showDetails={true} />,
+    { width: 80, height: 2 },
+  )
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+    expect(frame).toContain("◎ goal")
+    // The objective and any round count live in the dialog, not the footer.
+    expect(frame).not.toContain("Make the test suite pass")
+    expect(frame).not.toMatch(/\d+\/\d+/)
+    expect(findText(app.renderer.root, "◎ goal")?.fg.toInts()).toEqual(muted.toInts())
+
+    await app.mockMouse.click(2, 0)
+    expect(dialogs).toHaveLength(1)
+    await app.mockMouse.moveTo(70, 1)
+
+    setMetadata({ "opencode.goal": { ...goal, status: "paused", reason: "Stopped by the user" } })
+    await app.renderOnce()
+    expect(app.captureCharFrame()).toContain("◎ goal paused")
+    expect(findText(app.renderer.root, "◎ goal paused")?.fg.toInts()).toEqual(warning.toInts())
+
+    // A goal copied from a parent belongs to the parent, so the footer ignores it.
+    setMetadata({ "opencode.goal": { ...goal, sessionID: "parent" } })
+    await app.renderOnce()
+    expect(app.captureCharFrame()).not.toContain("goal")
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+function findText(node: Renderable, text: string): TextRenderable | undefined {
+  if (node instanceof TextRenderable && node.plainText.includes(text)) return node
+  return node
+    .getChildren()
+    .map((child) => findText(child, text))
+    .find((found) => found !== undefined)
+}

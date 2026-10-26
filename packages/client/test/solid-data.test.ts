@@ -446,6 +446,52 @@ test("preserves a live session rename across concurrent session and family reads
   }
 })
 
+test("replaces session metadata from live updates", async () => {
+  const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init)
+      if (!request.url.endsWith(`/api/session/${session(0).id}`)) return Response.json({ data: [], cursor: {} })
+      return Response.json({ data: { ...session(0), metadata: { host: "desktop" } } })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({
+      api: () => api,
+      directory: "/project",
+      event: {
+        on: () => () => {},
+        listen(handler) {
+          listeners.add(handler)
+          return () => listeners.delete(handler)
+        },
+      },
+    }),
+    dispose,
+  }))
+  const update = (seq: number, metadata: Record<string, string>) => {
+    const event: OpenCodeEvent = {
+      id: `evt_metadata_${seq}`,
+      created: seq,
+      type: "session.metadata.updated",
+      durable: { aggregateID: session(0).id, seq, version: 1 },
+      data: { sessionID: session(0).id, metadata },
+    }
+    listeners.forEach((listener) => listener({ name: event.type, details: event }))
+  }
+
+  try {
+    await setup.data.session.sync(session(0).id)
+    update(1, { host: "desktop", goal: "active" })
+    expect(setup.data.session.get(session(0).id)?.metadata).toEqual({ host: "desktop", goal: "active" })
+    update(2, { host: "desktop" })
+    expect(setup.data.session.get(session(0).id)?.metadata).toEqual({ host: "desktop" })
+  } finally {
+    setup.dispose()
+  }
+})
+
 test("updates authoritative cached project metadata from live events", async () => {
   const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
   const original: Project = {
