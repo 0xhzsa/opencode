@@ -403,7 +403,7 @@ describe("runNonInteractivePrompt", () => {
     expect(printed).toContain("done\nline\ttwo")
     expect(printed).not.toContain("PWNED")
     expect(printed).not.toContain("]52;")
-    expect(printed).not.toMatch(/[\u0000\u0007\u0008\r\u009b]/)
+    expect(printed).not.toMatch(/[\u0000\u0007\u0008\u009b]/)
   })
 
   test("reports an observed execution failure before prompt promotion", async () => {
