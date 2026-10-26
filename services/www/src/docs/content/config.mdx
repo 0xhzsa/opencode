@@ -663,9 +663,10 @@ automatic compaction doesn't pause the session. Defaults to `false`. See
 ### Preconnect
 
 Set `preconnect` to `true` to open the model provider's connection as soon as a prompt is sent, so the model request
-doesn't wait for DNS, TCP and TLS setup. OpenCode sends an empty, unauthenticated `GET` to the provider's origin, at
-most once every 4 minutes, which shows up in provider and gateway logs. It's skipped behind proxies and for plugins
-with HTTP hooks. Defaults to `false`.
+doesn't wait for DNS, TCP and TLS setup. This only happens once the provider has had no requests for 5 minutes, when
+the previous connection has been dropped. OpenCode sends an empty, unauthenticated `GET` to the provider's origin,
+which shows up in provider and gateway logs. It's skipped behind proxies and for plugins with HTTP hooks. Defaults to
+`false`.
 
 ```jsonc
 {
