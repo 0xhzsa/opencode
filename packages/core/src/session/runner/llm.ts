@@ -251,6 +251,7 @@ const layer = Layer.effect(
             Effect.map((prepared) => ({
               request: prepared.request,
               options: prepared.options,
+              settled: prepared.settled,
               retry: prepared.retry,
               executeTool: prepared.executeTool,
             })),

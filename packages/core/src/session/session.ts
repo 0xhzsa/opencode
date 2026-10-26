@@ -7,6 +7,7 @@ import type { Permission } from "@opencode/schema/permission"
 import { Event } from "@opencode/schema/event"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Bus } from "../bus.js"
+import { Config } from "../config.js"
 import { Database } from "../database/database.js"
 import { Instance } from "../instance/service.js"
 import { ModelPreconnect } from "../model-preconnect.js"
@@ -50,6 +51,12 @@ export const make = Effect.fn("Session.make")(function* () {
   const fs = yield* FSUtil.Service
   const preconnect = yield* ModelPreconnect.Service
   const scope = yield* Scope.Scope
+
+  // Reads the session's own location config, so turning preconnect off there stops warming at once.
+  const warm = Effect.fnUntraced(function* (session: Parameters<ModelPreconnect.Interface["warm"]>[0]) {
+    if (yield* ModelPreconnect.enabled(yield* Config.Service)) return yield* preconnect.warm(session)
+    yield* preconnect.forget(session.location)
+  })
 
   const get = Effect.fn("Session.get")(function* (sessionID: SessionSchema.ID) {
     const session = yield* store.get(sessionID)
@@ -117,7 +124,9 @@ export const make = Effect.fn("Session.make")(function* () {
     )
       return
     yield* bus.publish(SessionEvent.ModelSelected, { sessionID, model: input.model, previous: session.model })
-    yield* preconnect.warm({ ...session, model: input.model })
+    // Only a loaded location is warmed, so switching models never boots one to read its config.
+    if (yield* instances.live?.(session) ?? Effect.succeed(false))
+      yield* warm({ ...session, model: input.model }).pipe(instances.provide(session), Effect.ignore)
   })
   const mutatePending = (
     sessionID: SessionSchema.ID,
@@ -159,8 +168,6 @@ export const make = Effect.fn("Session.make")(function* () {
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const session = yield* get(sessionID)
-        // Opens the provider connection while the prompt is admitted and its context loads.
-        yield* preconnect.warm(session)
         const messageID = input.id ?? SessionMessage.ID.create()
         const admitted = yield* Effect.gen(function* () {
           const existing = yield* admission.reconcile({
@@ -173,6 +180,8 @@ export const make = Effect.fn("Session.make")(function* () {
           // Preparation, the staged revert commit and admission share one acquisition of the session's location
           // services, so projections see its config whoever called prompt.
           return yield* Effect.gen(function* () {
+            // Opens the provider connection while the prompt is prepared and its context loads.
+            yield* warm(session)
             const item = yield* restore(SessionPrompt.prepare({ session, messageID, input }))
             // Commit a staged revert only after preparation succeeds, before admitting new work.
             if (session.revert) yield* SessionRevert.commit(bus, session)

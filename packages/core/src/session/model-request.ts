@@ -62,6 +62,8 @@ export interface Prepared<Event = SessionRequest> {
   readonly event: Event
   readonly request: LLMRequest
   readonly options: StreamOptions
+  /** Runs once the provider response has been read to the end, or failed. */
+  readonly settled?: Effect.Effect<void>
   readonly retry: (event: PluginHooks.Domains["session"]["retry"]) => Effect.Effect<void>
   /** Runs a tool call against the tools this request advertised. */
   readonly executeTool: (
@@ -322,15 +324,17 @@ export const layer = Layer.effect(
       const hasHttpHooks =
         (yield* hooks.has("session", "http.request", model.ref.providerID)) ||
         (yield* hooks.has("session", "http.response", model.ref.providerID))
-      if (kind === "primary") {
-        const enabled = Config.latest(yield* config.entries(), "experimental")?.preconnect === true
-        // HTTP hooks may send the request anywhere, so only an unhooked route is worth warming.
-        yield* preconnect.remember(
-          session,
-          model.ref.providerID,
-          enabled && !hasHttpHooks ? ModelPreconnect.target({ ...model, model: request.model }) : undefined,
-        )
-      }
+      const warmable =
+        kind === "primary"
+          ? yield* Effect.gen(function* () {
+              if (!(yield* ModelPreconnect.enabled(config))) return yield* preconnect.forget(session.location)
+              // HTTP hooks may send the request anywhere, so only an unhooked route is worth warming.
+              const url = hasHttpHooks ? undefined : ModelPreconnect.target({ ...model, model: request.model })
+              yield* preconnect.remember(session, model.ref.providerID, url)
+              if (url) yield* preconnect.used(url)
+              return url
+            })
+          : undefined
       const http: StreamOptions["http"] = hasHttpHooks
         ? (req, handler) =>
             Effect.gen(function* () {
@@ -392,6 +396,7 @@ export const layer = Layer.effect(
         event: shaped,
         request,
         options: { ...(http ? { http } : {}), ...(webSocket ? { webSocket } : {}) },
+        ...(warmable ? { settled: preconnect.used(warmable) } : {}),
         retry: (event: Parameters<Prepared["retry"]>[0]) =>
           hooks.trigger("session", "retry", event).pipe(Effect.asVoid),
         // Permission.assert and the question tool throw declines as defects so tools cannot

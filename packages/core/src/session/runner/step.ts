@@ -135,6 +135,7 @@ export const make = Effect.gen(function* () {
         }),
       ),
       Effect.ensuring(publisher.flush()),
+      Effect.ensuring(input.prepared.settled ?? Effect.void),
     )
 
     // Keep the final tool and Step events uninterruptible, even when the work itself is cancelled.
