@@ -2186,6 +2186,7 @@ export type ConfigEntry =
         share?: "manual" | "auto" | "disabled"
         enterprise?: { url?: string }
         username?: string
+        timezone?: string
         permissions?: PermissionRuleset
         policies?: Array<{
           action: "provider.use" | "tool.use" | "integration.use"
@@ -2345,6 +2346,7 @@ export type ConfigEntry =
           todo?: boolean
           background_compaction?: boolean
           media_blob?: boolean
+          schedules?: boolean
           subagent_depth?: number
           location_idle_timeout?: string | false
           policies?: Array<{
