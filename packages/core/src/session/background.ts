@@ -7,8 +7,8 @@ import type { SessionStore } from "./store.js"
 
 /**
  * Background jobs still running for a Session or any of its descendants. A child's own
- * background shell counts even after the child reported to its parent: its completion
- * notice wakes the child, which can still change what the parent hears.
+ * background shell counts even after the child reported to its parent: its notice wakes
+ * the child again, so the child's work is not finished.
  */
 export const outstanding = Effect.fnUntraced(function* (
   jobs: Pick<Job.Interface, "runningBackground">,

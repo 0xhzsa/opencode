@@ -162,7 +162,8 @@ export type SessionIdleBackground =
  * of the Session going idle.
  *
  * `background` lists work that is still running. When it finishes, its notice wakes the Session
- * and the hook runs again, so a plugin that waits for background work can simply return.
+ * and the hook runs again, so a plugin that waits for background work can simply return. Notices
+ * admitted with `resume: false`, such as those recovered after a restart, wait for the next wake.
  */
 export interface SessionIdle {
   readonly sessionID: Session.ID
