@@ -18,7 +18,7 @@ import {
 } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option, Predicate, Schema } from "effect"
 import { createTwoFilesPatch, diffLines } from "diff"
 import { Dynamic } from "solid-js/web"
 import { type SessionSummary, useData } from "../context"
@@ -2002,6 +2002,7 @@ function ExecuteDetails(props: { code: string; output: string; error?: string; c
   const fileComponent = useFileComponent()
   const lineCount = (text: string) => text.split("\n").length
   const lines = (text: string) => i18n.plural("ui.tool.execute.lines", lineCount(text))
+
   // Code and output share one number gutter, sized to the longer block, so their content starts on the same column.
   const numberDigits = () =>
     String(Math.max(lineCount(props.code), props.output && !props.error ? lineCount(props.output) : 0)).length
@@ -2216,7 +2217,7 @@ function ExecuteCallRow(props: { call?: ExecuteToolCall; error?: string }) {
               {([key, value]) => (
                 <div data-slot="execute-tool-call-input-entry">
                   <dt>{key}:</dt>
-                  <dd>{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</dd>
+                  <dd>{Predicate.isString(value) ? value : JSON.stringify(value, null, 2)}</dd>
                 </div>
               )}
             </For>
