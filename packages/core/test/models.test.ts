@@ -1115,4 +1115,28 @@ describe("ModelsDev Service", () => {
       expect((yield* Ref.get(state)).calls).toEqual([])
     }),
   )
+
+  it.live("refetches when the metadata describes a different body than the cache file holds", () =>
+    Effect.gen(function* () {
+      const cache = makeCache()
+      writeCache(cache, fixture)
+      // A migration or an older version can replace the file after the metadata was written.
+      cache.values.set(metaKey, { updatedAt: Date.now(), digest: bodyDigest(JSON.stringify(fixture2)), etag: 'W/"v2"' })
+      const state = yield* Ref.make({ ...initialState, body: JSON.stringify(fixture2) })
+      const result = yield* provided(
+        state,
+        cache,
+        Effect.gen(function* () {
+          const svc = yield* ModelsDev.Service
+          const before = yield* svc.get()
+          yield* svc.refresh(false)
+          return { before, after: yield* svc.get() }
+        }),
+      )
+      expect(result.before).toEqual(fixtureSnapshot)
+      expect(result.after).toEqual(fixture2Snapshot)
+      expect((yield* Ref.get(state)).calls.map((call) => call.ifNoneMatch)).toEqual([undefined])
+      expect(yield* Effect.promise(() => readCacheFile(cache))).toBe(JSON.stringify(fixture2))
+    }),
+  )
 })

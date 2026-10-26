@@ -531,7 +531,7 @@ export const layer = (options?: Options) =>
       const file = path.join((yield* Global.Service).cache, `${key.replaceAll(":", "-")}.json`)
       const lock = Semaphore.makeUnsafe(1)
       const loading = Semaphore.makeUnsafe(1)
-      // The catalog get() serves, with the digest of the cached body it came from.
+      // The catalog get() serves, with the digest of the body it was parsed from.
       const current = yield* Ref.make<
         { readonly snapshots: readonly Snapshot[]; readonly digest?: string } | undefined
       >(undefined)
@@ -543,10 +543,7 @@ export const layer = (options?: Options) =>
         const text = yield* fs.readFileStringSafe(file).pipe(Effect.orElseSucceed(() => undefined))
         if (text !== undefined) {
           const catalog = yield* decodeCatalog(text).pipe(Effect.option)
-          if (Option.isSome(catalog)) {
-            const meta = Option.getOrUndefined(Schema.decodeUnknownOption(CacheMeta)(yield* kv.get(metaKey)))
-            return { catalog: catalog.value, digest: meta?.digest }
-          }
+          if (Option.isSome(catalog)) return { catalog: catalog.value, digest: bodyDigest(text) }
           yield* Effect.logWarning("Discarding corrupt models.dev cache file", { file })
           yield* fs.remove(file, { force: true }).pipe(Effect.ignore)
         }
@@ -557,7 +554,7 @@ export const layer = (options?: Options) =>
         if (cached && Option.isSome(catalog)) {
           // A body kept in KV by an older version, or while the file couldn't be written, moves to the file.
           if (yield* writeFile(cached.body)) yield* kv.remove(key)
-          return { catalog: catalog.value, digest: cached.digest }
+          return { catalog: catalog.value, digest: bodyDigest(cached.body) }
         }
         yield* kv.remove(key)
         yield* kv.remove(metaKey)
@@ -583,12 +580,16 @@ export const layer = (options?: Options) =>
         )
       }
 
-      // Metadata only vouches for a body that is still around: workerd keeps files per isolate,
-      // and a corrupt file is deleted when loaded.
-      const hasBody = Effect.fnUntraced(function* (digest: string | undefined) {
-        if (digest !== undefined && (yield* Ref.get(current))?.digest === digest) return true
-        if (yield* fs.existsSafe(file)) return true
-        return (yield* kv.get(key)) !== undefined
+      // The metadata is written apart from the body, so it only counts while the stored body
+      // still matches its digest. The file can be lost (workerd keeps files per isolate),
+      // deleted as corrupt, or overwritten by a migration or an older version.
+      const storedMatches = Effect.fnUntraced(function* (digest: string | undefined) {
+        if (digest === undefined) return false
+        if ((yield* Ref.get(current))?.digest === digest) return true
+        const text = yield* fs.readFileStringSafe(file).pipe(Effect.orElseSucceed(() => undefined))
+        if (text !== undefined) return bodyDigest(text) === digest
+        const cached = Option.getOrUndefined(Schema.decodeUnknownOption(Cache)(yield* kv.get(key)))
+        return cached !== undefined && bodyDigest(cached.body) === digest
       })
 
       const fetchPath = (path: string, etag?: string) =>
@@ -696,7 +697,7 @@ export const layer = (options?: Options) =>
               const meta = Option.getOrUndefined(
                 Schema.decodeUnknownOption(CacheMeta)((yield* kv.get(metaKey)) ?? (yield* kv.get(key))),
               )
-              const stored = meta && (yield* hasBody(meta.digest)) ? meta : undefined
+              const stored = meta && (yield* storedMatches(meta.digest)) ? meta : undefined
               if (!force && stored && Date.now() - stored.updatedAt < Duration.toMillis(ttl)) return
               const response = yield* fetchApi(force ? undefined : stored?.etag).pipe(
                 Effect.catchIf(
