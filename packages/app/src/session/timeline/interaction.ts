@@ -65,6 +65,7 @@ export function createSessionTimelineInteraction(session: SessionModel) {
 
   let scroller: HTMLDivElement | undefined
   let scrollGeometry: { extent: number; viewport: number; offset: number } | undefined
+  let insetStep = 0
   // The history entry whose tool call was already revealed.
   let revealed: string | undefined
 
@@ -410,12 +411,20 @@ export function createSessionTimelineInteraction(session: SessionModel) {
 
     // createResizeObserver deduplicates on rounded content-box dimensions,
     // dropping the subpixel updates at the tail of the composer's spring.
+    let composerHeight: number | undefined
     const observer = new ResizeObserver(([entry]) => {
       // The activity pill floats above the region out of flow, so only the docks, queue and composer count here.
       const next = Math.round((entry.borderBoxSize[0]?.blockSize ?? 0) * 64) / 64
+      // Layout is already clean while ResizeObserver delivers, so this read costs nothing extra.
+      const composer = dock.querySelector<HTMLElement>('[data-component="composer"]')?.offsetHeight
+      const shrunk = composer !== undefined && composerHeight !== undefined ? composerHeight - composer : 0
+      composerHeight = composer
 
       if (next === state.inset) return
       const delta = next - state.inset
+      // Docks spring their height, but the composer steps to its draft's: sending a long draft drops it to one line
+      // in a frame. That step is for the timeline to ease, not ride.
+      insetStep = Math.max(0, Math.min(shrunk, -delta))
 
       // Measured before the new inset applies: a shrinking region also keeps a reader whose end it uncovers. A
       // following timeline keeps its own end, without landing rows that are still growing.
@@ -455,6 +464,8 @@ export function createSessionTimelineInteraction(session: SessionModel) {
       setActiveMessage,
     },
     inset: () => state.inset,
+    /** How much of the latest inset change was the composer shrinking in one step rather than a dock's spring. */
+    insetStep: () => insetStep,
     lastUserMessage: timeline.lastUserMessage,
     resource: timeline.resource,
     ready: timeline.ready,

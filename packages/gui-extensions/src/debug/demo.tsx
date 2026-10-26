@@ -150,7 +150,11 @@ export default function Demo() {
             step="0.25"
             value={speed()}
             class="min-w-0 flex-1"
-            onInput={(event) => setSpeed(Number(event.currentTarget.value))}
+            onInput={(event) => {
+              setSpeed(Number(event.currentTarget.value))
+              // The demo host retimes the reply already streaming; without one, the rate applies from the next prompt.
+              void fetch("/__demo/rate", { method: "POST", body: String(speed()) }).catch(() => undefined)
+            }}
           />
           <span class="w-10 text-end">{speed().toFixed(2)}×</span>
         </label>

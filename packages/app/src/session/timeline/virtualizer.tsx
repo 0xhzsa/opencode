@@ -91,6 +91,8 @@ type Input = {
   setContentRef: (element: HTMLDivElement) => void
   /** Height of the composer region floating over the timeline's bottom edge, where the timeline fades out. */
   bottomInset?: Accessor<number>
+  /** How much of the latest inset change was a step to ease rather than a spring to ride, as when a sent draft clears. */
+  bottomInsetStep?: () => number
   setVisibleRef?: (element: HTMLDivElement | undefined) => void
   onScheduleScrollState: (
     element: HTMLDivElement,
@@ -1193,11 +1195,15 @@ export function createTimelineVirtualizer(input: Input) {
 
         if (!input.pinned()) return
         // The composer region moved its edge: the followed end rides it in the same frame, and so does a flight
-        // landing on a row.
+        // landing on a row. A step down, as when sending clears a long draft, is drawn from where the rows were and
+        // eased on the growth spring instead.
         queueMicrotask(() => {
           const from = drawnTop
           pinEnd()
-          motion.scroll(from - drawnTop)
+          const moved = from - drawnTop
+          const eased = canAnimate() ? Math.min(Math.max(0, moved), input.bottomInsetStep?.() ?? 0) : 0
+          motion.scroll(moved - eased)
+          if (eased > 0) motion.kick(-eased, [])
         })
       },
       { defer: true },

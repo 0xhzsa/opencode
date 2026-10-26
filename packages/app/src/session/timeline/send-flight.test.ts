@@ -161,7 +161,7 @@ test("flies on its own spring, not the rows' growth spring", () => {
   }
 
   try {
-    expect(sendFlightSpring()).toEqual(growthSpring())
+    expect(sendFlightSpring().duration).toBeLessThan(growthSpring().duration)
     const shipped = land("shipped")
     motionTuning.set(growth, { duration: 0.9, bounce: 0 })
     expect(land("growth-tuned")).toBe(shipped)

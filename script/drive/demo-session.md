@@ -38,4 +38,7 @@ subagent or shell, then a summary. Typed text containing `short` or `code` gets 
 use the speed of the latest Demo control. Routing a session on the simulated model opens the debug bar and its
 Demo panel.
 
-Speed scales the model's streaming delays and the shell scripts' pacing from 0.25× to 2×.
+Stream rate scales the model's streaming delays and pauses from 0.25× to 2×, and the pacing of shell scripts that
+start after it moves. A demo prompt sets it as it arrives. When `DEMO_STATE` is set, the state file also names a
+loopback `control` URL; a host that proxies `POST /__demo/rate` to it lets the slider retime a reply already
+streaming.

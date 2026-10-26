@@ -61,7 +61,7 @@ export default {
   "demo.hint": "Send a message or steer for a long reply. Type 'short', 'code' or 'random' for those replies.",
   "demo.action.long": "Long reply",
   "demo.action.instant": "Instant reply",
-  "demo.speed": "Speed",
+  "demo.speed": "Stream rate",
   "demo.action.paragraph": "Paragraph",
   "demo.action.code": "Code block",
   "demo.action.shell": "Shell",

@@ -1,13 +1,15 @@
 import { motionTuning } from "@opencode/ui/motion-tuning"
 
-// Like the iOS transcript: rows that move or grow spring to their new places on this spring.
+// Like the iOS transcript: rows that move or grow spring to their new places on this spring. A slow, long spring reads
+// calmly while a reply streams in; a reply a screen or more long fades in instead of catching up.
 export const growthSpring = motionTuning.spring("timeline.growth", {
   label: "Row growth & return",
   group: "Timeline",
+  shipped: "calm",
   presets: {
     snappy: { duration: 0.32, bounce: 0 },
-    smooth: { duration: 0.42, bounce: 0 },
-    calm: { duration: 0.55, bounce: 0 },
+    smooth: { duration: 0.55, bounce: 0 },
+    calm: { duration: 1, bounce: 0 },
   },
 })
 

@@ -113,16 +113,29 @@ export default OpenCodeDriver.use(
       yield* llm.title(() => Effect.succeed("Timeline demo"))
       yield* llm.serve((request) => {
         const body = JSON.stringify(request.body)
-        if (body.includes("You are a subagent spawned")) return child(rate(body))
+        if (body.includes("You are a subagent spawned")) return paced(child(rate(body)), rate(body))
         const turn = demoTurn(request.body)
-        if (!turn) return reply("Noted. The harbor log is up to date.", 1)
-        if (turn.action === "random") return randomTurn(turn.seed, turn.step, turn.speed, directory)
-        return respond(turn.action, turn.step, turn.speed, directory)
+        if (!turn) return paced(reply("Noted. The harbor log is up to date.", 1), 1)
+        if (turn.action === "random") return paced(randomTurn(turn.seed, turn.step, turn.speed, directory), turn.speed)
+        return paced(respond(turn.action, turn.step, turn.speed, directory), turn.speed)
+      })
+      // The Demo panel's slider posts its rate here (through the host's /__demo/rate proxy) as it moves.
+      const control = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(request) {
+          const value = Number(await request.text())
+          if (request.method !== "POST" || !(value > 0)) return new Response(null, { status: 400 })
+          streamRate = value
+          return new Response(null, { status: 204 })
+        },
       })
       const session = yield* Effect.promise(() => createSession(artifacts, directory))
       console.log(`Demo session ${session.id} in ${directory}`)
       if (state)
-        yield* Effect.promise(() => Bun.write(state, JSON.stringify({ ...session.server, session: session.id })))
+        yield* Effect.promise(() =>
+          Bun.write(state, JSON.stringify({ ...session.server, session: session.id, control: control.url.href })),
+        )
       return yield* Effect.never
     }),
 )
@@ -254,9 +267,10 @@ function longReply(step: number, speed: number, directory: string) {
       index: 0,
       id: `call_${crypto.randomUUID().replaceAll("-", "")}`,
       name: step === 0 ? "read" : "shell",
-      input: step === 0
-        ? { path: `${directory}/docs/pilots.md` }
-        : { command: `sh scripts/tides.sh ${speed}`, description: "Check harbor tides", workdir: directory },
+      input:
+        step === 0
+          ? { path: `${directory}/docs/pilots.md` }
+          : { command: `sh scripts/tides.sh ${speed}`, description: "Check harbor tides", workdir: directory },
     }),
     Llm.finish("tool-calls"),
   )
@@ -285,8 +299,45 @@ function rate(body: string) {
   return match ? Number(match[1]) || 1 : 1
 }
 
-// Typed prompts carry no tag, so they stream at the speed of the latest Demo control.
-let lastSpeed = 1
+// The rate every reply streams at, applied live: a demo prompt's tag sets it when the prompt arrives, the Demo panel's
+// slider whenever it moves. Typed prompts carry no tag, so they keep the latest rate.
+let streamRate = 1
+let lastTagged: string | undefined
+
+// Replays `stream`, built for `built`×, at the live rate: each text chunk and pause waits on the rate at that moment,
+// so moving the slider retimes a reply that is already streaming.
+function paced(stream: Stream.Stream<Llm.Output>, built: number) {
+  return stream.pipe(
+    Stream.flatMap((item) => {
+      if (item.type === "pause") return Stream.fromEffectDrain(wait(item.milliseconds * built))
+      if ((item.type !== "text" && item.type !== "reasoning") || !item.options?.delay) return Stream.make(item)
+      const size = item.options.chunkSize ?? 15
+      const points = Array.from(item.text)
+      const chunks = Array.from({ length: Math.ceil(points.length / size) }, (_, index) =>
+        points.slice(index * size, (index + 1) * size).join(""),
+      )
+      const delay = item.options.delay * built
+      const make = item.type === "text" ? Llm.text : Llm.reasoning
+      return Stream.fromIterable(chunks).pipe(
+        Stream.mapEffect((chunk, index) =>
+          (index ? wait(delay) : Effect.void).pipe(Effect.as(make(chunk, { delay: 0, chunkSize: chunk.length }))),
+        ),
+      )
+    }),
+  )
+}
+
+// Waits what takes `ms` at 1×, re-reading the rate every few frames so a change lands mid-wait.
+function wait(ms: number) {
+  return Effect.gen(function* () {
+    let left = ms
+    while (left > 0) {
+      const step = Math.min(50, left / streamRate)
+      yield* Effect.sleep(step)
+      left -= step * streamRate
+    }
+  })
+}
 
 // The newest user message picks the action; assistant messages after it count the steps already taken this turn.
 // A Demo control's tag names its action, a background notice gets a short acknowledgement, "short" and "code" in
@@ -299,16 +350,18 @@ function demoTurn(body: unknown) {
   const step = messages.slice(last + 1).filter((message) => message?.role === "assistant").length
   const text = userText(messages[last])
   const match = text.match(/\[demo:([a-z]+) ([\d.]+)×\]/)
-  if (match) {
-    lastSpeed = Number(match[2]) || 1
-    return { action: match[1], speed: lastSpeed, step, seed: 0 }
-  }
-  const pick = (action: string) => ({ action, speed: lastSpeed, step, seed: 0 })
+  // Every step of a turn requests again with the same prompt; only its first may set the rate, or a later step would
+  // undo a slider move.
+  const key = `${last}:${text}`
+  if (match && key !== lastTagged) streamRate = Number(match[2]) || 1
+  lastTagged = key
+  if (match) return { action: match[1], speed: streamRate, step, seed: 0 }
+  const pick = (action: string) => ({ action, speed: streamRate, step, seed: 0 })
   if (/<(subagent|shell) /.test(text)) return pick("notice")
   if (/\bshort\b/i.test(text)) return pick("short")
   if (/\bcode\b/i.test(text)) return pick("code")
   if (/\brandom\b/i.test(text))
-    return { action: "random", speed: lastSpeed, step, seed: hash(JSON.stringify(messages.slice(0, last + 1))) }
+    return { action: "random", speed: streamRate, step, seed: hash(JSON.stringify(messages.slice(0, last + 1))) }
   return pick("long")
 }
 

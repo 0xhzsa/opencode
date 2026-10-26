@@ -84,6 +84,36 @@ story("animates only the final screen when resuming from deep history", async ({
     .toBeLessThanOrEqual(1)
 })
 
+story("eases the followed end down when sending clears a long draft", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" })
+  await page.evaluate(async (url) => {
+    const { mountTimelineVirtualizer } = await import(url)
+    mountTimelineVirtualizer({ count: 10, rowHeight: 64, viewportHeight: 300, inset: 160, immediate: true })
+  }, fixture)
+  const root = page.getByTestId("timeline-virtualizer-fixture")
+  await root.getByRole("button", { name: "Complete Markdown", exact: true }).click()
+  await expect(root.locator("[data-timeline-virtual-content]")).toHaveCSS("visibility", "visible")
+  const tops = await root.evaluate(async (host) => {
+    const last = host.querySelector<HTMLElement>('[data-timeline-key="user-message:message-9"]')!.firstElementChild!
+    const frame = () => new Promise((resolve) => requestAnimationFrame(resolve))
+    await Promise.all(host.getAnimations({ subtree: true }).map((animation) => animation.finished))
+    await frame()
+    const before = last.getBoundingClientRect().top
+    host.querySelector<HTMLButtonElement>('[data-testid="clear-draft"]')!.click()
+    const frames: number[] = []
+    for (let index = 0; index < 4; index++) {
+      await frame()
+      frames.push(last.getBoundingClientRect().top - before)
+    }
+    await Promise.all(host.getAnimations({ subtree: true }).map((animation) => animation.finished))
+    return { frames, settled: last.getBoundingClientRect().top - before }
+  })
+  // The composer dropped 120 px in one step; the rows ease down after it instead of jumping in the same frame.
+  expect(tops.settled).toBeCloseTo(120, 0)
+  tops.frames.forEach((moved, index) => expect(moved).toBeLessThan(10 * (index + 1)))
+  expect(tops.frames.at(-1)!).toBeGreaterThanOrEqual(tops.frames[0]!)
+})
+
 for (const action of ["wheel", "resume", "resume-removal", "follow", "backlog", "unpinned"] as const) {
   story(`keeps in-flight row growth continuous during ${action}`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "no-preference" })

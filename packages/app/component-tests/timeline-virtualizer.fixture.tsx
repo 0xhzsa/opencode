@@ -14,6 +14,8 @@ export function mountTimelineVirtualizer(input: {
   viewportHeight?: number
   insertedHeight?: number
   activity?: boolean
+  /** The composer region's height over the timeline's bottom edge. */
+  inset?: number
 }) {
   const host = document.createElement("main")
   host.dataset.testid = "timeline-virtualizer-fixture"
@@ -30,6 +32,8 @@ export function mountTimelineVirtualizer(input: {
       inserted: false,
       removed: false,
       activity: input.activity ?? false,
+      inset: input.inset ?? 0,
+      insetStep: 0,
     })
 
     const initial = Array.from(
@@ -97,6 +101,8 @@ export function mountTimelineVirtualizer(input: {
       onUserScroll: () => {},
       onHistoryScroll: () => {},
       canRenderImmediately: () => input.immediate ?? false,
+      bottomInset: () => state.inset,
+      bottomInsetStep: () => state.insetStep,
     })
 
     const resize = new ResizeObserver((entries) => {
@@ -142,6 +148,13 @@ export function mountTimelineVirtualizer(input: {
         </button>
         <button type="button" data-testid="remove-inserted" onClick={() => setState("inserted", false)}>
           Remove inserted row
+        </button>
+        <button
+          type="button"
+          data-testid="clear-draft"
+          onClick={() => setState({ insetStep: state.inset - 40, inset: 40 })}
+        >
+          Clear a long draft
         </button>
         <button type="button" data-testid="toggle-activity" onClick={() => setState("activity", (value) => !value)}>
           Toggle Working

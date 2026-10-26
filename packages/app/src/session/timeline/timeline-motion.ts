@@ -1,6 +1,6 @@
-import { springAt, springSettle, type DurationOptions } from "@opencode/ui/motion"
+import { springAt, type DurationOptions } from "@opencode/ui/motion"
 
-type Track = { x: number; v: number }
+type Track = { x: number; v: number; a: number }
 
 type Row = {
   wrapper: HTMLElement
@@ -35,15 +35,49 @@ export type RowJump = {
   hold?: boolean
 }
 
-const rest = (track: Track) => Math.abs(track.x) < 0.01 && Math.abs(track.v) < 0.5
+const rest = (track: Track) => Math.abs(track.x) < 0.01 && Math.abs(track.v) < 0.5 && Math.abs(track.a) < 5
 const translate = (y: number) => `translateY(${Math.round(y * 1000) / 1000}px)`
 const easeOut = (t: number) => 1 - (1 - t) * (1 - t)
+const still = (): Track => ({ x: 0, v: 0, a: 0 })
+
+// A triple pole this much faster than the spring's double pole settles a step in the same time.
+const tripleRate = 1.29
+
+/**
+ * Where a track heading to rest is `t` seconds on. Without bounce it rides a critically damped triple pole rather than
+ * the spring's double pole: a jump adds offset but no acceleration, so a stream of arrivals bends the motion instead of
+ * surging it at each one, and its speed and acceleration both carry through every bake.
+ */
+function travel(track: Track, omega: number, zeta: number, t: number): Track {
+  if (zeta < 1) {
+    const [x, v] = springAt(track.x, track.v, omega, zeta, t)
+    return { x, v, a: -omega * omega * x - 2 * zeta * omega * v }
+  }
+  const w = omega * tripleRate
+  const c1 = track.v + w * track.x
+  const c2 = (track.a + 2 * w * track.v + w * w * track.x) / 2
+  const decay = Math.exp(-w * t)
+  const p = track.x + c1 * t + c2 * t * t
+  const dp = c1 + 2 * c2 * t
+  return { x: decay * p, v: decay * (dp - w * p), a: decay * (2 * c2 - 2 * w * dp + w * w * p) }
+}
+
+function settleTime(tracks: Track[], omega: number, zeta: number) {
+  const moving = (t: number) =>
+    tracks.some((track) => {
+      const at = travel(track, omega, zeta, t)
+      return Math.abs(at.x) > 0.02 || Math.abs(at.v) > 0.02 * omega
+    })
+  let t = 1 / 120
+  while (t < 4 && moving(t)) t += 1 / 120
+  return t
+}
 
 /**
  * Timeline motion on the compositor. Rows always sit at their final size and slot; each content change reports how far
  * every moved row jumped, and the jumps are drawn back out with transforms that spring to zero: one on the row layer for
  * the shared move, and per row a box/content pair for rows that move differently or reveal a new part. Every running
- * animation is baked again from its current offset and velocity on the same time grid, so offsets that cancel keep
+ * animation is baked again from its current offset, velocity and acceleration on the same time grid, so offsets that cancel keep
  * cancelling and nothing runs JavaScript between content changes.
  */
 export function createTimelineMotion(input: {
@@ -58,13 +92,11 @@ export function createTimelineMotion(input: {
   onEdge: (key: string, px: number) => void
   onSettle?: () => void
 }) {
-  const layer: Track = { x: 0, v: 0 }
+  const layer = still()
   const rows = new Map<string, Row>()
   const followers = new Set<Follower>()
   let animations: Animation[] = []
-  let epoch:
-    | { pose: (track: Track, t: number) => readonly [number, number]; duration?: number; clock?: Animation; at: number }
-    | undefined
+  let epoch: { pose: (track: Track, t: number) => Track; duration?: number; clock?: Animation; at: number } | undefined
 
   function elapsed() {
     if (!epoch) return 0
@@ -75,7 +107,7 @@ export function createTimelineMotion(input: {
 
   function hidden(row: Row, t: number) {
     if (!epoch) return row.content.x - row.box.x
-    return epoch.pose(row.content, t)[0] - epoch.pose(row.box, t)[0]
+    return epoch.pose(row.content, t).x - epoch.pose(row.box, t).x
   }
 
   function opacity(row: Row, t: number) {
@@ -97,11 +129,7 @@ export function createTimelineMotion(input: {
     const t = elapsed()
     const current = epoch
     if (!current || t === 0) return
-    const step = (track: Track) => {
-      const [x, v] = current.pose(track, t)
-      track.x = x
-      track.v = v
-    }
+    const step = (track: Track) => Object.assign(track, current.pose(track, t))
     step(layer)
     rows.forEach((row) => {
       if (row.enter) row.enter.floor = opacity(row, t)
@@ -125,9 +153,9 @@ export function createTimelineMotion(input: {
   function settle() {
     stop()
     epoch = undefined
-    layer.x = layer.v = 0
+    Object.assign(layer, still())
     rows.forEach((row, key) => release(key, row))
-    followers.forEach((follower) => (follower.track = { x: 0, v: 0 }))
+    followers.forEach((follower) => (follower.track = still()))
     input.onReach(0)
     input.onSettle?.()
   }
@@ -150,17 +178,20 @@ export function createTimelineMotion(input: {
     const spring = input.spring()
     const omega = (2 * Math.PI) / spring.duration
     const zeta = 1 - spring.bounce
-    const settleTime =
-      remaining || Math.max(...tracks.map((track) => springSettle(track.x, track.v, omega, zeta, 0.02)))
-    const pose = (track: Track, t: number): readonly [number, number] => {
-      if (!remaining) return springAt(track.x, track.v, omega, zeta, t)
+    const span = remaining || settleTime(tracks, omega, zeta)
+    const pose = (track: Track, t: number): Track => {
+      if (!remaining) return travel(track, omega, zeta, t)
       const rest = Math.max(0, 1 - t / remaining)
-      return [track.x * rest ** 3, (-3 * track.x * rest ** 2) / remaining]
+      return {
+        x: track.x * rest ** 3,
+        v: (-3 * track.x * rest ** 2) / remaining,
+        a: (6 * track.x * rest) / remaining ** 2,
+      }
     }
-    const count = Math.max(2, Math.ceil(settleTime * 60))
-    const times = Array.from({ length: count + 1 }, (_, index) => (settleTime * index) / count)
-    const timing: KeyframeAnimationOptions = { duration: settleTime * 1000 }
-    const at = (track: Track, t: number, index: number) => (index === count ? 0 : pose(track, t)[0])
+    const count = Math.max(2, Math.ceil(span * 60))
+    const times = Array.from({ length: count + 1 }, (_, index) => (span * index) / count)
+    const timing: KeyframeAnimationOptions = { duration: span * 1000 }
+    const at = (track: Track, t: number, index: number) => (index === count ? 0 : pose(track, t).x)
     const next = {
       pose,
       duration: remaining || undefined,
@@ -255,10 +286,10 @@ export function createTimelineMotion(input: {
   function offset(key: string) {
     const t = elapsed()
     const row = rows.get(key)
-    const sum = (track: Track) => (epoch ? epoch.pose(track, t) : ([track.x, track.v] as const))
-    const [lx, lv] = sum(layer)
-    const [cx, cv] = row ? sum(row.content) : [0, 0]
-    return { x: lx + cx, v: lv + cv }
+    const sum = (track: Track) => (epoch ? epoch.pose(track, t) : track)
+    const drawn = sum(layer)
+    const content = row ? sum(row.content) : still()
+    return { x: drawn.x + content.x, v: drawn.v + content.v, a: drawn.a + content.a }
   }
 
   return {
@@ -274,8 +305,8 @@ export function createTimelineMotion(input: {
         const row = rows.get(jump.key) ?? {
           wrapper: jump.wrapper,
           inner: jump.inner,
-          box: { x: 0, v: 0 },
-          content: { x: 0, v: 0 },
+          box: still(),
+          content: still(),
           edge: 0,
           feather: 0,
           hidden: 0,
@@ -284,8 +315,8 @@ export function createTimelineMotion(input: {
         row.wrapper = jump.wrapper
         row.inner = jump.inner
         if (jump.hold) {
-          row.box = { x: -layer.x, v: -layer.v }
-          row.content = { x: -layer.x, v: -layer.v }
+          row.box = { x: -layer.x, v: -layer.v, a: -layer.a }
+          row.content = { x: -layer.x, v: -layer.v, a: -layer.a }
         } else {
           row.box.x += jump.box
           row.content.x += jump.content
@@ -312,7 +343,7 @@ export function createTimelineMotion(input: {
     follow(key: string, element: HTMLElement) {
       const start = offset(key)
       advance()
-      const follower: Follower = { key, element, track: { x: start.x, v: start.v }, base: 0 }
+      const follower: Follower = { key, element, track: start, base: 0 }
       followers.add(follower)
       if (epoch) bake()
       return {

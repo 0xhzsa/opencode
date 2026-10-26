@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { springAt } from "@opencode/ui/motion"
 import { createTimelineMotion } from "./timeline-motion"
 
 type Played = {
@@ -49,7 +48,6 @@ afterEach(() => {
 })
 
 const spring = { duration: 0.4, bounce: 0 }
-const omega = (2 * Math.PI) / spring.duration
 
 function setup() {
   const layer = document.createElement("div")
@@ -81,6 +79,14 @@ const offsets = (item: Played) => {
   const from = translateY(item.frames[0]!)
   return curve.split(",").map((point) => from * (1 - Number(point)) || 0)
 }
+// A move's drawn offset `ms` into it.
+const drawnAt = (item: Played, ms: number) => {
+  const moves = offsets(item)
+  const step = Number(item.duration) / (moves.length - 1)
+  const index = Math.min(moves.length - 2, Math.floor(ms / step))
+  return moves[index]! + (moves[index + 1]! - moves[index]!) * (ms / step - index)
+}
+const frame = 1000 / 60
 const live = () => played.filter((item) => !item.animation.cancelled)
 const on = (element: Element, property = "transform") =>
   live().find((item) => item.element === element && property in item.frames[0]!)
@@ -124,8 +130,16 @@ test("bends a running move toward a second jump instead of restarting it", () =>
   first.animation.currentTime = 100
   motion.kick(40, [])
   expect(first.animation.cancelled).toBe(true)
-  const [drawn] = springAt(40, 0, omega, 1, 0.1)
-  expect(offsets(on(layer)!)[0]).toBeCloseTo(drawn + 40, 2)
+  const second = on(layer)!
+  expect(drawnAt(second, 0)).toBeCloseTo(drawnAt(first, 100) + 40, 1)
+  // The second jump adds offset but no push: a frame on, the rows are where the first move alone would have them.
+  expect(Math.abs(drawnAt(second, frame) - drawnAt(first, 100 + frame) - 40)).toBeLessThan(0.4)
+})
+
+test("starts a jump from rest without a push", () => {
+  const { layer, motion } = setup()
+  motion.kick(40, [])
+  expect(drawnAt(on(layer)!, frame)).toBeGreaterThan(39.6)
 })
 
 test("disclosure starts promptly and retains its deadline when content changes mid-open", () => {
