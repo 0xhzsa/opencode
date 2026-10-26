@@ -1,4 +1,5 @@
 import { expect, story } from "../../stories/playwright/story"
+import type { Locator } from "@playwright/test"
 
 story("resizes the dock to fit different answer counts", async ({ mount }) => {
   const component = await mount("app-current-session-surface--question-answer-counts")
@@ -273,12 +274,14 @@ story("leaves Enter and Escape to an IME composition in the custom answer", asyn
   const input = question.getByRole("textbox", { name: "Type your own answer…", exact: true })
   await input.focus()
   await input.fill("にほん")
+
   const compose = (key: string, keyCode: number) =>
     input.evaluate(
       (element, init) =>
         element.dispatchEvent(new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true })),
       { key, keyCode, isComposing: keyCode !== 229 },
     )
+
   await compose("Enter", 13)
   await compose("Escape", 27)
   await compose("Enter", 229)
@@ -398,4 +401,136 @@ story("toggles a lone many-answer question and sends it with Enter", async ({ mo
   await expect(terminal.locator('[data-slot="question-option-key"]')).toHaveAttribute("data-picked", "true")
   await page.keyboard.press("Enter")
   await expect(question).toBeHidden()
+})
+
+const longList = async (mount: (id: string) => Promise<Locator>) => {
+  const component = await mount("app-current-session-surface--question-long-list")
+  const question = component.locator('[data-component="dock-prompt"][data-kind="question"]')
+  await expect(question.getByRole("checkbox").first()).toBeFocused()
+  // The answers box has opened to its first height once it stops changing.
+  const box = () => question.evaluate((root) => Math.round(root.getBoundingClientRect().height))
+  await expect.poll(async () => (await box()) === (await box())).toBe(true)
+
+  return question
+}
+
+const fit = (question: Locator) =>
+  question.evaluate((root) => {
+    const options = root.querySelector<HTMLElement>('[data-slot="question-options"]')!
+    const timeline = document.querySelector('[data-slot="session-timeline-scroll"] > .scroll-view__viewport')
+    const box = root.getBoundingClientRect()
+
+    return {
+      height: box.height,
+      // The whole dock, footer included, sits between the top of the timeline and the foot of the window.
+      within: box.top >= (timeline?.getBoundingClientRect().top ?? 0) - 0.5 && box.bottom <= innerHeight + 0.5,
+      scrolls: options.scrollHeight > options.clientHeight + 1,
+      top: options.scrollTop,
+    }
+  })
+
+// Whether the whole of an answer's row shows, clear of the feathered edges.
+const clear = (row: Locator) =>
+  row.evaluate((input) => {
+    const row = input.closest<HTMLElement>('[data-slot="question-option"]')!
+    const box = input.closest<HTMLElement>('[data-slot="question-options"]')!.getBoundingClientRect()
+    const at = row.getBoundingClientRect()
+
+    return at.top >= box.top + 20 - 0.5 && at.bottom <= box.bottom - 20 + 0.5
+  })
+
+story("caps a long list of answers to the panel and scrolls them inside it", async ({ mount }) => {
+  const question = await longList(mount)
+  const rest = await fit(question)
+  expect(rest.within).toBe(true)
+  expect(rest.scrolls).toBe(true)
+  await expect(question.getByRole("checkbox", { name: /Footer/ })).not.toBeInViewport()
+})
+
+story("scrolls the highlighted answer into view with the keys", async ({ mount, page }) => {
+  const question = await longList(mount)
+  const footer = question.getByRole("checkbox", { name: /Footer/ })
+
+  await page.keyboard.press("End")
+  await page.keyboard.press("ArrowUp")
+  await expect(footer).toBeFocused()
+  expect(await clear(footer)).toBe(true)
+
+  await page.keyboard.press("Home")
+  await expect(question.getByRole("checkbox").first()).toBeFocused()
+  expect((await fit(question)).top).toBe(0)
+})
+
+story("feathers only the edges of the answers with more past them", async ({ mount }) => {
+  const question = await longList(mount)
+
+  // Scrolls to a share of the way down the list.
+  const edges = (share: number) =>
+    question.evaluate(async (root, share) => {
+      const options = root.querySelector<HTMLElement>('[data-slot="question-options"]')!
+      options.scrollTop = Math.round((options.scrollHeight - options.clientHeight) * share)
+      await new Promise((done) => options.addEventListener("scroll", done, { once: true }))
+      await new Promise((done) => requestAnimationFrame(done))
+      const mask = options.style.maskImage
+
+      // A gradient down the list may be written without its direction, which is the default.
+      return { top: /linear-gradient\((to bottom, )?transparent/.test(mask), bottom: mask.includes("to top") }
+    }, share)
+
+  expect(await edges(0.5)).toEqual({ top: true, bottom: true })
+  expect(await edges(1)).toEqual({ top: true, bottom: false })
+  expect(await edges(0)).toEqual({ top: false, bottom: true })
+})
+
+story("leaves a list that fits without feathered edges", async ({ mount }) => {
+  const component = await mount("app-current-session-surface--question-request")
+  const question = component.locator('[data-component="dock-prompt"][data-kind="question"]')
+  await expect(question.getByRole("radio").first()).toBeFocused()
+  await expect
+    .poll(() => question.locator('[data-slot="question-options"]').evaluate((el) => el.style.maskImage))
+    .toBe("")
+})
+
+story(
+  "caps a long list to the panel in the app's layout, where the dock overflows a zero-height row",
+  async ({ mount }) => {
+    const question = await longList(mount)
+    // As in the session screen, the composer region moves into a zero-height row at the foot of the panel and overflows
+    // it upward, over the timeline.
+    await question.evaluate((root) => {
+      const dock = root.closest('[data-component="session-composer-dock"]')!
+      const row = document.createElement("div")
+      row.style.cssText =
+        "position: relative; display: flex; flex-direction: column; justify-content: flex-end; height: 0"
+      row.style.flexShrink = "0"
+      dock.replaceWith(row)
+      row.append(dock)
+      dispatchEvent(new Event("resize"))
+    })
+
+    // Measured against the empty row, the cap would fall to its 240px minimum.
+    await expect.poll(async () => (await fit(question)).height).toBeGreaterThan(400)
+    const rest = await fit(question)
+    expect(rest.within).toBe(true)
+    expect(rest.scrolls).toBe(true)
+  },
+)
+
+story("brings the picked answer back into view after switching questions", async ({ mount, page }) => {
+  const question = await longList(mount)
+  const footer = question.getByRole("checkbox", { name: /Footer/ })
+  const title = question.locator('[data-slot="question-header-title"]')
+
+  await page.keyboard.press("End")
+  await page.keyboard.press("ArrowUp")
+  await page.keyboard.press(" ")
+  await expect(footer).toBeChecked()
+
+  await page.keyboard.press("ArrowRight")
+  await expect(title).toHaveText("2 of 2 questions")
+  await page.keyboard.press("ArrowLeft")
+  await expect(title).toHaveText("1 of 2 questions")
+  await expect(footer).toBeFocused()
+  // The answers box springs back to the list's height, then the picked answer is in the clear.
+  await expect.poll(() => clear(footer)).toBe(true)
 })

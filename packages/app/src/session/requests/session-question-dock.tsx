@@ -29,6 +29,9 @@ const SPRING_EASE =
 
 type QuestionField = FormStringField | FormMultiselectField
 
+// How far a list that scrolls fades out at an edge with more answers past it.
+const feather = 24
+
 function questionField(field: FormInfo["fields"][number]): field is QuestionField {
   return field.type === "string" || field.type === "multiselect"
 }
@@ -116,6 +119,10 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
     focus: 0,
     minimized: false,
     listHeight: 0,
+    // How far the answers are scrolled and how tall their box is, kept from scroll and resize events so the feathered
+    // edges never read layout.
+    scrolled: 0,
+    view: 0,
   })
 
   let root: HTMLDivElement | undefined
@@ -150,6 +157,7 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
   const collapse = useSpring(() => (store.minimized ? 1 : 0), { visualDuration: 0.3, bounce: 0 })
   const hidden = createMemo(() => Math.max(0, Math.min(1, collapse())))
   const optionsOff = createMemo(() => hidden() > 0.98)
+
   // The answers box follows its list's measured height, so the dock grows and shrinks with each question. Under
   // reduced motion it lands at once while the content fades.
   const listHeight = useSpring(
@@ -183,30 +191,38 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
     setStore("answers", store.tab, next ? [next] : [])
   }
 
+  // The dock's height at most, from its last measure. Answers past it scroll inside the dock.
+  let limit = Infinity
+
   const measure = () => {
     if (!root) return
 
     const scroller = document.querySelector('[data-slot="session-timeline-scroll"] > .scroll-view__viewport')
     const head = scroller instanceof HTMLElement ? scroller.firstElementChild : undefined
 
+    // The timeline starts under its sticky header, or at its own top when it has none.
     const top =
-      head instanceof HTMLElement && head.classList.contains("sticky") ? head.getBoundingClientRect().bottom : 0
-
-    if (!top) {
-      root.style.removeProperty("--question-prompt-max-height")
-
-      return
-    }
+      head instanceof HTMLElement && head.classList.contains("sticky")
+        ? head.getBoundingClientRect().bottom
+        : scroller instanceof HTMLElement
+          ? scroller.getBoundingClientRect().top
+          : 0
 
     const dock = root.closest('[data-component="session-composer-dock"]')
+    // The dock sits at the foot of the column it shares with the timeline, in the app inside a zero-height row that it
+    // overflows upward. Grown past the column it spills out of it, so the column bounds it, not the dock's own edge.
+    const column = bounds(dock?.parentElement)
+    const bottom = Math.min(window.innerHeight, column?.bottom ?? window.innerHeight)
 
-    if (!(dock instanceof HTMLElement)) return
+    // Whatever the dock holds besides the question, above it or below, takes from the same height.
+    const around =
+      dock instanceof HTMLElement
+        ? Math.max(0, dock.getBoundingClientRect().height - root.getBoundingClientRect().height)
+        : 0
 
-    const dockBottom = dock.getBoundingClientRect().bottom
-    const below = Math.max(0, dockBottom - root.getBoundingClientRect().bottom)
     const gap = 8
-    const max = Math.max(240, Math.floor(dockBottom - top - gap - below))
-    root.style.setProperty("--question-prompt-max-height", `${max}px`)
+    limit = Math.max(240, Math.floor(bottom - Math.max(0, top, column?.top ?? 0) - around - gap))
+    root.style.setProperty("--question-prompt-max-height", `${limit}px`)
   }
 
   const clamp = (i: number) => Math.max(0, Math.min(count() - 1, i))
@@ -229,8 +245,37 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
 
     if (store.editing) return
     const el = next === options().length ? customRef : optsRef[next]
-    el?.focus(how)
+    el?.focus({ preventScroll: true })
+
+    if (!how?.preventScroll) reveal(next)
   }
+
+  // A list that scrolls follows the highlighted answer at once, keeping it clear of the feathered edges. While the
+  // answers box opens or changes height, the answer comes into view of the height it will settle at.
+  const reveal = (i: number) => {
+    const row = i === options().length ? customRow : optsRef[i]
+
+    if (!row || !root || !optionsRef || !listRef) return
+    const view = Math.min(listRef.offsetHeight, limit - (root.offsetHeight - optionsRef.offsetHeight))
+    // The list is all the answers box holds, so a row's place in the list is its place in the box.
+    const top = row.offsetTop
+    const edge = Math.min(feather, view / 4)
+    optionsRef.scrollTop = Math.min(top - edge, Math.max(optionsRef.scrollTop, top + row.offsetHeight + edge - view))
+    setStore("scrolled", optionsRef.scrollTop)
+  }
+
+  // The answers fade out at whichever edge has more of them past it.
+  const mask = createMemo(() => {
+    const top = Math.min(feather, store.scrolled, store.view / 3)
+    const bottom = Math.min(feather, store.listHeight - store.scrolled - store.view, store.view / 3)
+
+    const layers = [
+      top > 0.5 ? `linear-gradient(to bottom, transparent, #000 ${top.toFixed(2)}px)` : "",
+      bottom > 0.5 ? `linear-gradient(to top, transparent, #000 ${bottom.toFixed(2)}px)` : "",
+    ].filter(Boolean)
+
+    return layers.length > 0 ? layers.join(", ") : undefined
+  })
 
   onMount(() => {
     let raf: number | undefined
@@ -243,7 +288,7 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
       })
     }
 
-    update()
+    measure()
 
     makeEventListener(window, "resize", update)
 
@@ -262,10 +307,28 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
     const el = listRef
 
     if (!el) return
+
     const observer = new ResizeObserver((entries) => {
       const size = entries[0]?.borderBoxSize[0]?.blockSize
+
       if (size !== undefined) setStore("listHeight", size)
     })
+
+    observer.observe(el)
+    onCleanup(() => observer.disconnect())
+  })
+
+  createEffect(() => {
+    const el = optionsRef
+
+    if (!el) return
+
+    const observer = new ResizeObserver((entries) => {
+      const size = entries[0]?.contentBoxSize[0]?.blockSize
+
+      if (size !== undefined) setStore("view", size)
+    })
+
     observer.observe(el)
     onCleanup(() => observer.disconnect())
   })
@@ -568,12 +631,14 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
     arrivals.length = 0
     const reduced = prefersReducedMotion()
     const x = (root?.matches(":dir(rtl)") ? -step : step) * 12
+
     const frames = reduced
       ? [{ opacity: 0 }, { opacity: 1 }]
       : [
           { opacity: 0, transform: `translate3d(${x}px,0,0)` },
           { opacity: 1, transform: "none" },
         ]
+
     ;[detailsRef, optionsRef].forEach((el) => {
       if (el?.animate) arrivals.push(el.animate(frames, { duration: reduced ? 150 : 300, easing: SPRING_EASE }))
     })
@@ -589,8 +654,10 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
     setStore("editing", false)
 
     if (store.minimized) return
-    // The answers box is still springing to the new list's height, so focusing must not scroll it.
-    focus(pickFocus(tab), { preventScroll: true })
+
+    // The new question's answers start at the top, then its answer comes into view.
+    if (optionsRef) optionsRef.scrollTop = 0
+    focus(pickFocus(tab))
     arrive(step)
   }
 
@@ -746,7 +813,9 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
             height: store.listHeight > 0 ? `${Math.max(0, listHeight() * (1 - hidden()))}px` : undefined,
             opacity: `${Math.max(0, Math.min(1, 1 - hidden()))}`,
             visibility: optionsOff() ? "hidden" : "visible",
+            "mask-image": mask(),
           }}
+          onScroll={(event) => setStore("scrolled", event.currentTarget.scrollTop)}
           // Space already acted on key down; its release must not click the button again.
           onKeyUp={(event) => {
             if (event.key !== " ") return
@@ -849,4 +918,12 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
       </DockPrompt>
     </div>
   )
+}
+
+// The nearest of `el` and its ancestors that has a height.
+function bounds(el: Element | null | undefined): DOMRect | undefined {
+  if (!el) return undefined
+  const rect = el.getBoundingClientRect()
+
+  return rect.height >= 1 ? rect : bounds(el.parentElement)
 }

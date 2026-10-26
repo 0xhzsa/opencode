@@ -199,6 +199,7 @@
     padding: 0;
     overflow-y: auto;
     scrollbar-width: none;
+    mask-composite: intersect;
 
     &::-webkit-scrollbar {
       display: none;
