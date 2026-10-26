@@ -1,4 +1,4 @@
-import { prefersReducedMotion, springAt, springSettle } from "@opencode/ui/motion"
+import { observeReducedMotion, prefersReducedMotion, springAt, springSettle } from "@opencode/ui/motion"
 import { motionTuning } from "@opencode/ui/motion-tuning"
 
 // The composer's copy flies onto its bubble on this spring.
@@ -40,11 +40,18 @@ type Flight = {
   textHeight: number
   expire: ReturnType<typeof setTimeout>
   source?: HTMLElement
+  /** Lands a flight in the air at once. */
+  cancel?: () => void
 }
 
 // The sent text lifts off from where it sat in the composer, drawn over it, and stays below the top of its timeline's
 // visible viewport. The real bubble stays hidden until the flight lands on it.
 const waiting = new Map<string, Flight>()
+
+// Every flight from preparation until release, waiting or in the air.
+const flights = new Set<Flight>()
+
+let unobserve: (() => void) | undefined
 
 // A bubble that mounted before its flight was prepared, as when a queued prompt's row leaves the queue a moment after
 // its message reaches the timeline. A flight prepared soon after still lands on it.
@@ -139,6 +146,8 @@ export function prepareSendFlight(id: string, editor: HTMLElement | undefined, s
   }
 
   waiting.set(id, flight)
+  flights.add(flight)
+  unobserve ??= observeReducedMotion(() => prefersReducedMotion() && reduce())
 
   const early = unclaimed.get(id)
   unclaimed.delete(id)
@@ -324,6 +333,8 @@ export function landSendFlight(
   animations.forEach((animation) => (animation.currentTime = launched))
   flight.layer.style.visibility = "visible"
 
+  flight.cancel = () => animations.forEach((animation) => animation.cancel())
+
   const land = () => {
     document.removeEventListener("visibilitychange", onVisibilityChange)
     followed?.stop()
@@ -351,10 +362,28 @@ function corners(style: CSSStyleDeclaration) {
   ].map((value) => parseFloat(value) || 0)
 }
 
-// Drops the copy, letting the composer show its placeholder again.
+// Drops the copy. The composer shows its placeholder again once no other copy lifts off over it.
 function release(flight: Flight) {
   flight.layer.remove()
-  flight.origin.parentElement?.removeAttribute("data-send-flight-launch")
+  flights.delete(flight)
+  const parent = flight.origin.parentElement
+
+  if (parent && ![...flights].some((other) => !other.source && other.origin.parentElement === parent))
+    parent.removeAttribute("data-send-flight-launch")
+
+  if (flights.size) return
+  unobserve?.()
+  unobserve = undefined
+}
+
+// Reduced motion turned on mid-flight: waiting copies drop, and copies in the air land at once.
+function reduce() {
+  waiting.forEach((flight, id) => {
+    waiting.delete(id)
+    clearTimeout(flight.expire)
+    release(flight)
+  })
+  flights.forEach((flight) => (flight.cancel ? flight.cancel() : release(flight)))
 }
 
 // The nearest element holding both ends of the flight.

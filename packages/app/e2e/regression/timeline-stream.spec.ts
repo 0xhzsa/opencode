@@ -1098,6 +1098,71 @@ test("fades in a whole long reply that arrives in one update instead of growing 
   expect(Math.max(...played.map((item) => item.duration))).toBeLessThanOrEqual(200)
 })
 
+test("parts that arrive out of view take their height and rest once scrolled to", async ({ page }) => {
+  const timeline = await setupTimeline(page, {
+    messages: [userMessage(), assistantMessage([textPart("prt_read", notes("Read", 60))], { completed: false })],
+  })
+
+  const scroller = page.locator(".scroll-view__viewport", { has: page.locator("[data-timeline-row]") })
+  await expect(page.getByText("Read note 60.", { exact: true })).toBeInViewport()
+  await scroller.hover()
+  await page.mouse.wheel(0, -100_000)
+  await expect(page.getByText("Read note 1.", { exact: true })).toBeInViewport()
+  // The reply's last part stays mounted and the first after the viewport are overscan; the middle ones never mount.
+  // Prices take the DOM-measured path, which has no model height to fall back on.
+  await timeline.send(
+    Array.from({ length: 6 }, (_, index) =>
+      partUpdated(textPart(`prt_unread_${index}`, `${notes(`Unread ${index}`, 6)}\n\nIt costs $1 or $2.`)),
+    ).flat(),
+  )
+  await page.waitForTimeout(1500)
+  await page.evaluate(() => {
+    const entered: string[] = []
+    Object.assign(window, { entered })
+    const animate = Element.prototype.animate
+    Element.prototype.animate = function (frames, options) {
+      const list = Array.isArray(frames) ? frames : []
+      const row = this.closest("[data-timeline-key]") ?? this.querySelector(":scope > [data-timeline-key]")
+
+      if (row && list.some((frame) => Number(frame.opacity ?? 1) < 0.99))
+        entered.push(row.getAttribute("data-timeline-key") ?? "")
+
+      return animate.call(this, frames, options)
+    }
+  })
+
+  await page.mouse.wheel(0, 100_000)
+  await expect(page.getByText("It costs $1 or $2.").last()).toBeInViewport()
+  await page.waitForTimeout(500)
+
+  // SAFETY: the test stored this value on window itself, in this shape.
+  expect(await page.evaluate(() => ("entered" in window ? (window.entered as string[]) : []))).toEqual([])
+})
+
+test("turning on reduced motion lands rows that are still moving", async ({ page }) => {
+  const timeline = await setupTimeline(page, {
+    messages: [userMessage(), assistantMessage([textPart("prt_first", notes("First", 3))], { completed: false })],
+  })
+
+  await expect(page.getByText("First note 3.", { exact: true })).toBeInViewport()
+  await page.waitForTimeout(500)
+  const scroller = page.locator(".scroll-view__viewport", { has: page.locator("[data-timeline-row]") })
+
+  const moving = () =>
+    scroller.evaluate(
+      (element) =>
+        element
+          .getAnimations({ subtree: true })
+          .filter((animation) => !(animation instanceof CSSAnimation) && !(animation instanceof CSSTransition))
+          .filter((animation) => animation.playState === "running").length,
+    )
+
+  await timeline.send(partUpdated(textPart("prt_second", notes("Second", 4))))
+  await expect.poll(moving).toBeGreaterThan(0)
+  await page.evaluate(() => (document.documentElement.dataset.motion = "reduce"))
+  await expect.poll(moving, { timeout: 200 }).toBe(0)
+})
+
 test.describe("background shortcut", () => {
   test("offers a standalone running subagent to the background with Ctrl+B", async ({ page }) => {
     await setupTimeline(page, {
@@ -1642,6 +1707,28 @@ test.describe("background shortcut", () => {
       await timeline.send(partUpdated(textPart("prt_late", notes("Late", 30))))
       await expect(page.getByText("Late note 30.", { exact: true })).toBeAttached()
       await aligned()
+
+      if (!fixture.searches) return
+      // The shell's own row grows above it; the shell holds still instead of springing back to where it was.
+
+      const drift = await page.evaluate(async () => {
+        const shell = document.querySelector('[data-timeline-part-id="prt_far_shell"]')!
+        const trigger = shell.querySelector('[data-slot="collapsible-trigger"]')!
+        const top = trigger.getBoundingClientRect().top
+        const spacer = document.createElement("div")
+        spacer.style.height = "120px"
+        shell.before(spacer)
+
+        const frames = await Array.fromAsync({ length: 40 }, async () => {
+          await new Promise(requestAnimationFrame)
+
+          return Math.abs(trigger.getBoundingClientRect().top - top)
+        })
+
+        return Math.max(...frames.slice(2))
+      })
+
+      expect(drift).toBeLessThanOrEqual(0.5)
     })
   }
 

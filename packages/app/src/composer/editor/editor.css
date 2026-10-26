@@ -39,6 +39,10 @@
   opacity: 0;
 }
 
+:root[data-motion="reduce"] [data-slot="composer-placeholder"] {
+  transition: none;
+}
+
 /* Reserving the scrollbar keeps a long prompt from rewrapping when it starts to scroll; the editor's end padding gives
    the reserved width back, so text keeps the same 12px inset. */
 [data-component="composer-scroll"] {

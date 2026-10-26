@@ -37,10 +37,10 @@ import type { createTimelineProjection } from "./projection"
 import { observeElementOffsetReconnectAware } from "./observe-element-offset"
 import { filterVirtualIndexes } from "./virtual-items"
 import { holdLandingWidth } from "@/shell/panel-motion"
-import { prefersReducedMotion } from "@opencode/ui/motion"
+import { observeReducedMotion, prefersReducedMotion } from "@opencode/ui/motion"
 import { motionTuning } from "@opencode/ui/motion-tuning"
 import { landSendFlight, sendFlightPending } from "./send-flight"
-import { growthSpring, softEdge, streamingEdge, workingHandoff } from "./row-growth"
+import { arrivalFade, growthSpring, softEdge, streamingEdge, workingHandoff } from "./row-growth"
 import { createTimelineMotion, type RowJump } from "./timeline-motion"
 
 const fallbackItemSize = 60
@@ -648,7 +648,15 @@ export function createTimelineVirtualizer(input: Input) {
     // Reopening a settled scroll-to-end operation can fight subsequent keyboard scrolling.
     if (input.pinned() && (following() || Math.abs(endOffset() - layoutState.offset) > endEpsilon)) pinEnd()
 
-    if (prefersReducedMotion()) return fadeArrivals()
+    // Reduced motion may have turned on since the snapshot, with rows still moving from earlier changes.
+    if (prefersReducedMotion()) {
+      before = undefined
+      handoffRow = undefined
+      motion.cancel()
+
+      return fadeArrivals()
+    }
+
     draw()
   }
 
@@ -658,11 +666,14 @@ export function createTimelineVirtualizer(input: Input) {
     virtualizer.getVirtualItems().forEach((item) => {
       const key = String(item.key)
 
-      if (!arrivals.delete(key)) return
-      virtualizer.elementsCache
-        .get(key)
-        ?.parentElement?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: "ease-out" })
+      // One still at its empty estimate fades in with the commit that measures it.
+      if (item.size <= 0 || !arrivals.delete(key) || Predicate.isTagged(rows()[item.index], "TurnGap")) return
+      virtualizer.elementsCache.get(key)?.parentElement?.animate([{ opacity: 0 }, { opacity: 1 }], {
+        duration: arrivalFade() * 1000,
+        easing: "ease-out",
+      })
     })
+    settleArrivals()
   }
 
   // Rows already rest at their new slots. Each is drawn from where it was on screen and springs into place: the shared
@@ -710,7 +721,11 @@ export function createTimelineVirtualizer(input: Input) {
       const content = was.top - top - layer
       const box = key !== handoff ? Math.min(content, was.bottom - bottom - layer) : content
       const enter = arriving && !Predicate.isTagged(row, "TurnGap") ? item.size : undefined
-      const hold = Predicate.isTagged(row, "UserMessage") && sendFlightPending(row.userMessageID)
+
+      // The anchored tool already holds still on screen, however its row changed around it.
+      const hold =
+        key === rendering.anchor?.key ||
+        (Predicate.isTagged(row, "UserMessage") && sendFlightPending(row.userMessageID))
 
       if (!hold && enter === undefined && Math.abs(content) < 1 / 64 && Math.abs(content - box) < 1 / 64) return []
 
@@ -727,9 +742,20 @@ export function createTimelineVirtualizer(input: Input) {
     }
   }
 
-  // Measured arrivals that were not drawn arriving have arrived out of view.
+  // Arrivals measured without being drawn arriving, or outside the drawn range, have arrived out of view. One that never
+  // mounted takes its modelled height in place of its empty estimate, and mounts later like any row.
   function settleArrivals() {
-    arrivals.forEach((key) => virtualizer.itemSizeCache.has(key) && arrivals.delete(key))
+    const drawn = new Set(virtualizer.getVirtualItems().map((item) => String(item.key)))
+    arrivals.forEach((key) => {
+      if (!virtualizer.itemSizeCache.has(key) && drawn.has(key)) return
+      arrivals.delete(key)
+      const index = rowIndexes().get(key)
+
+      if (index === undefined || virtualizer.itemSizeCache.has(key)) return
+      resizeItem(index, modelHeight(key) ?? fallbackItemSize)
+      // Uncached, its first DOM measurement still corrects an estimate that never painted.
+      virtualizer.itemSizeCache.delete(key)
+    })
   }
 
   // Rows within `reached` px of the range stay mounted while the layer draws them away from their slots.
@@ -808,6 +834,8 @@ export function createTimelineVirtualizer(input: Input) {
     shrinks.clear()
     motion.cancel()
   }
+
+  onCleanup(observeReducedMotion(() => prefersReducedMotion() && settleMotion()))
 
   // Rows rewrap at a new width. A streaming row may shrink for a moment, since the lost height is the new width's, not
   // a settling line's.
@@ -1154,7 +1182,7 @@ export function createTimelineVirtualizer(input: Input) {
 
     // The element's box includes the drawn remainder, so it is measured from the drawn offset, not the whole one. Headers
     // stuck above it move with any remainder too, so the pin lands on a whole pixel: they stay on theirs, and the tool
-    // sits within half a pixel below them.
+    // sits within half a pixel below them. A row still springing from an earlier change is measured at its slot.
     const offset = Math.min(
       endOffset(),
       Math.max(
@@ -1162,6 +1190,7 @@ export function createTimelineVirtualizer(input: Input) {
         Math.round(
           drawnTop +
             element.getBoundingClientRect().top -
+            motion.offset(anchor.key).x -
             root.getBoundingClientRect().top -
             parseFloat(getComputedStyle(element).scrollMarginTop),
         ),

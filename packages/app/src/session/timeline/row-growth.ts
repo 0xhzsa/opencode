@@ -13,6 +13,18 @@ export const growthSpring = motionTuning.spring("timeline.growth", {
   },
 })
 
+// With reduced motion, an arriving row only fades in where it rests.
+export const arrivalFade = motionTuning.number("timeline.arrival-fade", {
+  label: "Reduced arrival fade",
+  group: "Timeline",
+  value: 0.16,
+  min: 0,
+  max: 1,
+  step: 0.01,
+  unit: "s",
+  time: "duration",
+})
+
 // The soft edge a growing row's new part reveals under. A streaming row's newest line uses a shorter one, so it gains
 // its height sooner and the mask shows for less time.
 export const softEdge = 28

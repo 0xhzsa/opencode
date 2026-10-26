@@ -267,3 +267,46 @@ test("slow motion stretches the flight once", () => {
     restore()
   }
 })
+
+test("the placeholder waits until the last overlapping copy has landed", async () => {
+  const { editor, bubble, restore } = setup()
+  const launching = () => editor.parentElement!.hasAttribute("data-send-flight-launch")
+
+  try {
+    prepareSendFlight("first", editor)
+    prepareSendFlight("second", editor)
+    landSendFlight("first", bubble(300))
+    played.forEach((item) => item.finish())
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(launching()).toBe(true)
+    played = []
+    landSendFlight("second", bubble(341))
+    played.forEach((item) => item.finish())
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(launching()).toBe(false)
+  } finally {
+    restore()
+  }
+})
+
+test("turning on reduced motion lands copies in the air and drops waiting ones", async () => {
+  const { root, editor, bubble, restore } = setup()
+
+  try {
+    prepareSendFlight("flying", editor)
+    const element = bubble(300)
+    landSendFlight("flying", element)
+    prepareSendFlight("waiting", editor)
+    document.documentElement.dataset.motion = "reduce"
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await Promise.resolve()
+    expect(element.style.opacity).toBe("")
+    expect(document.querySelector("[data-send-flight]")).toBeNull()
+    expect(root.hasAttribute("data-send-flight-launch")).toBe(false)
+  } finally {
+    delete document.documentElement.dataset.motion
+    restore()
+  }
+})
