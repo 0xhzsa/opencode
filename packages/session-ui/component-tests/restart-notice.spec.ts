@@ -1,4 +1,4 @@
-import { expect, story } from "../../storybook/playwright/story"
+import { expect, story } from "../../stories/playwright/story"
 
 for (const scenario of ["shutdown", "crash", "user", "declined", "legacy"]) {
   story(`shows the recorded interruption cause: ${scenario}`, async ({ mount }) => {
