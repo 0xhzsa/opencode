@@ -1337,6 +1337,27 @@ test("loads a tab's transcript while the pointer rests on it, and not when it pa
   expect(requested.filter((id) => id === b.id)).toHaveLength(1)
 })
 
+test("⌘W in a focused Context tab closes it, then the panel, and keeps the session tab", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const alpha = { id: "ses_side_context_alpha", title: "Side context alpha" }
+  const beta = { id: "ses_side_context_beta", title: "Side context beta" }
+  await openSession(page, { name: "SideCloseContext", sessions: [alpha, beta] })
+
+  const panel = page.locator("#review-panel")
+  const toggle = page.getByRole("button", { name: "Toggle review", exact: true })
+  const context = panel.getByRole("tab", { name: "Context", exact: true })
+  const alphaTab = page.locator(`[data-titlebar-tab-slot]:has(a[href="${sessionHref(alpha.id)}"])`)
+
+  await page.getByRole("button", { name: "Toggle session context" }).click()
+  await expect(context).toHaveAttribute("aria-selected", "true")
+  await panel.click({ position: { x: 100, y: 300 } })
+  await page.keyboard.press("ControlOrMeta+w")
+  await expect(context).toHaveCount(0)
+  await expect(toggle).toHaveAttribute("aria-expanded", "false")
+  await expect(alphaTab).toHaveCount(1)
+  await expectPath(page, sessionHref(alpha.id))
+})
+
 // Closes Alpha's side tabs with ⌘W until the side panel empties and collapses, as an overshooting hand would.
 async function emptySidePanel(page: Page) {
   await page.setViewportSize({ width: 1440, height: 900 })
