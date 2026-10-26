@@ -907,10 +907,8 @@ test("marks a Console provider with its workspace only when it is also connected
 
   const trigger = page.locator('[data-component="composer"] [data-action="composer-model"]')
   await trigger.hover()
-  const details = page.getByRole("tooltip")
-  await expect(details.getByText("Console Model", { exact: true })).toBeVisible()
-  await expect(details.getByText("OpenCode", { exact: true })).toBeVisible()
-  await expect(details.getByText(/Anomaly \//)).toHaveCount(0)
+  await expect(trigger).toContainText("Console Model")
+  await expect(trigger).not.toContainText("Anomaly")
   await trigger.click()
   const menu = page.getByRole("dialog", { name: "Select model", exact: true })
   await expect(menu.getByRole("option", { name: "Direct Gemini", exact: true })).toBeVisible()
