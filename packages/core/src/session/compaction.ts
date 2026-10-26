@@ -467,14 +467,39 @@ export const layer = Layer.effect(
       const headings = SUMMARY_TEMPLATE.split("\n").filter((line) => line.startsWith("##"))
       const filled = (text: string) => text.split("\n").some((line) => headings.includes(line.trim()))
       const prepared = yield* prepare(context, messages, budget)
+      const anchor = context.messages.findLast((message) => hasMeasuredPrompt(message, context.model.ref))
+      // A background request ends immediately before the measured response; its input count covers that exact prefix.
+      // Foreground summaries also include the response and any local tool results or messages since it.
+      const measured =
+        anchor?.type === "assistant" &&
+        anchor.tokens &&
+        anchor.model.id === context.model.ref.id &&
+        anchor.model.variant === context.model.ref.variant &&
+        (!background || context.messages.indexOf(anchor) === messages.length)
+          ? background
+            ? { measured: anchor.tokens.input + anchor.tokens.cache.read + anchor.tokens.cache.write, estimated: 0 }
+            : estimatePrompt(context)
+          : undefined
+      // Account conservatively for hook additions without counting old reasoning again: providers can strip it.
+      const estimate = measured && {
+        measured: measured.measured,
+        estimated:
+          measured.estimated +
+          Math.max(
+            0,
+            estimateRequest(prepared.request) -
+              estimateRequest({ ...transcript(context, messages), tools: context.tools.definitions }),
+          ),
+      }
 
       // Hooks saw the request without the summary prompt, so it is appended here. A reply that ignores the
       // template gets one reminder before it counts as a failure.
-      const send = (request: LLMRequest) =>
+      const send = (request: LLMRequest, estimate?: Estimate) =>
         Effect.gen(function* () {
           const prompted = fitOutput(
             LLMRequest.update(request, { messages: [...request.messages, Message.user(prompt)] }),
             context.model.limit,
+            estimate && { ...estimate, estimated: estimate.estimated + Token.estimate(prompt) },
           )
           const reply = yield* stream(context, prompted, prepared.options, background)
           if (filled(reply.text)) return reply
@@ -482,6 +507,7 @@ export const layer = Layer.effect(
           const nudged = fitOutput(
             LLMRequest.update(prompted, { messages: [...prompted.messages, Message.user(NUDGE)] }),
             context.model.limit,
+            estimate && { ...estimate, estimated: estimate.estimated + Token.estimate(prompt) + Token.estimate(NUDGE) },
           )
           const retry = yield* stream(context, nudged, prepared.options, background)
           if (filled(retry.text)) return retry
@@ -507,7 +533,7 @@ export const layer = Layer.effect(
         prepared,
         budget - overhead,
         send,
-        { fit: fit - overhead, history: withoutTail(prepared.request, keepID) },
+        { fit: fit - overhead, history: withoutTail(prepared.request, keepID), estimate },
         background,
       )
       if (!keepID) return result
@@ -583,8 +609,11 @@ export const layer = Layer.effect(
       trigger: Trigger,
       prepared: Prepared,
       target: number,
-      send: (request: LLMRequest) => Effect.Effect<Result, AIError | Failure>,
-      shrink: { readonly fit: number; readonly history: LLMRequest } = { fit: target, history: prepared.request },
+      send: (request: LLMRequest, estimate?: Estimate) => Effect.Effect<Result, AIError | Failure>,
+      shrink: { readonly fit: number; readonly history: LLMRequest; readonly estimate?: Estimate } = {
+        fit: target,
+        history: prepared.request,
+      },
       background?: Background,
     ): Effect.fn.Return<Result, Failure> {
       const context = trigger.context
@@ -597,11 +626,13 @@ export const layer = Layer.effect(
       let fit = shrink.fit
 
       while (true) {
+        // A provider rejection invalidates the measurement; keep the existing overflow shrink sequence.
+        const estimate = trigger.reason !== "overflow" && rejections === 0 ? shrink.estimate : undefined
         const unchanged = asText
           ? undefined
-          : estimateRequest(prepared.request) <= fit
+          : (estimate ? total(estimate) : estimateRequest(prepared.request)) <= fit
             ? prepared.request
-            : estimateRequest(shrink.history) <= target
+            : (!estimate || shrink.history !== prepared.request) && estimateRequest(shrink.history) <= target
               ? shrink.history
               : undefined
         const request =
@@ -622,7 +653,7 @@ export const layer = Layer.effect(
           })
         }
 
-        const attempt = yield* Effect.result(send(request))
+        const attempt = yield* Effect.result(send(request, request === prepared.request ? estimate : undefined))
         if (Result.isSuccess(attempt)) return attempt.success
         const cause = attempt.failure
         if (!(cause instanceof AIError)) return yield* Effect.fail(cause)
@@ -1146,15 +1177,15 @@ const hasMeasuredPrompt = (message: SessionMessage.Info, model: SessionContext.L
  * window, so that margin alone would cut a summary near its target to the minimum; there it still gets up to
  * `SUMMARY_OUTPUT_FLOOR` of the room left without the margin.
  */
-const fitOutput = (request: LLMRequest, limit: SessionContext.Loaded["model"]["limit"]) => {
+const fitOutput = (request: LLMRequest, limit: SessionContext.Loaded["model"]["limit"], estimate?: Estimate) => {
   const current = request.generation?.maxTokens
   if (current === undefined) return request
-  const estimated = estimateRequest(request)
+  const size = estimate ?? { measured: 0, estimated: estimateRequest(request) }
   const maxTokens = Math.min(
     current,
     Math.max(
-      SessionModelRequest.outputLimit(limit, { measured: 0, estimated }),
-      Math.min(SUMMARY_OUTPUT_FLOOR, SessionModelRequest.outputLimit(limit, { measured: estimated, estimated: 0 })),
+      SessionModelRequest.outputLimit(limit, size),
+      Math.min(SUMMARY_OUTPUT_FLOOR, SessionModelRequest.outputLimit(limit, { measured: total(size), estimated: 0 })),
     ),
   )
   if (maxTokens === current) return request

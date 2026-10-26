@@ -1001,6 +1001,137 @@ const enablePrecompute = Effect.gen(function* () {
   return compaction
 })
 
+for (const background of [false, true]) {
+  it.effect(`summary cache prefix uses measured input with old reasoning (background=${background})`, () =>
+    Effect.gen(function* () {
+      requests = []
+      const session = yield* insertSession(Session.ID.make(`ses_measured_prefix_${background}`))
+      const older = measured("Earlier answer", 80_000)
+      const anchor = measured("Latest answer", 156_000)
+      const messages = [
+        textUser("Earlier question"),
+        { ...older, content: [{ type: "reasoning" as const, text: "r".repeat(900_000) }, ...older.content] },
+        textUser("Latest question"),
+        anchor,
+      ]
+      const context = {
+        ...loaded(session, messages),
+        model: { ...resolved, cache: { ttl: "1h" as const } },
+        tools: {
+          definitions: [
+            ToolDefinition.make({ name: "read", description: "Read files", inputSchema: { type: "object" } }),
+          ],
+          execute: () => Effect.die("Compaction must not execute tools"),
+        },
+      }
+      const hooks = yield* PluginHooks.Service
+      for (const name of ["context", "compaction"] as const) {
+        yield* hooks.register("session", name, (event) =>
+          Effect.sync(() => {
+            event.options.thinking = { type: "adaptive" }
+            event.options.reasoningEffort = "high"
+          }),
+        )
+      }
+      const builder = yield* SessionModelRequest.Service
+      const base = SessionModelRequest.baseTranscript({
+        ...context,
+        agent: context.agent.info,
+        messages: background ? messages.slice(0, -1) : messages,
+      })
+      const normal = yield* builder.primary({
+        ...context,
+        agent: context.agent.id,
+        ...base,
+        inputTokens: { measured: 156_100, estimated: 0 },
+      })
+      const compaction = yield* enablePrecompute
+      if (background) {
+        yield* compaction.precompute(Effect.succeed(context))
+        // Joining through compaction waits deterministically for the held request.
+        expect(
+          yield* compaction.compact({ reason: "auto", context, estimate: { measured: 182_000, estimated: 0 } }),
+        ).toEqual({ status: "completed" })
+      } else {
+        expect(yield* compaction.compact({ reason: "manual", context, inputID: SessionMessage.ID.create() })).toEqual({
+          status: "completed",
+        })
+      }
+      expect(requests).toHaveLength(1)
+      expect(requests[0].system).toEqual(normal.request.system)
+      expect(requests[0].tools).toEqual(normal.request.tools)
+      expect(requests[0].messages.slice(0, -1)).toEqual([...normal.request.messages])
+      expect(requests[0].messages.at(-1)?.content).toEqual([
+        { type: "text", text: SessionCompaction.buildPrompt(false) },
+      ])
+      expect(requests[0].providerOptions).toEqual(normal.request.providerOptions)
+      expect(requests[0].model).toEqual(normal.request.model)
+      expect(requests[0].toolChoice).toEqual(normal.request.toolChoice)
+      expect(requests[0].cache).toEqual(normal.request.cache)
+      expect(requests[0].promptCacheKey).toBe(normal.request.promptCacheKey)
+      // The old character estimate also incorrectly cut the summary output to 1,024.
+      expect(requests[0].generation?.maxTokens).toBe(30_000)
+    }),
+  )
+}
+
+it.effect("summary cache prefix still flattens genuinely oversized measured input", () =>
+  Effect.gen(function* () {
+    requests = []
+    const session = yield* insertSession(Session.ID.make("ses_measured_oversized"))
+    const messages = [textUser("x".repeat(900_000)), measured("Latest answer", 240_000)]
+    expect(yield* compactManually(session, messages)).toEqual({ status: "completed" })
+    expect(requests).toHaveLength(1)
+    expect(requests[0].tools).toEqual([])
+    expect(requests[0].messages).toHaveLength(2)
+    expect(JSON.stringify(requests[0].messages[0])).toContain("[User]:")
+    expect(JSON.stringify(requests[0].messages[0])).toContain("characters omitted")
+  }),
+)
+
+for (const change of ["variant", "hook growth"] as const) {
+  it.effect(`summary cache prefix accounts for ${change}`, () =>
+    Effect.gen(function* () {
+      requests = []
+      const session = yield* insertSession(Session.ID.make(`ses_prefix_${change.replace(" ", "_")}`))
+      const older = measured("Earlier answer", 80_000)
+      const context = {
+        ...loaded(session, [
+          textUser("Earlier question"),
+          { ...older, content: [{ type: "reasoning" as const, text: "r".repeat(900_000) }, ...older.content] },
+          textUser("Latest question"),
+          measured("Latest answer", 156_000),
+        ]),
+        model:
+          change === "variant"
+            ? { ...resolved, ref: { ...resolved.ref, variant: Model.VariantID.make("low") } }
+            : resolved,
+        tools: {
+          definitions: [
+            ToolDefinition.make({ name: "read", description: "Read files", inputSchema: { type: "object" } }),
+          ],
+          execute: () => Effect.die("Compaction must not execute tools"),
+        },
+      }
+      if (change === "hook growth") {
+        const hooks = yield* PluginHooks.Service
+        yield* hooks.register("session", "compaction", (event) =>
+          Effect.sync(() => {
+            event.system.push({ type: "text", text: "Additional instructions. ".repeat(6_000) })
+          }),
+        )
+      }
+      const compaction = yield* SessionCompaction.Service
+      expect(yield* compaction.compact({ reason: "manual", context, inputID: SessionMessage.ID.create() })).toEqual({
+        status: "completed",
+      })
+      expect(requests).toHaveLength(1)
+      expect(requests[0].tools).toEqual([])
+      expect(JSON.stringify(requests[0].messages)).toContain("[User]: Earlier question")
+    }),
+  )
+}
+
 it.effect("background summaries stay off unless enabled", () =>
   Effect.gen(function* () {
     requests = []
