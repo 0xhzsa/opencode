@@ -1,12 +1,13 @@
 export * as GoalPlugin from "./goal.js"
 
-import { Message } from "@opencode/ai/effect"
+import { isContextOverflowFailure, Message } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import type { SessionIdleBackground } from "@opencode/plugin/effect/session"
 import type { Session } from "@opencode/schema/session"
 import type { SessionEvent } from "@opencode/schema/session-event"
 import { SessionGoal } from "@opencode/schema/session-goal"
-import { Cause, Clock, Effect, Option, Schema, Stream } from "effect"
+import { isExactRootFallback } from "@opencode/util/session-title-fallback"
+import { Cause, Clock, DateTime, Duration, Effect, FiberMap, Option, Schema, Stream } from "effect"
 import COMPACTION from "./goal/compaction.txt"
 import CONTINUATION from "./goal/continuation.txt"
 import JUDGE from "./goal/judge.txt"
@@ -16,6 +17,10 @@ import REMINDER from "./goal/reminder.txt"
 export const MAX_OBJECTIVE = 4_000
 export const MAX_ROUNDS = 50
 export const MAX_STALLS = 3
+/** How long an active goal may sit idle, waiting on background work that never reports, before it pauses. */
+export const WAIT_LIMIT = Duration.minutes(30)
+/** Recent Sessions checked at startup for goals an earlier server process left active. */
+const SWEEP_LIMIT = 100
 // Identifies this server process. A goal armed by an earlier process comes back paused instead of resuming on its own.
 const boot = crypto.randomUUID()
 
@@ -45,19 +50,33 @@ export const Plugin = define({
       yield* ctx.session.update({ sessionID, metadata: goal ? { ...others, [SessionGoal.KEY]: goal } : others })
     })
 
+    // The loop's own writes only apply to the goal they were decided on. Metadata has no compare-and-set, so this
+    // re-reads first: a `/goal pause`, `clear` or new goal that landed since wins instead of being overwritten.
+    const replace = Effect.fn("GoalPlugin.replace")(function* (sessionID: Session.ID, expected: State, next: State) {
+      const current = yield* read(sessionID)
+      if (current?.id !== expected.id || current.updatedAt !== expected.updatedAt || current.status !== expected.status)
+        return false
+      yield* write(sessionID, next)
+      return true
+    })
+
     const settle = Effect.fn("GoalPlugin.settle")(function* (
       sessionID: Session.ID,
       goal: State,
       status: "paused" | "complete",
       reason: string,
     ) {
-      yield* write(sessionID, { ...goal, status, reason, updatedAt: yield* Clock.currentTimeMillis })
+      yield* replace(sessionID, goal, { ...goal, status, reason, updatedAt: yield* Clock.currentTimeMillis })
     })
 
     const pauseActive = (sessionID: Session.ID, reason: string) =>
       read(sessionID).pipe(
         Effect.flatMap((goal) => (goal?.status === "active" ? settle(sessionID, goal, "paused", reason) : Effect.void)),
       )
+
+    // One compaction per round when the reviewer's request is too large; a second overflow pauses instead. Keyed by
+    // Session, so it holds one round per Session that ever overflowed.
+    const compacted = new Map<Session.ID, string>()
 
     // Whether the model called any tool since the goal's last kickoff or continuation. Without that message in view,
     // for example after a compaction, the round counts as progress.
@@ -94,9 +113,12 @@ export const Plugin = define({
         wait:
           shells.length === 0 ? "" : '{"verdict":"wait","reason":"<the running shell whose result the goal needs>"}\n',
       })
-      const attempt = ctx.session
-        .generate({ sessionID, prompt })
-        .pipe(Effect.map((result) => parseVerdict(result.text)))
+      const attempt = ctx.session.generate({ sessionID, prompt }).pipe(
+        Effect.map((result) => parseVerdict(result.text)),
+        // The reviewer runs right after the last step, before the next step's automatic compaction, so a long final
+        // step can leave more history than the model takes.
+        Effect.catchIf(isContextOverflowFailure, () => Effect.succeed("overflow" as const)),
+      )
       const first = yield* attempt
       if (first !== undefined) return first
       return yield* attempt
@@ -121,6 +143,15 @@ export const Plugin = define({
       // `/goal pause`, `clear` or a new goal may have landed while the reviewer ran.
       const latest = yield* read(sessionID)
       if (latest?.id !== goal.id || latest.status !== "active") return
+      if (verdict === "overflow") {
+        const key = `${latest.id}:${latest.rounds}`
+        if (compacted.get(sessionID) === key)
+          return yield* settle(sessionID, latest, "paused", "The goal reviewer's request is too large for the model")
+        compacted.set(sessionID, key)
+        // The runner compacts before going idle, then runs this hook again on the smaller history.
+        yield* ctx.session.compact({ sessionID })
+        return
+      }
       if (verdict === undefined)
         return yield* settle(sessionID, latest, "paused", "The goal reviewer gave no usable verdict")
       if (verdict.verdict === "wait" && background.length > 0) return
@@ -139,7 +170,7 @@ export const Plugin = define({
         reason: verdict.reason,
         updatedAt: yield* Clock.currentTimeMillis,
       }
-      yield* write(sessionID, next)
+      if (!(yield* replace(sessionID, latest, next))) return
       // No description: timelines hide the continuation, and the pinned goal shows that the loop is still running.
       yield* ctx.session.synthetic({
         sessionID,
@@ -165,7 +196,8 @@ export const Plugin = define({
     yield* ctx.session.hook("compaction", (event) =>
       read(event.sessionID).pipe(
         Effect.map((goal) => {
-          if (goal?.status !== "active") return
+          // A native compaction may keep this message in the window later requests replay, after the goal is gone.
+          if (goal?.status !== "active" || event.native) return
           event.messages.push(Message.user(render(COMPACTION, { objective: escape(goal.objective) })))
         }),
         Effect.catchCause((cause) => Effect.logWarning("failed to keep the goal in the summary", { cause })),
@@ -187,12 +219,55 @@ export const Plugin = define({
       ),
     )
 
+    // An active goal only sits idle while it waits on background work, whose notice wakes the Session. If nothing has
+    // run for WAIT_LIMIT (a hung subagent, a shell that never exits, a missed wake), pause instead of staying active.
+    const timers = yield* FiberMap.make<string>()
+    const watch = (sessionID: Session.ID) =>
+      read(sessionID).pipe(
+        Effect.flatMap((goal) =>
+          goal?.status !== "active"
+            ? Effect.void
+            : FiberMap.run(
+                timers,
+                sessionID,
+                Effect.sleep(WAIT_LIMIT).pipe(
+                  Effect.andThen(
+                    settle(
+                      sessionID,
+                      goal,
+                      "paused",
+                      `Nothing ran for ${Duration.toMinutes(WAIT_LIMIT)} minutes while the goal waited on background work`,
+                    ),
+                  ),
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("failed to pause a waiting goal", { sessionID, cause }),
+                  ),
+                ),
+              ).pipe(Effect.asVoid),
+        ),
+      )
+
     yield* ctx.event.subscribe().pipe(
       Stream.filter(
-        (event): event is SessionEvent.Execution.Interrupted | SessionEvent.Execution.Failed =>
-          event.type === "session.execution.interrupted" || event.type === "session.execution.failed",
+        (
+          event,
+        ): event is
+          | SessionEvent.Execution.Started
+          | SessionEvent.Execution.Succeeded
+          | SessionEvent.Execution.Interrupted
+          | SessionEvent.Execution.Failed =>
+          event.type === "session.execution.started" ||
+          event.type === "session.execution.succeeded" ||
+          event.type === "session.execution.interrupted" ||
+          event.type === "session.execution.failed",
       ),
       Stream.runForEach((event) => {
+        const sessionID = event.data.sessionID
+        if (event.type === "session.execution.started") return FiberMap.remove(timers, sessionID)
+        if (event.type === "session.execution.succeeded")
+          return watch(sessionID).pipe(
+            Effect.catchCause((cause) => Effect.logWarning("failed to watch a waiting goal", { sessionID, cause })),
+          )
         // Shutdown keeps the goal active; the next process sees the boot change and pauses it.
         if (event.type === "session.execution.interrupted" && event.data.reason !== "user") return Effect.void
         const reason =
@@ -205,6 +280,24 @@ export const Plugin = define({
           ),
         )
       }),
+      Effect.forkScoped({ startImmediately: true }),
+    )
+
+    // A goal an earlier process left active would show as running while nothing drives it, unless something wakes the
+    // Session. Pause those among recent Sessions now; the boot check in the hook covers the rest when they wake.
+    yield* ctx.session.list({ limit: SWEEP_LIMIT, order: "desc" }).pipe(
+      Effect.flatMap((page) =>
+        Effect.forEach(
+          page.data,
+          (session) => {
+            const goal = SessionGoal.fromMetadata(session.id, session.metadata)
+            if (goal?.status !== "active" || goal.boot === boot) return Effect.void
+            return settle(session.id, goal, "paused", "The server restarted while the goal was active")
+          },
+          { discard: true },
+        ),
+      ),
+      Effect.catchCause((cause) => Effect.logWarning("failed to pause goals left by an earlier process", { cause })),
       Effect.forkScoped({ startImmediately: true }),
     )
 
@@ -221,7 +314,13 @@ export const Plugin = define({
 
             if (control === "pause") {
               if (goal?.status !== "active") return yield* Effect.fail(new Error("No active goal to pause."))
-              return yield* settle(input.sessionID, goal, "paused", "Paused by the user")
+              // The user's command wins over the loop, so it writes without the loop's guard.
+              return yield* write(input.sessionID, {
+                ...goal,
+                status: "paused",
+                reason: "Paused by the user",
+                updatedAt: yield* Clock.currentTimeMillis,
+              })
             }
             if (control === "resume") {
               if (goal?.status !== "paused") return yield* Effect.fail(new Error("No paused goal to resume."))
@@ -263,6 +362,15 @@ export const Plugin = define({
               updatedAt: yield* Clock.currentTimeMillis,
             }
             yield* write(input.sessionID, created)
+            const session = yield* ctx.session.get({ sessionID: input.sessionID })
+            // Titles come from the first user message, and a notice kickoff is not one, so name the Session here.
+            if (
+              isExactRootFallback({
+                title: session.title,
+                time: { created: DateTime.toEpochMillis(session.time.created) },
+              })
+            )
+              yield* ctx.session.update({ sessionID: input.sessionID, title: truncate(text, 60) })
             const kickoff = render(KICKOFF, { objective: escape(text) })
             const metadata = { source: "goal", goalID: created.id }
             const attached = [input.prompt.files, input.prompt.agents, input.prompt.skills].some(
@@ -281,7 +389,7 @@ export const Plugin = define({
             yield* ctx.session.synthetic({
               sessionID: input.sessionID,
               text: kickoff,
-              description: `Goal: ${text.length > 120 ? `${text.slice(0, 119)}…` : text}`,
+              description: `Goal: ${truncate(text, 120)}`,
               metadata,
               delivery: input.delivery,
             })
@@ -336,6 +444,11 @@ function unquote(text: string) {
 // One pass, so an objective that contains a placeholder is not expanded again.
 function render(template: string, values: Record<string, string>) {
   return template.replace(/\$\{(\w+)\}/g, (match, key: string) => values[key] ?? match)
+}
+
+function truncate(text: string, length: number) {
+  const line = text.replace(/\s+/g, " ")
+  return line.length > length ? `${line.slice(0, length - 1)}…` : line
 }
 
 function escape(text: string) {

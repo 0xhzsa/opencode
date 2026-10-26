@@ -2,7 +2,7 @@ import { describe, expect } from "bun:test"
 import path from "path"
 import { pathToFileURL } from "url"
 import { Deferred, Effect, Layer, Option, Schedule, Schema, Stream } from "effect"
-import { LanguageModel, type LLMRequest } from "@opencode/ai/effect"
+import { AIError, InvalidRequestError, LanguageModel, type LLMRequest } from "@opencode/ai/effect"
 import { OpenAIChat } from "@opencode/ai/protocols/openai-chat"
 import { TestLLM } from "@opencode/ai/testing"
 import { Agent } from "@opencode/core/agent"
@@ -327,6 +327,70 @@ describe("goal plugin", () => {
     }),
   )
 
+  it.live("names an untitled session after the objective", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({
+        location: { directory: AbsolutePath.make(tmp.path) },
+        agent: Agent.ID.make("build"),
+        model,
+      })
+      yield* serve(reviewer('{"verdict":"done","reason":"Shipped."}').respond)
+
+      yield* sessions.command({ sessionID: session.id, command: "goal", text: "Ship the release notes" })
+      yield* sessions.wait(session.id)
+
+      expect((yield* sessions.get(session.id)).title).toBe("Ship the release notes")
+    }),
+  )
+
+  it.live("compacts and asks again when the reviewer's request is too large", () =>
+    Effect.gen(function* () {
+      const session = yield* project()
+      const sessions = yield* Session.Service
+      const reviews = { count: 0 }
+      yield* serve((request) => {
+        if (JSON.stringify(request.messages.at(-1)).includes("summar"))
+          return TestLLM.text("## Objective\n- Make CI green", "summary")
+        if (!isReview(request)) return TestLLM.text("Working on it", "work")
+        reviews.count++
+        return reviews.count === 1 ? overflow() : TestLLM.text('{"verdict":"done","reason":"CI is green."}', "review")
+      })
+
+      yield* sessions.command({ sessionID: session.id, command: "goal", text: "Make CI green" })
+      yield* sessions.wait(session.id)
+
+      expect(reviews.count).toBe(2)
+      expect(yield* goal(session.id)).toMatchObject({ status: "complete", reason: "CI is green." })
+      expect(
+        (yield* sessions.messages({ sessionID: session.id, order: "asc" })).filter(
+          (message) => message.type === "compaction",
+        ),
+      ).toMatchObject([{ status: "completed" }])
+    }),
+  )
+
+  it.live("pauses when the reviewer's request is too large even after compacting", () =>
+    Effect.gen(function* () {
+      const session = yield* project()
+      const sessions = yield* Session.Service
+      yield* serve((request) => {
+        if (JSON.stringify(request.messages.at(-1)).includes("summar"))
+          return TestLLM.text("## Objective\n- Make CI green", "summary")
+        return isReview(request) ? overflow() : TestLLM.text("Working on it", "work")
+      })
+
+      yield* sessions.command({ sessionID: session.id, command: "goal", text: "Make CI green" })
+      yield* sessions.wait(session.id)
+
+      expect(yield* goal(session.id)).toMatchObject({
+        status: "paused",
+        reason: "The goal reviewer's request is too large for the model",
+      })
+    }),
+  )
+
   it.live("pauses an active goal when the user stops the session", () =>
     Effect.gen(function* () {
       const session = yield* project()
@@ -504,6 +568,12 @@ function withTools(verdicts: ReturnType<typeof reviewer>) {
       ? TestLLM.text("Checked.", "work")
       : TestLLM.tool(`call-${verdicts.asked()}`, "missing_tool", {})
   }
+}
+
+function overflow() {
+  return TestLLM.failAfter(
+    new AIError({ reason: new InvalidRequestError({ message: "Too long", classification: "context-overflow" }) }),
+  )
 }
 
 function isReview(request: LLMRequest) {
