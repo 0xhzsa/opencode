@@ -1,14 +1,17 @@
 export * as GoalPlugin from "./goal.js"
 
+import { Message } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import type { SessionIdleBackground } from "@opencode/plugin/effect/session"
 import type { Session } from "@opencode/schema/session"
 import type { SessionEvent } from "@opencode/schema/session-event"
 import { SessionGoal } from "@opencode/schema/session-goal"
 import { Cause, Clock, Effect, Option, Schema, Stream } from "effect"
+import COMPACTION from "./goal/compaction.txt"
 import CONTINUATION from "./goal/continuation.txt"
 import JUDGE from "./goal/judge.txt"
 import KICKOFF from "./goal/kickoff.txt"
+import REMINDER from "./goal/reminder.txt"
 
 export const MAX_OBJECTIVE = 4_000
 export const MAX_ROUNDS = 50
@@ -158,6 +161,32 @@ export const Plugin = define({
       ),
     )
 
+    // Compaction can summarize the kickoff away. Ask the summary to keep the goal and its progress.
+    yield* ctx.session.hook("compaction", (event) =>
+      read(event.sessionID).pipe(
+        Effect.map((goal) => {
+          if (goal?.status !== "active") return
+          event.messages.push(Message.user(render(COMPACTION, { objective: escape(goal.objective) })))
+        }),
+        Effect.catchCause((cause) => Effect.logWarning("failed to keep the goal in the summary", { cause })),
+      ),
+    )
+
+    // Until the next continuation restates the objective, a compacted history may not show it. Add it near the tail,
+    // without persisting it, so the cached prefix stays warm and the reminder stops once a continuation lands.
+    yield* ctx.session.hook("context", (event) =>
+      read(event.sessionID).pipe(
+        Effect.map((goal) => {
+          if (goal?.status !== "active") return
+          const objective = objectiveBlock(goal.objective)
+          if (event.messages.some((message) => message.role === "user" && textOf(message).includes(objective))) return
+          const at = event.messages.at(-1)?.role === "user" ? event.messages.length - 1 : event.messages.length
+          event.messages.splice(at, 0, Message.user(render(REMINDER, { objective: escape(goal.objective) })))
+        }),
+        Effect.catchCause((cause) => Effect.logWarning("failed to remind the model of the goal", { cause })),
+      ),
+    )
+
     yield* ctx.event.subscribe().pipe(
       Stream.filter(
         (event): event is SessionEvent.Execution.Interrupted | SessionEvent.Execution.Failed =>
@@ -267,6 +296,15 @@ function continuation(goal: State, feedback: ReadonlyArray<string | undefined>) 
     objective: escape(goal.objective),
     feedback: feedback.filter(Boolean).join("\n"),
   })
+}
+
+// Every goal prompt wraps the objective the same way, so this marks the objective as visible to the model.
+function objectiveBlock(objective: string) {
+  return `<untrusted_objective>\n${escape(objective)}\n</untrusted_objective>`
+}
+
+function textOf(message: Message) {
+  return message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
 }
 
 function sameReason(previous: string | undefined, next: string) {

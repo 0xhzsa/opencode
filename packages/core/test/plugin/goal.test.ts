@@ -256,6 +256,77 @@ describe("goal plugin", () => {
     }),
   )
 
+  it.live("keeps the goal through a compaction and reminds the model until a continuation restates it", () =>
+    Effect.gen(function* () {
+      const session = yield* project()
+      const sessions = yield* Session.Service
+      const llm = yield* TestLLM.Test
+      const summarize = (request: LLMRequest) => JSON.stringify(request.messages.at(-1)).includes("summar")
+      yield* serve((request) =>
+        summarize(request) ? TestLLM.text("## Objective\n- Make CI green", "summary") : TestLLM.text("On it.", "work"),
+      )
+      yield* sessions.prompt({ sessionID: session.id, text: "Look at the failing CI job" })
+      yield* sessions.wait(session.id)
+      yield* sessions.setMetadata({
+        sessionID: session.id,
+        metadata: {
+          [SessionGoal.KEY]: {
+            id: "goal-compacted",
+            sessionID: session.id,
+            objective: "Make CI green",
+            status: "active",
+            rounds: 2,
+            maxRounds: 50,
+            boot: "an-earlier-process",
+            updatedAt: 0,
+          },
+        },
+      })
+
+      yield* sessions.compact({ sessionID: session.id })
+      yield* sessions.wait(session.id)
+      const compaction = (yield* llm.requests()).findLast(summarize)
+      // The note sits right before the summary prompt, after the conversation.
+      expect(JSON.stringify(compaction?.messages.at(-2))).toContain(
+        "This session has an active goal that the user set.",
+      )
+      expect(JSON.stringify(compaction?.messages.at(-2))).toContain("Make CI green")
+
+      const before = (yield* llm.requests()).length
+      yield* sessions.prompt({ sessionID: session.id, text: "Carry on" })
+      yield* sessions.wait(session.id)
+      const next = (yield* llm.requests()).slice(before).find((request) => !summarize(request) && !isReview(request))
+      expect(JSON.stringify(next?.messages)).toContain("A goal is active for this session. Keep working toward it.")
+      // The reminder goes before the user's prompt and is not saved to the Session.
+      expect(JSON.stringify(next?.messages.at(-1))).toContain("Carry on")
+      expect(
+        (yield* sessions.messages({ sessionID: session.id, order: "asc" })).some(
+          (message) => message.type === "synthetic" && message.text.includes("Keep working toward it."),
+        ),
+      ).toBe(false)
+    }),
+  )
+
+  it.live("does not remind the model while the objective is in view", () =>
+    Effect.gen(function* () {
+      const session = yield* project()
+      const sessions = yield* Session.Service
+      const llm = yield* TestLLM.Test
+      yield* serve(
+        reviewer('{"verdict":"continue","reason":"Not yet."}', '{"verdict":"done","reason":"Done."}').respond,
+      )
+
+      yield* sessions.command({ sessionID: session.id, command: "goal", text: "Tidy the README" })
+      yield* sessions.wait(session.id)
+
+      expect(
+        (yield* llm.requests()).some((request) =>
+          JSON.stringify(request.messages).includes("A goal is active for this session. Keep working toward it."),
+        ),
+      ).toBe(false)
+    }),
+  )
+
   it.live("pauses an active goal when the user stops the session", () =>
     Effect.gen(function* () {
       const session = yield* project()
