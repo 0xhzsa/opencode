@@ -56,6 +56,7 @@ test("exposes every standard HTTP API group", () => {
     "mcp",
     "file",
     "persistentPty",
+    "media",
     "migration",
     "usage",
     "config",
@@ -73,7 +74,8 @@ test("exposes every standard HTTP API group", () => {
   expect(Object.keys(client.experimental.usage)).toEqual(["limits"])
   expect(Object.keys(client.experimental.mcp)).toEqual(["add", "remove", "connect", "disconnect", "client"])
   expect(Object.keys(client.experimental.integration.wellknown)).toEqual(["add"])
-  expect(Object.keys(client.experimental.file)).toEqual(["write"])
+  expect(Object.keys(client.experimental.file)).toEqual(["write", "watch", "unwatch"])
+  expect(Object.keys(client.experimental.media)).toEqual(["get"])
   expect(client.experimental.persistentPty.read).toBeFunction()
 })
 
