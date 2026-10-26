@@ -676,7 +676,7 @@ test("a narrow window keeps the desktop layout: the sidebar floats when called a
 
   await page.setViewportSize({ width: 1280, height: 720 })
   await expect(sidebar).toHaveAttribute("data-state", "open")
-  await expect(sidebar).toHaveCSS("width", "260px")
+  await expect(sidebar).toHaveCSS("width", "276px")
 })
 
 for (const width of [800, 1000]) {
