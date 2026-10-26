@@ -45,9 +45,14 @@ describe("RuntimeStats", () => {
       const backlog = () => stats.read()["bus.live.backlog"]
       const started = yield* Deferred.make<void>()
       const release = yield* Deferred.make<void>()
+      const drained = yield* Deferred.make<void>()
       // Takes the first event, then blocks: every later event stays buffered for it.
-      yield* bus.subscribe().pipe(
-        Stream.runForEach(() => Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))),
+      yield* bus.subscribe([Ping]).pipe(
+        Stream.runForEach((event) =>
+          event.data.n === 50
+            ? Deferred.succeed(drained, undefined)
+            : Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        ),
         Effect.forkScoped,
       )
       yield* Effect.yieldNow
@@ -56,7 +61,8 @@ describe("RuntimeStats", () => {
       for (let n = 1; n <= 50; n++) yield* bus.publish(Ping, { n })
       expect(backlog()).toBeGreaterThanOrEqual(49)
       yield* Deferred.succeed(release, undefined)
-      yield* Effect.sleep("10 millis")
+      // The subscriber has taken the last event, so nothing is left buffered for it.
+      yield* Deferred.await(drained)
       expect(backlog()).toBe(0)
     }),
   )
