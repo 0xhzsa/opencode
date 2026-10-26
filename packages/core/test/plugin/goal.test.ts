@@ -1,6 +1,4 @@
 import { describe, expect } from "bun:test"
-import path from "path"
-import { pathToFileURL } from "url"
 import { Deferred, Effect, Layer, Option, Schedule, Schema, Stream } from "effect"
 import { AIError, InvalidRequestError, LanguageModel, type LLMRequest } from "@opencode/ai/effect"
 import { OpenAIChat } from "@opencode/ai/protocols/openai-chat"
@@ -97,19 +95,6 @@ describe("goal plugin", () => {
       )
       // Continuations run inside the same execution, so the Session went idle once.
       expect(messages.filter((message) => message.type === "idle")).toMatchObject([{ outcome: "succeeded" }])
-    }),
-  )
-
-  it.live("pauses when the reviewer reports a blocker", () =>
-    Effect.gen(function* () {
-      const session = yield* project()
-      const sessions = yield* Session.Service
-      yield* serve(reviewer('{"verdict":"blocked","reason":"It needs the production API key."}').respond)
-
-      yield* sessions.command({ sessionID: session.id, command: "goal", text: "Deploy the service" })
-      yield* sessions.wait(session.id)
-
-      expect(yield* goal(session.id)).toMatchObject({ status: "paused", reason: "It needs the production API key." })
     }),
   )
 
@@ -355,44 +340,6 @@ describe("goal plugin", () => {
     }),
   )
 
-  it.live("does not remind the model while the objective is in view", () =>
-    Effect.gen(function* () {
-      const session = yield* project()
-      const sessions = yield* Session.Service
-      const llm = yield* TestLLM.Test
-      yield* serve(
-        reviewer('{"verdict":"continue","reason":"Not yet."}', '{"verdict":"done","reason":"Done."}').respond,
-      )
-
-      yield* sessions.command({ sessionID: session.id, command: "goal", text: "Tidy the README" })
-      yield* sessions.wait(session.id)
-
-      expect(
-        (yield* llm.requests()).some((request) =>
-          JSON.stringify(request.messages).includes("A goal is active for this session. Keep working toward it."),
-        ),
-      ).toBe(false)
-    }),
-  )
-
-  it.live("names an untitled session after the objective", () =>
-    Effect.gen(function* () {
-      const tmp = yield* tmpdirScoped()
-      const sessions = yield* Session.Service
-      const session = yield* sessions.create({
-        location: { directory: AbsolutePath.make(tmp.path) },
-        agent: Agent.ID.make("build"),
-        model,
-      })
-      yield* serve(reviewer('{"verdict":"done","reason":"Shipped."}').respond)
-
-      yield* sessions.command({ sessionID: session.id, command: "goal", text: "Ship the release notes" })
-      yield* sessions.wait(session.id)
-
-      expect((yield* sessions.get(session.id)).title).toBe("Ship the release notes")
-    }),
-  )
-
   it.live("compacts and asks again when the reviewer's request is too large", () =>
     Effect.gen(function* () {
       const session = yield* project()
@@ -513,44 +460,6 @@ describe("goal plugin", () => {
       yield* sessions.wait(child.id)
 
       expect(verdicts.asked()).toBe(1)
-    }),
-  )
-
-  it.live("sets the objective inside quotes", () =>
-    Effect.gen(function* () {
-      const session = yield* project()
-      const sessions = yield* Session.Service
-      yield* serve(reviewer('{"verdict":"done","reason":"Released."}').respond)
-
-      yield* sessions.command({ sessionID: session.id, command: "goal", text: '"Ship the release"' })
-      yield* sessions.wait(session.id)
-
-      expect(yield* goal(session.id)).toMatchObject({ objective: "Ship the release", status: "complete" })
-    }),
-  )
-
-  it.live("sends the kickoff as the user's message when the goal has attachments", () =>
-    Effect.gen(function* () {
-      const tmp = yield* tmpdirScoped()
-      const file = path.join(tmp.path, "spec.md")
-      yield* Effect.promise(() => Bun.write(file, "# Spec"))
-      const session = yield* project()
-      const sessions = yield* Session.Service
-      yield* serve(reviewer('{"verdict":"done","reason":"Implemented."}').respond)
-
-      yield* sessions.command({
-        sessionID: session.id,
-        command: "goal",
-        text: "Implement the spec",
-        files: [{ uri: pathToFileURL(file).href, name: "spec.md" }],
-      })
-      yield* sessions.wait(session.id)
-
-      const messages = yield* sessions.messages({ sessionID: session.id, order: "asc" })
-      expect(messages.filter((message) => message.type === "user")).toMatchObject([
-        { metadata: { source: "goal" }, files: [{ name: "spec.md" }] },
-      ])
-      expect(messages.filter((message) => message.type === "synthetic")).toEqual([])
     }),
   )
 

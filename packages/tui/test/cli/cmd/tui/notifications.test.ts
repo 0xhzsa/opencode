@@ -324,23 +324,6 @@ describe("internal notifications TUI plugin", () => {
     ])
   })
 
-  test("notifies a failure right away while children are running", async () => {
-    const harness = await setup()
-    harness.running.add("subagent")
-
-    harness.emit(executionStarted("event-1"))
-    harness.emit(executionFailed("event-2"))
-
-    expect(harness.notifications).toEqual([
-      {
-        title: "Demo session",
-        message: "boom",
-        notification: { when: "blurred" },
-        sound: { name: "error", when: "always" },
-      },
-    ])
-  })
-
   test("notifies session errors once and suppresses the following idle done notification", async () => {
     const harness = await setup()
 

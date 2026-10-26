@@ -11,14 +11,10 @@ export type GoalAction = "pause" | "resume" | "clear"
 
 // The Session's `/goal` as a capsule in the composer lane: just its status, opening a popover with the objective, the
 // last reason and the actions that apply.
-export function SessionGoalPill(props: {
-  goal: SessionGoal.State
-  onAction: (action: GoalAction) => void
-  defaultOpen?: boolean
-}) {
+export function SessionGoalPill(props: { goal: SessionGoal.State; onAction: (action: GoalAction) => void }) {
   const language = useLanguage()
   const alignment = useComposerLaneAlignment()
-  const [state, setState] = createStore({ open: props.defaultOpen ?? false })
+  const [state, setState] = createStore({ open: false })
   const placement = () => (({ center: "top", start: "top-start", end: "top-end" }) as const)[alignment()]
 
   const label = () => {

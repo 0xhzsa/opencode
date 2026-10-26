@@ -17,7 +17,7 @@ function goalColor(theme: Plugin.Context["theme"], goal: SessionGoal.State) {
   return theme.text.muted
 }
 
-export function goalLabel(goal: SessionGoal.State) {
+function goalLabel(goal: SessionGoal.State) {
   if (goal.status === "paused") return "goal paused"
   if (goal.status === "complete") return "goal met"
   return "goal"
@@ -52,7 +52,7 @@ export function GoalStatus(props: { context: Plugin.Context; sessionID: string }
 }
 
 /** Opens the goal dialog for a Session, or explains how to start one. */
-export function showGoal(context: Plugin.Context, sessionID: string) {
+function showGoal(context: Plugin.Context, sessionID: string) {
   if (!sessionGoal(context, sessionID)) {
     context.ui.toast.show({ message: "No goal is set. Start one with /goal <objective>.", variant: "info" })
     return

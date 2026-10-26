@@ -9,8 +9,6 @@ import {
 import { SessionActivityChips, type SessionActivityItem } from "@/session/composer/activity-chips"
 import { SessionComposerLane } from "@/session/composer/composer-lane"
 import { SessionTodoPill } from "@/session/composer/todo-pill"
-import { SessionGoalPill, type GoalAction } from "@/session/composer/goal-pill"
-import type { SessionGoal } from "@opencode/schema/session-goal"
 import type { Todo } from "@/session/composer/todos"
 import { SettingsProvider } from "@/settings/model"
 import { SubagentBar } from "@/session/composer/subagent-bar"
@@ -103,7 +101,6 @@ export type SessionPreviewProps = {
     onStop?: (item: SessionActivityItem) => void
   }
   todos?: { items: Todo[]; open?: boolean }
-  goal?: { state: SessionGoal.State; open?: boolean; onAction?: (action: GoalAction) => void }
   timelineDetail?: TimelineDetail
   /** Content for the side panel, shown beside the timeline while present. */
   side?: JSX.Element
@@ -288,14 +285,17 @@ function SessionSurfaceState(props: SessionPreviewProps & { onReset: () => void 
                     "hidden md:flex": state.reviewOpened,
                   }}
                 >
-                  <div data-slot="story-timeline" class="min-h-0 flex-1 overflow-y-auto py-6">
-                    <SessionTimeline
-                      document={props.document}
-                      timelineDetail={props.timelineDetail}
-                      editToolDefaultOpen
-                      shellToolDefaultOpen
-                      class="mx-auto w-full max-w-[840px]"
-                    />
+                  {/* The padding is inside the scroller, so a tall dock below can shrink the timeline to nothing. */}
+                  <div data-slot="story-timeline" class="min-h-0 flex-1 overflow-y-auto">
+                    <div class="py-6">
+                      <SessionTimeline
+                        document={props.document}
+                        timelineDetail={props.timelineDetail}
+                        editToolDefaultOpen
+                        shellToolDefaultOpen
+                        class="mx-auto w-full max-w-[840px]"
+                      />
+                    </div>
                   </div>
                   <SessionComposerRegion
                     controller={region}
@@ -328,19 +328,6 @@ function SessionSurfaceState(props: SessionPreviewProps & { onReset: () => void 
                           />
                           <Show when={props.todos} keyed>
                             {(todos) => <SessionTodoPill todos={todos.items} defaultOpen={todos.open} />}
-                          </Show>
-                          <Show when={props.goal}>
-                            {(goal) => (
-                              <SessionGoalPill
-                                goal={goal().state}
-                                defaultOpen={goal().open}
-                                onAction={(action) =>
-                                  goal().onAction
-                                    ? goal().onAction?.(action)
-                                    : setState("activity", `Goal action (local only): ${action}`)
-                                }
-                              />
-                            )}
                           </Show>
                         </SessionComposerLane>
                       </SettingsProvider>

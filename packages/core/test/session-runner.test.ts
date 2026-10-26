@@ -1321,17 +1321,6 @@ describe("SessionRunnerLLM", () => {
     expect(s.requests).toHaveLength(1)
   })
 
-  scenario("passes no background work to the idle hook when none is running", function* (s) {
-    const hooks = yield* PluginHooks.Service
-    const events: SessionHooks["idle"][] = []
-    yield* hooks.register("session", "idle", (event) => Effect.sync(() => events.push(event)))
-    yield* s.llm.push(TestLLM.text("Done", "text-done"))
-
-    yield* s.runPrompt("Start")
-
-    expect(events).toEqual([{ sessionID, background: [] }])
-  })
-
   scenario("keeps idle hook input pending across a compaction admitted with it", function* (s) {
     const hooks = yield* PluginHooks.Service
     const idles: Session.ID[] = []

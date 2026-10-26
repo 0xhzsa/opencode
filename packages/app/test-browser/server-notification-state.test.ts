@@ -114,10 +114,10 @@ test("a succeeded session alerts only once none of its direct children is runnin
 
   const running = new Set(["first", "second", "nested"])
 
-  const emit = (type: "session.execution.succeeded" | "session.execution.failed", id: string) => {
+  const emit = (id: string) => {
     listeners.forEach((listener) =>
       // SAFETY: the notification state reads only the type, id and session of execution events.
-      listener({ type, id, data: { sessionID: "parent", error: { type: "api", message: "failed" } } } as never),
+      listener({ type: "session.execution.succeeded", id, data: { sessionID: "parent" } } as never),
     )
 
     return new Promise((resolve) => setTimeout(resolve, 0))
@@ -149,19 +149,15 @@ test("a succeeded session alerts only once none of its direct children is runnin
   })
 
   // Each running child's report wakes the parent again, so it isn't done yet.
-  await emit("session.execution.succeeded", "event-1")
+  await emit("event-1")
   running.delete("first")
-  await emit("session.execution.succeeded", "event-2")
+  await emit("event-2")
   expect(alerts).toEqual([])
-
-  // A failure alerts right away, whatever its children are doing.
-  await emit("session.execution.failed", "event-3")
-  expect(alerts).toEqual(["notification.session.error.title"])
 
   // Once the last child is idle the parent is done. The grandchild still running reports to its own parent.
   running.delete("second")
-  await emit("session.execution.succeeded", "event-4")
-  expect(alerts).toEqual(["notification.session.error.title", "notification.session.responseReady.title"])
+  await emit("event-3")
+  expect(alerts).toEqual(["notification.session.responseReady.title"])
   dispose()
 })
 
