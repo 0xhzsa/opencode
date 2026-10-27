@@ -208,8 +208,7 @@ test("branch search keeps results on screen while a query is pending", async ({ 
   const search = page.getByRole("combobox", { name: "Search branches", exact: true })
   const options = page.getByRole("option")
   await expect(options).toHaveCount(4)
-  const resizing = page.getByRole("listbox", { includeHidden: true }).locator("..").locator("..")
-  await expect(resizing).toHaveCSS("transition-property", "none")
+  const panel = page.getByRole("dialog")
   // Record any moment the list renders without rows, however brief.
   await page.getByRole("listbox").evaluate((list) => {
     const observer = new MutationObserver(() => {
@@ -224,35 +223,39 @@ test("branch search keeps results on screen while a query is pending", async ({ 
   await search.press("ArrowDown")
   await expect(next).toHaveAttribute("aria-selected", "true")
   await search.pressSequentially("release")
-  await expect(resizing).toHaveCSS("transition-property", "height")
   await expect(search).toHaveAttribute("aria-busy", "true")
   await expect(options).toHaveText(["release/base", "release/next"])
   await expect(next).toHaveAttribute("aria-selected", "true")
   await search.press("ControlOrMeta+a")
   await search.press("Backspace")
   await expect(options).toHaveCount(4)
-  await expect(resizing).toHaveCSS("transition-property", "height")
   await search.pressSequentially("quotes")
   await expect(options).toHaveText(["timeline-quotes"])
   await search.pressSequentially("-missing")
   await expect(options).toHaveText(["timeline-quotes"])
   await expect(page.getByRole("listbox")).not.toHaveAttribute("data-emptied")
 
-  const singleHeight = await page
-    .getByRole("listbox")
-    .locator("..")
-    .evaluate((element) => element.getBoundingClientRect().height)
-
   held.resolve([])
   await expect(page.getByText("No results found", { exact: true })).toBeVisible()
   await expect(search).toHaveAttribute("aria-busy", "false")
-  await expect(resizing).toHaveCSS("transition-property", "none")
-  expect(
-    await page
-      .getByText("No results found", { exact: true })
-      .locator("..")
-      .evaluate((element) => element.getBoundingClientRect().height),
-  ).toBe(singleHeight)
+})
+
+test("the empty branch search state is as tall as a single result", async ({ page }) => {
+  await openWorktreeDraft(page, {
+    name: "BranchEmptyHeight",
+    vcs: () => ({ current: "dev", default: "dev" }),
+    branches: () => ["dev"],
+  })
+
+  await page.getByRole("button", { name: "from dev", exact: true }).click()
+  await expect(page.getByRole("option")).toHaveCount(1)
+  const panel = page.getByRole("dialog")
+  // Measured on open, before any search animates the panel.
+  const single = await panel.evaluate((element) => element.getBoundingClientRect().height)
+
+  await page.getByRole("combobox", { name: "Search branches", exact: true }).fill("missing")
+  await expect(page.getByText("No results found", { exact: true })).toBeVisible()
+  await expect.poll(() => panel.evaluate((element) => element.getBoundingClientRect().height)).toBe(single)
 })
 
 test("backspacing keeps confirmed branch results until the broader search answers", async ({ page }) => {
