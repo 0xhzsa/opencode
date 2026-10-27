@@ -1400,3 +1400,104 @@ describe("jobs run to completion", () => {
     expect(failure.kind).toBe("TimeoutExceeded")
   })
 })
+
+describe("deadlock detection", () => {
+  const deadlock = "can never settle"
+
+  test("awaiting a promise nothing can resolve fails at once instead of hanging", async () => {
+    const failure = await error(`const id = await tools.host.echo({ id: 1 })
+await new Promise((resolve) => resolve)`)
+    expect(failure.kind).toBe("ExecutionFailure")
+    expect(failure.message).toContain(deadlock)
+    expect(failure.message).toContain("Timers aren't available")
+    expect(failure.location).toEqual({ line: 2, column: 1 })
+  })
+
+  test("program code cannot catch the deadlock and keep going", async () => {
+    const failure = await error(`
+      try { await new Promise(() => {}) } catch { return "caught" }
+    `)
+    expect(failure.message).toContain(deadlock)
+  })
+
+  test("a deadlock inside an async function, a returned promise, and Promise.all is detected", async () => {
+    for (const code of [
+      `const wait = async () => { await new Promise(() => {}) }; await wait()`,
+      `return new Promise(() => {})`,
+      `return await Promise.all([tools.host.echo({ id: 1 }), new Promise(() => {})])`,
+      `return await Promise.race([new Promise(() => {}), new Promise(() => {})])`,
+      `return await Promise.any([Promise.reject(1), new Promise(() => {})])`,
+      `const { promise } = Promise.withResolvers(); return await promise.then((value) => value)`,
+    ]) {
+      expect((await error(code)).message).toContain(deadlock)
+    }
+  })
+
+  test("a deadlock is detected once an un-awaited tool call finishes", async () => {
+    const trace = makeTrace()
+    const failure = await error(
+      `
+        tools.host.echo({ id: 1 })
+        await new Promise(() => {})
+      `,
+      { trace },
+    )
+    expect(failure.message).toContain(deadlock)
+    expect(trace.completed).toBe(1)
+  })
+
+  test("a suspended generator does not hide a deadlock", async () => {
+    const failure = await error(`
+      function* numbers() { yield 1; yield 2 }
+      const iterator = numbers()
+      iterator.next()
+      await new Promise(() => {})
+    `)
+    expect(failure.message).toContain(deadlock)
+  })
+
+  test("a hand-made promise that a pending tool call resolves later is not a deadlock", async () => {
+    expect(
+      await value(`
+        let resolve
+        const later = new Promise((done) => { resolve = done })
+        tools.host.gated({ id: 1 }).then((id) => resolve(id * 10))
+        const opener = async () => {
+          await tools.host.echo({ id: 2 })
+          await tools.host.open({ id: 1 })
+        }
+        opener()
+        return await later
+      `),
+    ).toBe(10)
+  })
+
+  test("Promise.race over a never-settling promise and a tool call settles with the tool call", async () => {
+    expect(
+      await value(`
+        const opener = async () => { await tools.host.open({ id: 1 }) }
+        const raced = Promise.race([new Promise(() => {}), tools.host.gated({ id: 1 })])
+        opener()
+        return [await raced, await Promise.race([new Promise(() => {}), tools.host.echo({ id: 2 })])]
+      `),
+    ).toEqual([1, 2])
+  })
+
+  test("async generators and chained reactions over tool calls are not deadlocks", async () => {
+    expect(
+      await value(`
+        async function* ids() {
+          yield await tools.host.gated({ id: 1 })
+          yield await tools.host.echo({ id: 2 })
+        }
+        const opener = async () => { await tools.host.open({ id: 1 }) }
+        opener()
+        const seen = []
+        for await (const id of ids()) seen.push(id)
+        const chained = await tools.host.echo({ id: 3 }).then((id) => tools.host.echo({ id: id + 1 }))
+        const all = await Promise.all([tools.host.echo({ id: 5 }), new Promise((done) => tools.host.echo({ id: 6 }).then(done))])
+        return [seen, chained, all]
+      `),
+    ).toEqual([[1, 2], 4, [5, 6]])
+  })
+})

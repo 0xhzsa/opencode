@@ -41,7 +41,7 @@ export const executeProgram = <R>(
           const pending = new Pending<R>(scope, builtins.Promise)
           const ctx = new Interpreter<R>({ tools, pending, builtins, logs, globals })
           // The main job holds the turn until leftover promise work is interrupted.
-          return yield* pending.turn.hold(
+          return yield* pending.run(
             Effect.gen(function* () {
               const result = (yield* toBoundary(ctx, yield* ctx.run(program))) ?? null
               returned = { value: result, pending }

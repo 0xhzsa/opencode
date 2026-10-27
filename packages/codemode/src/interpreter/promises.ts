@@ -1,7 +1,7 @@
 import { Cause, Deferred, Effect, Exit, Fiber, Scope } from "effect"
 import type { Diagnostic } from "../codemode.js"
 import { MAX_PENDING_PROMISES } from "./limits.js"
-import { CallSite, Throw, rangeError, typeError } from "./model.js"
+import { type AstNode, CallSite, PendingThrow, Throw, rangeError, typeError } from "./model.js"
 import { Callable, define, get, hidden, Arr, Fn, Obj, PromiseObj, record, type Value } from "./objects.js"
 import { constructor, fn, methods, native, receiver, requiresNew } from "./native.js"
 import { createAggregateErrorValue, locate, materialize, normalizeError } from "./errors.js"
@@ -196,6 +196,13 @@ const awaitHandback = (back: Handback) =>
     else back.resume = resume
   })
 
+type Wait = { readonly blocked: () => boolean; readonly node?: AstNode }
+
+const unsettled = (promise: PromiseObj) => promise.fiber.pollUnsafe() === undefined
+
+const deadlockMessage =
+  "The program awaited a promise that can never settle: nothing else is running. Timers aren't available, so don't sleep or wait on a hand-made Promise."
+
 // Observation only controls rejection reporting; program completion interrupts all promise work.
 export class Pending<R> {
   readonly turn = new Turn()
@@ -204,11 +211,94 @@ export class Pending<R> {
   private readonly observed = new WeakSet<PromiseObj>()
   private readonly failures = new Map<number, Diagnostic>()
   private nextID = 0
+  // Deadlock detection. Every fiber that runs program code or host work is live until it ends. A live fiber with no
+  // wait, or whose wait can finish now, may still settle something; tool calls and host work never register a wait.
+  private readonly live = new Set<Fiber.Fiber<unknown, unknown>>()
+  private readonly waits = new Map<Fiber.Fiber<unknown, unknown>, Wait>()
+  private waiting = 0
+  private main: Fiber.Fiber<unknown, unknown> | undefined
+  private readonly deadlock = Deferred.makeUnsafe<never>()
 
   constructor(
     private readonly scope: Scope.Scope,
     private readonly proto: Obj,
   ) {}
+
+  // Run the program's main job on the turn. It fails once every live fiber is blocked on another, so nothing can
+  // ever settle the promise it awaits.
+  run<A, E, R2>(effect: Effect.Effect<A, E, R2>): Effect.Effect<A, E, R2> {
+    return Effect.raceFirst(
+      this.turn.hold(
+        Effect.withFiber((fiber) => {
+          this.main = fiber
+          this.track(fiber)
+          return Effect.ensuring(
+            effect,
+            Effect.sync(() => {
+              this.main = undefined
+              this.untrack(fiber)
+            }),
+          )
+        }),
+      ),
+      Deferred.await(this.deadlock),
+    )
+  }
+
+  // Wait on `wait`, which cannot finish while `blocked()` holds unless another live fiber acts.
+  block<A, E, R2>(wait: Effect.Effect<A, E, R2>, blocked: () => boolean, node?: AstNode): Effect.Effect<A, E, R2> {
+    return Effect.withFiber((fiber) => {
+      const previous = this.waits.get(fiber)
+      this.waits.set(fiber, { blocked, node })
+      if (previous === undefined && this.live.has(fiber)) this.waiting++
+      this.check()
+      return Effect.ensuring(
+        wait,
+        Effect.sync(() => {
+          if (previous !== undefined) this.waits.set(fiber, previous)
+          else if (this.waits.delete(fiber) && this.live.has(fiber)) this.waiting--
+        }),
+      )
+    })
+  }
+
+  awaitDeferred<A, E>(deferred: Deferred.Deferred<A, E>): Effect.Effect<A, E> {
+    return this.block(Deferred.await(deferred), () => !Deferred.isDoneUnsafe(deferred))
+  }
+
+  private track(fiber: Fiber.Fiber<unknown, unknown>): void {
+    if (this.live.has(fiber)) return
+    this.live.add(fiber)
+    if (this.waits.has(fiber)) this.waiting++
+  }
+
+  private untrack(fiber: Fiber.Fiber<unknown, unknown>): void {
+    if (!this.live.delete(fiber)) return
+    if (this.waits.has(fiber)) this.waiting--
+    this.check()
+  }
+
+  // Track a forked fiber from its first step, since it can start and wait before the fork returns, until it ends.
+  private tracked<A, E, R2>(effect: Effect.Effect<A, E, R2>): Effect.Effect<A, E, R2> {
+    return Effect.withFiber((fiber) => {
+      this.track(fiber)
+      return effect
+    })
+  }
+
+  private observe(fiber: Fiber.Fiber<unknown, unknown>): void {
+    this.track(fiber)
+    fiber.addObserver(() => this.untrack(fiber))
+  }
+
+  private check(): void {
+    if (this.main === undefined || this.waiting < this.live.size) return
+    for (const fiber of this.live) {
+      if (!this.waits.get(fiber)?.blocked()) return
+    }
+    const node = this.waits.get(this.main)?.node
+    Deferred.doneUnsafe(this.deadlock, Exit.die(new PendingThrow("Error", deadlockMessage, node)))
+  }
 
   // Resolution bodies need the promise's own identity to reject `resolve(promise)` self-resolution.
   createWithSelf(
@@ -244,7 +334,8 @@ export class Pending<R> {
       // Allocate before forking so reruns get distinct IDs and diagnostics retain creation order.
       const id = this.nextID++
       const body = Effect.catchDefect(effect, (defect) => Effect.die(locate(defect, site.node)))
-      return Effect.map(fork(body), (fiber) => {
+      return Effect.map(fork(this.tracked(body)), (fiber) => {
+        this.observe(fiber)
         const promise = new PromiseObj(this.proto, fiber)
         this.active.add(promise)
         this.ids.set(promise, id)
@@ -273,12 +364,12 @@ export class Pending<R> {
     if (id !== undefined) this.failures.delete(id)
   }
 
-  await(promise: PromiseObj): Effect.Effect<Exit.Exit<Value, unknown>> {
-    return Fiber.await(promise.fiber)
+  await(promise: PromiseObj, node?: AstNode): Effect.Effect<Exit.Exit<Value, unknown>> {
+    return this.block(Fiber.await(promise.fiber), () => unsettled(promise), node)
   }
 
   fork(effect: Effect.Effect<unknown, unknown, R>): Effect.Effect<void, never, R> {
-    return Effect.asVoid(this.turn.fork(effect, this.scope))
+    return Effect.map(this.turn.fork(this.tracked(effect), this.scope), (fiber) => this.observe(fiber))
   }
 
   diagnostics(): Array<Diagnostic> {
@@ -321,7 +412,7 @@ export const resolvePromiseValue = <R>(
       if (Cause.hasInterruptsOnly(executed.cause)) return yield* Effect.failCause(executed.cause)
       Deferred.doneUnsafe(deferred, Exit.fail(Cause.squash(executed.cause)))
     }
-    return yield* resolvePromiseValue(ctx, yield* ctx.pending.turn.leave(Deferred.await(deferred)), own)
+    return yield* resolvePromiseValue(ctx, yield* ctx.pending.turn.leave(ctx.pending.awaitDeferred(deferred)), own)
   })
 }
 
@@ -380,9 +471,10 @@ const invokePromiseMethod = <R>(
           yield* settleAfterTurn(
             ctx,
             Effect.all(
-              items.map((item) => Effect.flatten(ctx.pending.await(item))),
+              items.map((item) => Effect.flatten(outcome(item))),
               { concurrency: "unbounded" },
             ),
+            () => items.some(unsettled) && !items.some((item) => settledWith(item, Exit.isFailure)),
           ),
         )
       }
@@ -413,10 +505,12 @@ const invokePromiseMethod = <R>(
         if (items.length === 0) {
           throw typeError("Promise.race([]) would never settle; provide at least one promise or value.")
         }
-        return yield* settleAfterTurn(ctx, Effect.flatten(Effect.raceAll(items.map((item) => ctx.pending.await(item)))))
+        return yield* settleAfterTurn(ctx, Effect.flatten(Effect.raceAll(items.map(outcome))), () =>
+          items.every(unsettled),
+        )
       }
       const flipped = items.map((item) =>
-        Effect.flatMap(ctx.pending.await(item), (exit) => {
+        Effect.flatMap(outcome(item), (exit) => {
           if (Exit.isSuccess(exit)) return Effect.fail(new PromiseAnyFulfilled(exit.value))
           if (Cause.hasInterruptsOnly(exit.cause)) return Effect.failCause(exit.cause)
           return Effect.succeed(materialize(ctx, Cause.squash(exit.cause)))
@@ -432,6 +526,7 @@ const invokePromiseMethod = <R>(
             error instanceof PromiseAnyFulfilled ? Effect.succeed(error.value) : Effect.fail(error),
           ),
         ),
+        () => items.some(unsettled) && !items.some((item) => settledWith(item, Exit.isSuccess)),
       )
     }),
   )
@@ -459,7 +554,7 @@ const promiseCapability = <R>(ctx: Interpreter<R>) =>
   Effect.gen(function* () {
     const deferred = Deferred.makeUnsafe<Value, unknown>()
     const promise = yield* ctx.pending.createWithSelf((self) =>
-      Effect.flatMap(ctx.pending.turn.leave(Deferred.await(deferred)), (value) =>
+      Effect.flatMap(ctx.pending.turn.leave(ctx.pending.awaitDeferred(deferred)), (value) =>
         resolvePromiseValue(ctx, value, self),
       ),
     )
@@ -485,10 +580,25 @@ const constructPromise = <R>(ctx: Interpreter<R>, executor: Value): Effect.Effec
 
 // Settle one reaction turn after the deciding member, after its existing reactions. That reaction is a job: it queues
 // for the turn behind the jobs ready before it and settles holding it.
-const settleAfterTurn = <A, E, R>(ctx: Interpreter<R>, body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+// `blocked` says the members settled so far cannot decide it.
+const settleAfterTurn = <A, E, R>(
+  ctx: Interpreter<R>,
+  body: Effect.Effect<A, E, R>,
+  blocked: () => boolean,
+): Effect.Effect<A, E, R> =>
   Effect.flatten(
-    ctx.pending.turn.suspend(Effect.flatMap(Effect.exit(body), (exit) => Effect.as(Effect.yieldNow, exit))),
+    ctx.pending.turn.suspend(
+      Effect.flatMap(Effect.exit(ctx.pending.block(body, blocked)), (exit) => Effect.as(Effect.yieldNow, exit)),
+    ),
   )
+
+// Combinator members wait in their own fibers; the combinator's fiber registers one wait for all of them.
+const outcome = (promise: PromiseObj): Effect.Effect<Exit.Exit<Value, unknown>> => Fiber.await(promise.fiber)
+
+const settledWith = (promise: PromiseObj, test: (exit: Exit.Exit<Value, unknown>) => boolean) => {
+  const exit = promise.fiber.pollUnsafe()
+  return exit !== undefined && test(exit)
+}
 
 class PromiseAnyFulfilled {
   constructor(readonly value: Value) {}

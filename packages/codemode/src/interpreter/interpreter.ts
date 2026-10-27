@@ -427,12 +427,12 @@ class Frame<R> {
   }
 
   // Fiber exits make settlement idempotent; yielding prevents inline continuation.
-  await(promise: PromiseObj): Effect.Effect<Value, unknown, never> {
+  await(promise: PromiseObj, node?: AstNode): Effect.Effect<Value, unknown, never> {
     const pending = this.ctx.pending
     return Effect.suspend(() => {
       pending.markObserved(promise)
       return Effect.flatten(
-        pending.turn.suspend(Effect.flatMap(pending.await(promise), (exit) => Effect.as(Effect.yieldNow, exit))),
+        pending.turn.suspend(Effect.flatMap(pending.await(promise, node), (exit) => Effect.as(Effect.yieldNow, exit))),
       )
     })
   }
@@ -794,10 +794,10 @@ class Frame<R> {
     )
   }
 
-  private awaitValue(value: Value): Effect.Effect<Value, unknown, R> {
+  private awaitValue(value: Value, node?: AstNode): Effect.Effect<Value, unknown, R> {
     return Effect.flatMap(resolvePromise(this.ctx, value), (promise) =>
       Effect.ensuring(
-        this.await(promise),
+        this.await(promise, node),
         Effect.sync(() => (this.depth = 0)),
       ),
     )
@@ -1353,7 +1353,7 @@ class Frame<R> {
         return this.evaluateUpdateExpression(node)
       case "AwaitExpression": {
         // Await always suspends, including for plain values.
-        return Effect.flatMap(this.evaluateExpression(node.argument), (value) => this.awaitValue(value))
+        return Effect.flatMap(this.evaluateExpression(node.argument), (value) => this.awaitValue(value, node))
       }
       case "YieldExpression":
         return this.evaluateYieldExpression(node)
@@ -1833,7 +1833,7 @@ class Frame<R> {
       const answer = Effect.suspend(() =>
         Deferred.isDoneUnsafe(request.response)
           ? Deferred.await(request.response)
-          : turn.leave(Deferred.await(request.response)),
+          : turn.leave(this.ctx.pending.awaitDeferred(request.response)),
       )
       if (!asynchronous && state.active) return Effect.die(typeError("Generator is already running."))
       if (asynchronous && (state.completed || (!state.started && kind !== "next"))) {
@@ -1935,7 +1935,7 @@ class Frame<R> {
     if (next) return Effect.succeed(next)
     state.available = Deferred.makeUnsafe<void>()
     return Effect.andThen(
-      this.ctx.pending.turn.park(Deferred.await(state.available)),
+      this.ctx.pending.turn.park(this.ctx.pending.awaitDeferred(state.available)),
       Effect.sync(() => this.dequeueGeneratorRequest(state)!),
     )
   }
