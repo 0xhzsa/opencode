@@ -610,7 +610,7 @@ test("the location dialog separates added projects from server projects and tags
   const search = dialog.getByRole("combobox")
   await expect(search).toBeFocused()
   const options = dialog.getByRole("option")
-  const add = options.filter({ hasText: "Open project…" })
+  const add = options.filter({ hasText: "Add project" })
   await expect(add.locator('[data-component="keybind-v2"]')).toContainText("O")
   const rows = options.filter({ has: page.locator(".new-session-location-name") })
   const names = options.locator(".new-session-location-name")
@@ -627,7 +627,7 @@ test("the location dialog separates added projects from server projects and tags
     "opencode",
     "opencode",
     "Other projects",
-    "Open project…",
+    "Add project",
   ])
   // It opens on the first row, not on the draft's current project (the second row).
   await expect(options.nth(0)).toHaveAttribute("aria-selected", "true")
@@ -641,7 +641,7 @@ test("the location dialog separates added projects from server projects and tags
   await expect(names.nth(0).locator(".command-palette-title")).toHaveCSS("font-size", "13px")
   await expect(names.nth(0).locator(".command-palette-title")).toHaveCSS("white-space", "nowrap")
   await expect(rows.nth(0)).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
-  // "Open project…" shares the project rows' width and icon column.
+  // "Add project" shares the project rows' width and icon column.
   await expect
     .poll(async () => {
       const field = await dialog.locator('[data-component="text-input-v2"]').boundingBox()
@@ -686,7 +686,7 @@ test("the location dialog separates added projects from server projects and tags
   await expect(paths).toHaveText(["/home/dax/opencode", "C:/work/opencode"])
   await expect(rows.nth(0)).toHaveAttribute("aria-selected", "true")
   await page.keyboard.press("ArrowRight")
-  // The worktree step has no "Open project…".
+  // The worktree step has no "Add project".
   await expect(add).toHaveCount(0)
   await expect(back).toHaveText("Run session in")
   await expect(options.nth(0).locator('[data-component="tag"]')).toHaveText("apollo")
@@ -714,7 +714,7 @@ test("the location dialog separates added projects from server projects and tags
   // The server the app runs beside shows its hostname and "This computer" instead of its address.
   await expect(options).toHaveText(["hailmaryThis computer", "apollo"])
   await back.click()
-  await options.filter({ hasText: "Open project…" }).click()
+  await options.filter({ hasText: "Add project" }).click()
   await expect(options).toHaveText(["hailmaryThis computer", "apollo"])
   await options.filter({ hasText: "apollo" }).click()
   await expect(page.getByRole("button", { name: "Select folder", exact: true })).toBeEnabled()
@@ -731,7 +731,7 @@ for (const binding of ["mod+alt+p", "none"]) {
     await newSessionLocation(page).click()
     const search = page.getByRole("combobox", { name: "Search projects", exact: true })
     await expect(search).toBeFocused()
-    const keys = page.getByRole("option", { name: /^Open project…/ }).locator('[data-component="keybind-v2"]')
+    const keys = page.getByRole("option", { name: /^Add project/ }).locator('[data-component="keybind-v2"]')
     if (binding === "none") await expect(keys).toHaveCount(0)
     if (binding !== "none") await expect(keys).toContainText("P")
 

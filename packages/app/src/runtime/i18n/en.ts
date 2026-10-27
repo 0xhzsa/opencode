@@ -1123,7 +1123,6 @@ export const dict = {
   "session.new.workspace.search.empty": "No matching worktrees",
   "session.new.location.select": "Select",
   "session.new.location.otherProjects": "Other projects",
-  "session.new.location.openProject": "Open project…",
   "session.new.location.worktrees": "Worktrees",
   "session.new.location.back": "Back to projects",
   "session.new.location.servers": "Servers",

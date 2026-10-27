@@ -155,7 +155,7 @@ test("Search projects opens the full location picker from a session, draft, and 
   await expect(page).toHaveURL(/\/new-session\?draftId=.+$/)
   await expect(picker).toBeFocused()
   const projects = page.getByRole("dialog").getByRole("option")
-  await expect(projects.filter({ hasText: "Open project…" })).toBeVisible()
+  await expect(projects.filter({ hasText: "Add project" })).toBeVisible()
   await picker.fill("command-palette")
   await expect(projects).toHaveCount(2)
   await expect(projects.getByRole("button", { name: "Worktrees", exact: true })).toBeVisible()
@@ -168,7 +168,7 @@ test("Search projects opens the full location picker from a session, draft, and 
 
   await page.keyboard.press(shortcut)
   await expect(picker).toBeFocused()
-  await expect(projects.filter({ hasText: "Open project…" })).toBeVisible()
+  await expect(projects.filter({ hasText: "Add project" })).toBeVisible()
   await picker.press("Escape")
 
   await page.goto("/")
@@ -178,7 +178,7 @@ test("Search projects opens the full location picker from a session, draft, and 
   await page.keyboard.press(shortcut)
   await expect(page).toHaveURL(/\/new-session\?draftId=.+$/)
   await expect(picker).toBeFocused()
-  await expect(projects.filter({ hasText: "Open project…" })).toBeVisible()
+  await expect(projects.filter({ hasText: "Add project" })).toBeVisible()
 })
 
 declare global {

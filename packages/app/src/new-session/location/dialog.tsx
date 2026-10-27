@@ -494,7 +494,7 @@ function NewSessionLocationDialog(props: {
                               <Icon name="plus" class="command-palette-row-icon" />
                               <div class="command-palette-row-text">
                                 <span class="command-palette-title palette-menu-title">
-                                  {language.t("session.new.location.openProject")}
+                                  {language.t("session.new.project.add")}
                                 </span>
                               </div>
                             </div>
