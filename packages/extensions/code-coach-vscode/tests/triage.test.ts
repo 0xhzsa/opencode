@@ -73,8 +73,20 @@ describe("defeat - the engine", () => {
     expect(d.kind).toBe("none");
   });
 
-  test("empty input -> none", () => {
-    const d = decide("", "");
+  test("silence is the default: a benign edit produces no findings", () => {
+    const d = decide("refactor the parser", "function parse(input) { return input.trim(); }");
     expect(d.kind).toBe("none");
+  });
+
+  test("generalizes beyond passwords: sql injection on a non-password prompt", () => {
+    const d = decide("add a search endpoint that filters by the user", "query(`select * from t where c = '${req.query.q}'`)");
+    expect(d.kind).toBe("nudge");
+    expect(d.findings.map((f) => f.id)).toEqual(["sql-concat", "input-unvalidated"]);
+  });
+
+  test("order by severity then cap at two", () => {
+    const d = decide("compute the answer", "eval(x); console.log(y); fetch(z);");
+    expect(d.findings).toHaveLength(2);
+    expect(d.findings.map((f) => f.id)).toEqual(["eval", "no-try-catch"]);
   });
 });
