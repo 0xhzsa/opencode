@@ -7,3 +7,4 @@ These packages are not bundled with OpenCode or loaded automatically. Do not add
 | Plugin                   | Directory                |
 | ------------------------ | ------------------------ |
 | [Figma](figma/README.md) | `packages/plugins/figma` |
+| [Code Coach](code-coach/README.md) | `packages/plugins/code-coach` |
