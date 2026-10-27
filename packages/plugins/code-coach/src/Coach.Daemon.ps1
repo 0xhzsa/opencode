@@ -1,24 +1,21 @@
-# Coach.Daemon.ps1 - slice 1 of the code-coach gate.
+# Coach.Daemon.ps1 - the code-coach card daemon.
 #
-# Watches the IPC folder for req-<id>.json, decides whether the ask destroys
-# state with no recovery point, and - if it does - shows one card with
-# "Copy the guardrail" and "Dismiss".
+# Watches the IPC folder for req-<id>.json, asks src/Coach.Rules.ps1 what the
+# ask deserves, and shows at most one card. It never talks back to the plugin:
+# the plugin does not wait for this process, so nothing here can delay or change
+# a send.
 #
-# This process never talks back to the plugin. The plugin does not wait for it,
-# so nothing here can delay or change a send. The card is a nudge after the
-# fact: it copies a guardrail to the clipboard so the developer can paste it
-# into the conversation, or dismisses itself.
+# Card shapes:
+#   destructive - "Copy the guardrail" / "Dismiss"
+#   security    - "Explain why" / "Fix my prompt" / "Ignore"
+#                 Explain why swaps the card to the teaching text in place and
+#                 offers "Back"; Fix my prompt puts a rewritten ask on the
+#                 clipboard; Ignore closes it.
 #
-# One deterministic rule:
-#   destructive verb + destructive object, no recovery point -> card
-#   hard pattern (rm -rf, git clean, force-push, drop table) -> card
-#   anything else                                            -> silence
+# One card at a time. A second card-worthy ask while a card is up is dropped and
+# traced rather than stacked.
 #
-# One card at a time. A second destructive ask while a card is up is dropped
-# and logged rather than stacked.
-#
-# Nothing here reads or writes the prompt itself beyond matching the rule, and
-# no prompt text is ever logged or traced.
+# No prompt text is ever logged or traced.
 
 param([switch]$Once)
 
@@ -39,6 +36,8 @@ public static class CoachGateWin32 {
 '@
 }
 
+. (Join-Path $PSScriptRoot 'Coach.Rules.ps1')
+
 $Data = if ($env:COACH_DATA_DIR) { $env:COACH_DATA_DIR } else { Join-Path $env:LOCALAPPDATA 'CodeCoachData' }
 $Ipc = Join-Path $Data 'ipc'
 $LogDir = Join-Path $Data 'logs'
@@ -56,9 +55,9 @@ $MaxRequestAgeSeconds = 120
 
 New-Item -ItemType Directory -Force -Path $Ipc, $LogDir | Out-Null
 
-# Windows PowerShell 5.1's `Set-Content -Encoding UTF8` writes a BOM. Everything
-# this daemon writes is read by Node or by ConvertFrom-Json, so write UTF-8
-# without one.
+# Windows PowerShell 5.1's `Set-Content -Encoding UTF8` writes a BOM. The plugin
+# reads daemon.pid with Number(...), and Number("\uFEFF123") is NaN, so a BOM
+# there would make the plugin believe the coach is dead and go silent.
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 function Write-Log([string]$Line) {
@@ -83,22 +82,6 @@ if (Test-Path -LiteralPath $PidFile) {
 }
 [System.IO.File]::WriteAllText($PidFile, [string]$PID, $Utf8NoBom)
 Write-Log 'daemon: starting'
-
-$script:ReGuard = '(?i)\b(backup|backed up|commit first|commit before|commit the current|dry[- ]?run|snapshot|confirm|only|specific|this file|one file)\b'
-$script:ReHard = '(?i)\b(rm\s+-rf|git\s+clean|force[- ]?push|drop\s+table|truncate\s+table)\b'
-$script:ReVerb = '(?i)\b(delete|deletes|deleting|reset|resets|resetting|drop|drops|dropping|truncate|truncates|truncating|overwrite|overwrites|overwriting|wipe|wipes|wiping|purge|purges|purging|destroy|destroys|destroying|remove|removes|removing|clear|clears|clearing)\b'
-$script:ReObject = '(?i)\b(files?|folders?|directories?|dirs?|data|database|db|tables?|rows?|records?|logs?|history|branch(es)?|commits?|repo(sitory)?|worktree|build|output|cache|config|credentials?|secrets?|disk|drive|migrations?)\b'
-
-$script:Guardrail = 'Before you delete or rewrite anything, commit the current state, take a backup, and run the change against one target first; confirm the result before widening it.'
-
-function Test-Destructive([string]$Text) {
-  $t = [string]$Text
-  if (-not $t) { return $false }
-  # A recovery point in the ask is the whole point of the rule.
-  if ($t -match $script:ReGuard) { return $false }
-  if ($t -match $script:ReHard) { return $true }
-  return (($t -match $script:ReVerb) -and ($t -match $script:ReObject))
-}
 
 $script:ActiveCard = $null
 $script:PumpFrame = $null
@@ -126,22 +109,61 @@ function Set-ClipboardText([string]$Text) {
   return $false
 }
 
-function Complete-Card([string]$Action) {
+function Render-View($View) {
+  $card = $script:ActiveCard
+  if (-not $card) { return }
+  $card.title.Text = [string]$View.title
+  $card.body.Text = [string]$View.body
+  $card.row.Children.Clear()
+  $card.view = $View
+  foreach ($spec in @($View.buttons)) {
+    $btn = New-Object System.Windows.Controls.Button
+    $btn.Content = [string]$spec.label
+    $btn.Padding = '10,4'
+    $btn.Margin = '0,0,8,0'
+    $btn.Tag = [string]$spec.action
+    [System.Windows.Automation.AutomationProperties]::SetAutomationId($btn, [string]$spec.id)
+    # `$sender` is the button, so the handler cannot capture the loop variable.
+    $btn.Add_Click({ param($sender, $args) Invoke-Action ([string]$sender.Tag) })
+    [void]$card.row.Children.Add($btn)
+  }
+}
+
+function Invoke-Action([string]$Action) {
   $card = $script:ActiveCard
   if (-not $card) { return }
   try {
-    if ($Action -eq 'copy') {
-      $ok = Set-ClipboardText $script:Guardrail
-      Write-Trace @{ ev = 'card_action'; action = 'copy'; ok = $ok }
-      Write-Log ('card: copy ' + $(if ($ok) { 'ok' } else { 'failed' }))
-    } else {
-      Write-Trace @{ ev = 'card_action'; action = 'dismiss' }
-      Write-Log 'card: dismissed'
+    switch ($Action) {
+      'copy' {
+        $ok = Set-ClipboardText ([string]$card.model.guardrail)
+        Write-Trace @{ ev = 'card_action'; kind = [string]$card.model.kind; action = 'copy'; ok = $ok }
+        Write-Log ('card: copy ' + $(if ($ok) { 'ok' } else { 'failed' }))
+        Close-Card
+      }
+      'fix' {
+        $ok = Set-ClipboardText ([string]$card.model.fixed)
+        Write-Trace @{ ev = 'card_action'; kind = [string]$card.model.kind; action = 'fix'; ok = $ok }
+        Write-Log ('card: fix ' + $(if ($ok) { 'ok' } else { 'failed' }))
+        Close-Card
+      }
+      'explain' {
+        Write-Trace @{ ev = 'card_action'; kind = [string]$card.model.kind; action = 'explain' }
+        Render-View $card.explainView
+      }
+      'back' {
+        Write-Trace @{ ev = 'card_action'; kind = [string]$card.model.kind; action = 'back' }
+        Render-View $card.findingsView
+      }
+      default {
+        Write-Trace @{ ev = 'card_action'; kind = [string]$card.model.kind; action = 'dismiss' }
+        Write-Log 'card: dismissed'
+        Close-Card
+      }
     }
   } catch {
     Write-Log ('card action failed: ' + $_.Exception.Message)
+    Close-Card
   }
-  Close-Card
 }
 
 function Invoke-Pump([int]$Milliseconds = 40) {
@@ -153,7 +175,7 @@ function Invoke-Pump([int]$Milliseconds = 40) {
   try { [System.Windows.Threading.Dispatcher]::PushFrame($script:PumpFrame) } finally { $timer.Stop() }
 }
 
-function Show-Card([string]$Id, [string]$Text) {
+function Show-Card([string]$Id, $Model) {
   $win = New-Object System.Windows.Window
   $win.Title = 'Code Coach'
   $win.WindowStyle = 'None'
@@ -170,20 +192,19 @@ function Show-Card([string]$Id, [string]$Text) {
 
   $panel = New-Object System.Windows.Controls.StackPanel
   $panel.Margin = '18,14,18,14'
-  $panel.MaxWidth = 420
+  $panel.MaxWidth = 440
 
   $title = New-Object System.Windows.Controls.TextBlock
-  $title.Text = 'Destructive ask without a recovery point'
   $title.FontSize = 15
   $title.FontWeight = 'SemiBold'
   $title.TextWrapping = 'Wrap'
   [void]$panel.Children.Add($title)
 
   $body = New-Object System.Windows.Controls.TextBlock
-  $body.Text = 'This deletes or rewrites state, and nothing in the ask makes it reversible. Copy the guardrail and paste it into the conversation.'
   $body.FontSize = 12
   $body.Margin = '0,6,0,0'
   $body.TextWrapping = 'Wrap'
+  $body.LineHeight = 17
   [void]$panel.Children.Add($body)
 
   $meta = New-Object System.Windows.Controls.TextBlock
@@ -195,22 +216,6 @@ function Show-Card([string]$Id, [string]$Text) {
   $row = New-Object System.Windows.Controls.StackPanel
   $row.Orientation = 'Horizontal'
   $row.Margin = '0,12,0,0'
-
-  $copy = New-Object System.Windows.Controls.Button
-  $copy.Content = 'Copy the guardrail'
-  $copy.Padding = '10,4'
-  $copy.Add_Click({ Complete-Card 'copy' })
-  [System.Windows.Automation.AutomationProperties]::SetAutomationId($copy, 'CoachCopyGuardrail')
-  [void]$row.Children.Add($copy)
-
-  $dismiss = New-Object System.Windows.Controls.Button
-  $dismiss.Content = 'Dismiss'
-  $dismiss.Padding = '10,4'
-  $dismiss.Margin = '8,0,0,0'
-  $dismiss.Add_Click({ Complete-Card 'dismiss' })
-  [System.Windows.Automation.AutomationProperties]::SetAutomationId($dismiss, 'CoachDismiss')
-  [void]$row.Children.Add($dismiss)
-
   [void]$panel.Children.Add($row)
 
   $border = New-Object System.Windows.Controls.Border
@@ -233,7 +238,31 @@ function Show-Card([string]$Id, [string]$Text) {
   $win.Left = [Math]::Max($area.Left, $area.Right - $win.ActualWidth - 24)
   $win.Top = [Math]::Max($area.Top, $area.Bottom - $win.ActualHeight - 24)
 
-  $script:ActiveCard = @{ id = $Id; window = $win; timer = $null }
+  $script:ActiveCard = @{
+    id     = $Id
+    window = $win
+    timer  = $null
+    meta   = $meta
+    title  = $title
+    body   = $body
+    row    = $row
+    model  = $Model
+    view   = $null
+  }
+
+  $findingsView = @{ title = $Model.title; body = $Model.body; buttons = $Model.buttons }
+  $script:ActiveCard.findingsView = $findingsView
+  if ($Model.explain) {
+    $script:ActiveCard.explainView = @{
+      title   = [string]$Model.explain.title
+      body    = [string]$Model.explain.body
+      buttons = @(
+        @{ id = 'CoachBack'; label = 'Back'; action = 'back' },
+        @{ id = 'CoachFixPrompt'; label = 'Fix my prompt'; action = 'fix' },
+        @{ id = 'CoachIgnore'; label = 'Ignore'; action = 'ignore' }
+      )
+    }
+  }
 
   # Hovering stops the countdown so a card can be read at the reader's pace.
   $timer = New-Object System.Windows.Threading.DispatcherTimer
@@ -245,14 +274,15 @@ function Show-Card([string]$Id, [string]$Text) {
   })
   $timer.Start()
   $script:ActiveCard.timer = $timer
-  $script:ActiveCard.meta = $meta
   $meta.Text = ('dismisses in {0}s' -f $CardSeconds)
 
   $win.add_MouseEnter({ try { if ($script:ActiveCard -and $script:ActiveCard.timer) { $script:ActiveCard.timer.Stop(); $script:ActiveCard.meta.Text = 'paused while you read' } } catch { } })
   $win.add_MouseLeave({ try { if ($script:ActiveCard -and $script:ActiveCard.timer) { $script:ActiveCard.timer.Start(); $script:ActiveCard.meta.Text = ('dismisses in {0}s' -f $CardSeconds) } } catch { } })
 
-  Write-Log 'card up'
-  Write-Trace @{ ev = 'card_shown'; id = $Id }
+  Render-View $findingsView
+
+  Write-Log ('card up: ' + $Model.kind)
+  Write-Trace @{ ev = 'card_shown'; id = $Id; kind = [string]$Model.kind }
 }
 
 try {
@@ -280,20 +310,21 @@ try {
         # about to appear must not depend on a file the loop might re-read.
         Remove-Item -LiteralPath $file.FullName -Force
 
-        if (-not (Test-Destructive $text)) {
+        $decision = Get-CoachDecision $text
+        if ($decision.kind -eq 'none') {
           Write-Trace @{ ev = 'silent'; len = $text.Length }
           continue
         }
 
         if ($script:ActiveCard) {
           Write-Log 'card busy, dropped'
-          Write-Trace @{ ev = 'card_dropped'; len = $text.Length }
+          Write-Trace @{ ev = 'card_dropped'; kind = [string]$decision.kind; len = $text.Length }
           continue
         }
 
-        Show-Card $id $text
+        Show-Card $id $decision
       } catch {
-        # One malformed request must not stop the gate. The file holds prompt
+        # One malformed request must not stop the daemon. The file holds prompt
         # text, so remove it rather than retrying it every 40 ms.
         Write-Log ('request failed: ' + $_.Exception.Message)
         try { Remove-Item -LiteralPath $file.FullName -Force } catch { }

@@ -1,39 +1,79 @@
-# Code Coach (slice 1: the destructive-ask nudge)
+# Code Coach (slice 1: the post-send nudge)
 
 An opt-in opencode plugin that watches a prompt **after** it is sent and stays
-quiet unless the ask destroys state with no recovery point. When it does, one
-card offers a guardrail you can paste into the conversation.
+quiet unless the ask is worth one interruption. When it is, a card appears next
+to the composer with something the developer can act on.
 
 The plugin never delays, blocks, rewrites, or re-sends anything.
 
+## The workflow
+
+Ask for a login endpoint that compares a password against the database, and the
+card says:
+
+> **2 things before you accept this**
+>
+> 1. Passwords would be compared in plaintext. Nothing here says the password
+>    is hashed, so the obvious implementation compares the stored value with
+>    `==`. Passwords must be one-way: store `hash(password)` with a per-user
+>    salt, and compare in constant time.
+> 2. No rate limiting on the credential path. Nothing here limits attempts, so
+>    one client can try thousands of passwords a minute against the same
+>    account.
+>
+> **[Explain why] [Fix my prompt] [Ignore]**
+
+- **Explain why** swaps the card in place for the first-principles version —
+  what a hash is, why it is one-way, why two users with the same password force
+  a salt — and offers **Back** to return to the findings.
+- **Fix my prompt** puts a rewritten ask on the clipboard:
+
+  > Add a login endpoint that checks the user's password against the database.
+  > Use bcrypt or argon2id with a per-user salt, compare in constant time,
+  > rate-limit to 5 attempts per minute per IP and per account, and return
+  > generic errors that do not reveal whether an account exists.
+
+- **Ignore** closes the card and touches nothing.
+
+The next prompt is better and the developer knows why. That is the loop.
+
 ## What this slice does
 
-| Prompt | What happens |
+| Prompt | Card |
 | --- | --- |
-| `Summarize the current state of the parser` | nothing |
-| `delete the old logs after committing the current state first` | nothing — the ask has a recovery point |
-| `delete all the logs from last week` | one card: **Copy the guardrail** or **Dismiss** |
+| `Summarize the current state of the parser` | none |
+| `fix the login flow so the second attempt works` | none — a bug fix is not a credential ask |
+| `delete the old logs after committing the current state first` | none — the ask has a recovery point |
+| `delete src/app.ts` | none — one named target is specific |
+| `delete all the logs from last week` | **Destructive ask without a recovery point** → Copy the guardrail / Dismiss |
+| `Add a login endpoint that checks the user's password against the database` | **2 things before you accept this** → Explain why / Fix my prompt / Ignore |
+| `add a password reset endpoint` | **1 thing before you accept this** → same three buttons |
 
-The card is a nudge after the fact, not a gate. It appears next to the
-composer, cannot take focus, and dismisses itself after 60 seconds (hovering
-pauses the countdown). **Copy the guardrail** puts this on the clipboard:
+Two deterministic rules, no model call and no network:
 
-> Before you delete or rewrite anything, commit the current state, take a
-> backup, and run the change against one target first; confirm the result
-> before widening it.
+**Destructive.** A destructive verb (`delete`, `reset`, `drop`, `truncate`,
+`overwrite`, `wipe`, `purge`, `destroy`, `remove`, `clear`) plus a destructive
+object (`files`, `database`, `logs`, `history`, `cache`, `config`, `secrets`,
+...), or a hard pattern (`rm -rf`, `git clean`, `force-push`, `drop table`),
+**and no recovery point**. A recovery point is any of `backup`, `commit first`,
+`commit before`, `commit the current`, `dry run`, `snapshot`, `confirm`, `only`,
+`specific`, `this file`, `one file`. Naming a single file is also a specific
+target; `delete all the .ts files` is not.
 
-One deterministic rule, no model call and no network:
+**Security.** A credential word (`password`, `passphrase`, `credential`,
+`login`, `sign in`) plus a build verb (`add`, `create`, `build`, `implement`,
+`write`, `set up`, `wire`) plus an auth surface (`endpoint`, `route`, `form`,
+`handler`, `service`, `flow`, `api`, ...). Then:
 
-1. a destructive verb (`delete`, `reset`, `drop`, `truncate`, `overwrite`,
-   `wipe`, `purge`, `destroy`, `remove`, `clear`) plus a destructive object
-   (`files`, `database`, `logs`, `history`, `cache`, `config`, `secrets`, ...),
-   or a hard pattern (`rm -rf`, `git clean`, `force-push`, `drop table`)
-   **and no recovery point** in the text → one card
-2. anything else → silence
+- if the text has no hashing word (`bcrypt`, `argon2`, `scrypt`, `pbkdf2`,
+  `hash`, `salt`, `constant time`) but does have a comparison or storage word
+  (`compare`, `check`, `verify`, `against the database`, `store`, `plaintext`,
+  `==`), add the plaintext-password finding;
+- if the text has no rate-limiting word (`rate limit`, `throttle`, `lockout`,
+  `attempts per`, `captcha`, `fail2ban`), add the missing-rate-limit finding.
 
-A recovery point is any of `backup`, `commit first`, `dry run`, `snapshot`,
-`confirm`, `only`, `specific`, `this file`, `one file`. Saying one of those
-turns the rule off for that prompt.
+Both suppressed → silence. One → `1 thing`, two → `2 things`. Destructive wins
+over security when an ask is both.
 
 ## Why the hook does not wait
 
@@ -59,12 +99,12 @@ already happened; they copy text or dismiss.
 This is the first reviewable slice requested in
 [#59587](https://github.com/anomalyco/opencode/pull/59587). Later slices add:
 
-- the triage lane (one model call per eligible send) and the security-intent
-  heuristics
-- Explain why, Fix my prompt, Ignore, Snooze
-- the learner, lessons, insights, and persisted snooze state
+- the model-backed triage lane (a cheap model call per eligible send) and the
+  learned severity that goes with it
+- Snooze, the learner profile, lessons, insights, and persisted state
+- the project layer (repo map, "you already have an auth middleware")
 - autostart install/uninstall, `coach-guard`, and the doctor
-- earned context attached to a later model call
+- the VS Code/Cursor/Claude lanes — this slice is the opencode plugin only
 
 Until then the daemon is started by hand and stopped with a `stop` file.
 
@@ -106,9 +146,8 @@ process and is not started by the plugin.
    `COACH_DATA_DIR` overrides the data folder (`%LOCALAPPDATA%\CodeCoachData`).
    The daemon writes `daemon.pid`, `logs\daemon.log`, and `trace.jsonl` there.
 
-4. Send a destructive prompt from opencode. The plugin writes a request only
-   when the send is substantive and the daemon is alive; the daemon shows a
-   card when the ask has no recovery point.
+4. Send one of the prompts from the table above. The plugin writes a request
+   only when the send is substantive and the daemon is alive.
 
 5. Stop the daemon:
 
@@ -135,30 +174,38 @@ one-command installer are a later slice.
   the coach is not running, nothing is written and the send is untouched.
 - The daemon deletes the request as soon as it reads it. A request older than
   120 s is deleted without a card.
-- The daemon logs the prompt **length** and the outcome, never the text.
+- The daemon logs the prompt **length** and the outcome, never the text. The
+  live test asserts that none of the prompts it sends appear in `daemon.log` or
+  `trace.jsonl`.
 - There is no transcript, no key, and no network call in this slice.
-- The guardrail is a fixed string; the card never reads the session.
+- Every card string is a fixed template. The card never reads the session, the
+  repo, or a model.
 
 ## Verify
 
 ```powershell
 cd packages/plugins/code-coach
-bun test                                  # 7 tests, no daemon, all platforms
-bun run typecheck:tsc                     # clean
-powershell -STA -File tests\Run-Minimal.ps1   # 35 live checks, Windows desktop
+bun test                                       # 7 tests, no daemon, all platforms
+bun run typecheck:tsc                          # clean
+powershell -STA -File tests\Rules.ps1          # 38 rule checks, headless
+powershell -STA -File tests\Run-Minimal.ps1    # 66 live checks, Windows desktop
 ```
 
-The live test starts the real daemon in a child process, writes the same
-`req-<id>.json` the plugin writes, drives the card through UI Automation, and
-asserts the clipboard contents. Its receipt is in `docs/PROOF.md`.
+`tests/Rules.ps1` asserts every branch of the rule engine with no daemon and no
+desktop, so it runs anywhere PowerShell runs. `tests/Run-Minimal.ps1` starts the
+real daemon in a child process, writes the same `req-<id>.json` the plugin
+writes, drives the real WPF card through UI Automation, clicks every button, and
+reads the real clipboard. Its receipt is in `docs/PROOF.md`.
 
 ## Files
 
 | Path | What |
 | --- | --- |
 | `index.ts` | plugin half: filter, write one request, return |
-| `src/Coach.Daemon.ps1` | daemon half: one rule, one card, clipboard, pid guard |
+| `src/Coach.Rules.ps1` | the decisions: destructive, security, suppression, fixed prompt |
+| `src/Coach.Daemon.ps1` | daemon half: scan, one card, buttons, clipboard, pid guard |
 | `index.test.ts` | plugin tests; no daemon, no timers |
+| `tests/Rules.ps1` | headless rule tests; no desktop needed |
 | `tests/Run-Minimal.ps1` | live end-to-end test for the daemon and card |
 | `docs/IPC.md` | the one-file contract |
 | `docs/PROOF.md` | receipts |
@@ -169,10 +216,13 @@ asserts the clipboard contents. Its receipt is in `docs/PROOF.md`.
   trains people to click through. A post-send card costs nothing when it is
   wrong.
 - **One write, no wait.** The hook is on the send path; the daemon is not.
+- **Teach, then rewrite.** Explain why is the part that makes the next prompt
+  better; Fix my prompt is the part that makes this one better. Both are one
+  click, and neither is required.
 - **The card cannot take focus.** The window uses `WS_EX_NOACTIVATE` and
   `ShowActivated = false`, so a click leaves the caret where it was.
 - **Fail-open everywhere.** A dead daemon, a missing folder, a malformed file,
   or a write error leaves the developer's send untouched. There is no path that
   drops or alters a prompt.
-- **One card at a time.** A second destructive ask while a card is up is dropped
+- **One card at a time.** A second card-worthy ask while a card is up is dropped
   and traced, not stacked.

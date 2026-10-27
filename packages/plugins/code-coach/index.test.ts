@@ -80,12 +80,15 @@ test("returns without waiting for a daemon that never answers", async () => {
   await hooks.get("prompt")!(textEvent("s2", DESTRUCTIVE))
   const elapsed = Date.now() - start
 
-  // There is no daemon in this process at all. The old design waited 1.5 s for
-  // a verdict and 5 s for a card decision; this hook does one file write.
-  expect(elapsed).toBeLessThan(100)
+  // This is a regression tripwire, not a latency claim: the old design blocked
+  // for 1.5 s waiting on a verdict and 5 s waiting on a card decision, so
+  // anything near a second means the wait came back. One file write plus a
+  // cold start on a loaded CI runner is well under this.
+  expect(elapsed).toBeLessThan(1000)
   expect(requests()).toHaveLength(1)
 
-  // Nothing is expected back: no verdict file, no decision file.
+  // The structural proof that nothing is awaited: there is no reply channel at
+  // all. No verdict file, no decision file, nothing the hook could be polling.
   const names = readdirSync(IPC)
   expect(names.filter((n) => n.startsWith("res-"))).toHaveLength(0)
   expect(names.filter((n) => n.startsWith("dec-"))).toHaveLength(0)

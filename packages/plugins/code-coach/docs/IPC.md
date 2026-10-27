@@ -6,11 +6,12 @@ Two processes, one file type, one folder. `index.ts` writes requests;
 | Half | Location |
 | --- | --- |
 | Plugin (writes requests) | `index.ts` |
-| Daemon (reads requests) | `src/Coach.Daemon.ps1` |
+| Daemon (reads requests, decides) | `src/Coach.Daemon.ps1` |
+| Rules (pure, testable) | `src/Coach.Rules.ps1` |
 | Folder | `%LOCALAPPDATA%\CodeCoachData\ipc\` (or `%COACH_DATA_DIR%\ipc`) |
 
-Both halves derive the folder the same way: `COACH_DATA_DIR` when set,
-otherwise `LOCALAPPDATA`. There is no config knob for it.
+All halves derive the folder the same way: `COACH_DATA_DIR` when set, otherwise
+`LOCALAPPDATA`. There is no config knob for it.
 
 ## 1. Sequence
 
@@ -23,9 +24,13 @@ developer presses Enter in the opencode TUI
   -> plugin writes req-<id>.json { id, text, cwd, sid, at }
   -> plugin returns the event untouched; the send proceeds immediately
   -> daemon (separate process, 40 ms scan) reads the request and deletes it
-       destructive ask with no recovery point -> one card
-       anything else                          -> nothing
-  -> card: "Copy the guardrail" -> clipboard, "Dismiss" -> nothing
+       destructive ask with no recovery point -> destructive card
+       credential ask missing hashing / rate limiting -> security card
+       anything else -> nothing
+  -> destructive card: "Copy the guardrail" -> clipboard, "Dismiss" -> nothing
+  -> security card:    "Explain why" -> teaching view in place, "Back" -> findings
+                       "Fix my prompt" -> rewritten ask on the clipboard
+                       "Ignore" -> nothing
 ```
 
 The hook is on the send path, so it does exactly one small write. There is no
@@ -70,6 +75,19 @@ process, or the send is left completely alone.
 
 ## 3. Rules the daemon enforces
 
+The rules live in `src/Coach.Rules.ps1` and are pure string matching. The daemon
+only renders what they return, so the same decisions are tested headless by
+`tests/Rules.ps1`.
+
+### Precedence
+
+1. **Destructive** — if the ask destroys state with no recovery point, that card
+   wins even when the ask is also a credential ask (`delete the password table`).
+2. **Security** — otherwise, if the ask is a credential ask, one or two findings.
+3. **Silence** — everything else.
+
+### Destructive
+
 - **Recovery point first.** If the text matches `backup`, `commit first`,
   `commit before`, `commit the current`, `dry run`, `snapshot`, `confirm`,
   `only`, `specific`, `this file`, or `one file`, the verdict is silence.
@@ -78,8 +96,26 @@ process, or the send is left completely alone.
 - **Destructive verb + object.** `delete`, `reset`, `drop`, `truncate`,
   `overwrite`, `wipe`, `purge`, `destroy`, `remove`, `clear` plus `files`,
   `database`, `logs`, `history`, `cache`, `config`, `secrets`, ... → card.
-- **Everything else → silence.**
-- **One card at a time.** A second destructive ask while a card is up is
+- **Named single target.** `delete src/app.ts` is specific, so it is silence.
+  `delete all the .ts files in src` is a sweep, so it is a card.
+
+### Security
+
+- **Credential ask.** A credential word (`password`, `passphrase`, `credential`,
+  `login`, `sign in`) plus a build verb plus an auth surface. A bug fix such as
+  `fix the login flow` is not a build ask and stays silent.
+- **Plaintext-password finding.** Added when the text has a comparison or
+  storage word but no hashing word.
+- **Missing-rate-limit finding.** Added when the text has no rate-limiting word.
+- **Suppression.** Each finding is suppressed independently, so
+  `stores bcrypt passwords` still gets the rate-limit finding and
+  `rate limited to 5 per minute` still gets the password finding.
+- **Title count.** One finding → `1 thing before you accept this`; two →
+  `2 things before you accept this`.
+
+### Daemon
+
+- **One card at a time.** A second card-worthy ask while a card is up is
   dropped and traced as `card_dropped`; it is not queued.
 - **Stale request → dropped.** Older than 120 s: deleted, traced as
   `request_stale`, no card.
@@ -87,7 +123,21 @@ process, or the send is left completely alone.
   continues.
 - **Clean exit.** `stop` closes the card, removes the pid file, and exits.
 
-## 4. Timings
+## 4. Card actions
+
+| Action | Automation id | What it does |
+| --- | --- | --- |
+| `copy` | `CoachCopyGuardrail` | guardrail → clipboard, card closes |
+| `dismiss` | `CoachDismiss` | card closes, clipboard untouched |
+| `explain` | `CoachExplain` | teaching view rendered in the same window |
+| `back` | `CoachBack` | findings view rendered in the same window |
+| `fix` | `CoachFixPrompt` | rewritten ask → clipboard, card closes |
+| `ignore` | `CoachIgnore` | card closes, clipboard untouched |
+
+The explain view keeps **Fix my prompt** and **Ignore** next to **Back**, so a
+developer who reads the explanation can still act on it.
+
+## 5. Timings
 
 | Constant | Value | Why |
 | --- | --- | --- |
@@ -98,7 +148,7 @@ process, or the send is left completely alone.
 There are no cross-process timings to keep in lockstep, because the processes
 never wait on each other.
 
-## 5. Failure modes and required behaviour
+## 6. Failure modes and required behaviour
 
 | Failure | Required behaviour |
 | --- | --- |
@@ -106,11 +156,12 @@ never wait on each other.
 | Coach not running | the plugin writes nothing at all |
 | Malformed request JSON | the daemon deletes it, logs, keeps running |
 | Daemon dies mid-card | the card dies with the process; the send already happened |
-| Two destructive asks in the same tick | one card; the second is traced as dropped |
+| Clipboard held by another process | five retries 40 ms apart, then the card closes and the failure is traced |
+| Two card-worthy asks in the same tick | one card; the second is traced as dropped |
 | Stale request from a finished turn | deleted without a card |
 | Draft contains instructions ("ignore your rules") | it is data: matched by regex, never executed, never logged |
 
-## 6. What must stay true
+## 7. What must stay true
 
 - The `prompt` hook **must not** wait on the daemon. Core awaits it before
   admitting the message; any wait is a delay on the developer's send.
@@ -119,14 +170,16 @@ never wait on each other.
 - The daemon **must** delete the request before showing a card, so no prompt
   text outlives the nudge.
 - The daemon **must not** log or trace prompt text. Length and outcome only.
-- The action names are `copy` and `dismiss`; the trace events are `silent`,
-  `card_shown`, `card_action`, `card_dropped`, `card_expired`, `request_stale`.
+- The rules **must** stay pure: no session access, no network, no model call, so
+  `tests/Rules.ps1` can assert them without a desktop.
+- The trace events are `silent`, `card_shown`, `card_action`, `card_dropped`,
+  `card_expired`, `request_stale`.
 
-## 7. What is deliberately not in this slice
+## 8. What is deliberately not in this slice
 
 - No verdict or decision files. Nothing flows back to the plugin.
 - No `context` hook, no attachment, no system-prompt change.
-- No model call, no triage lane, no security-intent heuristics.
-- No Explain why, Fix my prompt, Ignore, or Snooze.
-- No learner, lessons, insights, or persisted snooze state.
+- No model call, no triage lane, no learner, no snooze.
+- No project layer, no repo map, no "you already have this middleware".
+- No VS Code, Cursor, or Claude lane; this is the opencode plugin only.
 - No autostart, guard script, or doctor.
