@@ -14,8 +14,6 @@ export type QuoteSource = {
 export function createComposerQuoteSource() {
   const [state, setState] = createStore<{
     sources: Record<string, QuoteSource | undefined>
-    hovered?: string
-    focused?: string
     /** The quote being commented for the first time, the only one whose source stays highlighted. */
     pending?: string
     reveal?: { key: string; sequence: number }
@@ -32,17 +30,9 @@ export function createComposerQuoteSource() {
       })
 
       if (state.pending && !keys.includes(state.pending)) setState("pending", undefined)
-
-      if (state.hovered && !keys.includes(state.hovered)) setState("hovered", undefined)
-
-      if (state.focused && !keys.includes(state.focused)) setState("focused", undefined)
     },
-    hover: (key: string, active: boolean) => {
-      if (active || state.hovered === key) setState("hovered", active ? key : undefined)
+    reveal: (key: string) => {
+      if (state.pending === key) setState("reveal", { key, sequence: (state.reveal?.sequence ?? 0) + 1 })
     },
-    focus: (key: string, active: boolean) => {
-      if (active || state.focused === key) setState("focused", active ? key : undefined)
-    },
-    reveal: (key: string) => setState("reveal", { key, sequence: (state.reveal?.sequence ?? 0) + 1 }),
   }
 }

@@ -80,7 +80,7 @@ export function createComposerEditor(input: {
   onContextRemove?: (item: ComposerComment) => void
   onQuoteComment?: (item: Extract<ComposerComment, { type: "quote" }>, comment: string) => void
   quoteComment?: { key: Accessor<string | undefined>; set: (key?: string) => void }
-  quoteSource?: Pick<ReturnType<typeof createComposerQuoteSource>, "hover" | "focus" | "reveal">
+  quoteSource?: Pick<ReturnType<typeof createComposerQuoteSource>, "reveal">
   onEditor?: (element: HTMLElement) => void
   onSuggestionSelect?: (item: ComposerSuggestion) => (() => void) | void
   view: ComposerEditorView

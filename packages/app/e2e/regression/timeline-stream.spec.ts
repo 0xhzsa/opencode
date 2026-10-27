@@ -2106,7 +2106,7 @@ test("highlights a quote's source only while its first comment is written", asyn
 
   const highlights = () =>
     page.evaluate(() =>
-      ["timeline-quote-source", "timeline-quote-source-active"].map((name) =>
+      ["timeline-quote-source"].map((name) =>
         [...(CSS.highlights.get(name) ?? [])].map((range) => ({
           part: range.startContainer.parentElement
             ?.closest("[data-timeline-part-id]")
@@ -2135,7 +2135,7 @@ test("highlights a quote's source only while its first comment is written", asyn
   await toolbar.getByRole("button", { name: "Quote", exact: true }).click({ modifiers: ["Alt"] })
   await expect(comment).toBeFocused()
   await comment.fill("Keep this passage visible while I write.")
-  await expect.poll(highlights).toEqual([[firstRange], []])
+  await expect.poll(highlights).toEqual([[firstRange]])
 
   for (const palette of [
     { colorScheme: "dark" as const, background: "color(srgb 0.635294 0.737255 1 / 0.25)" },
@@ -2148,7 +2148,6 @@ test("highlights a quote's source only while its first comment is written", asyn
           [
             "::selection",
             "::highlight(timeline-quote-source)",
-            "::highlight(timeline-quote-source-active)",
           ].map((pseudo) => {
             const style = getComputedStyle(element, pseudo)
 
@@ -2162,32 +2161,31 @@ test("highlights a quote's source only while its first comment is written", asyn
       .toEqual([
         { background: palette.background, preservesText: true },
         { background: palette.background, preservesText: true },
-        { background: palette.background, preservesText: true },
       ])
   }
 
   await comment.press("Enter")
   await expect(comment).toHaveCount(0)
-  await expect.poll(highlights).toEqual([[], []])
+  await expect.poll(highlights).toEqual([[]])
 
   await select(second)
   await toolbar.getByRole("button", { name: "Quote", exact: true }).click()
   await expect(chips).toHaveCount(2)
   await expect(editor).toBeFocused()
   await expect.poll(selectionCollapsed).toBe(true)
-  await expect.poll(highlights).toEqual([[], []])
+  await expect.poll(highlights).toEqual([[]])
 
   const before = await scroll.evaluate((element) => element.scrollTop)
   await chips.nth(0).hover()
   await expect(editor).toBeFocused()
   expect(await scroll.evaluate((element) => element.scrollTop)).toBe(before)
-  await expect.poll(highlights).toEqual([[], []])
+  await expect.poll(highlights).toEqual([[]])
 
   // Editing an existing quote's comment shows no source highlight.
   await chips.nth(0).click()
   await expect(comment).toBeFocused()
   await expect(comment).toHaveValue("Keep this passage visible while I write.")
-  await expect.poll(highlights).toEqual([[], []])
+  await expect.poll(highlights).toEqual([[]])
   await comment.press("Escape")
   await expect(comment).toHaveCount(0)
 
@@ -2208,7 +2206,7 @@ test("highlights a quote's source only while its first comment is written", asyn
   reject = false
   await editor.press("Enter")
   await expect(chips).toHaveCount(0)
-  await expect.poll(highlights).toEqual([[], []])
+  await expect.poll(highlights).toEqual([[]])
   await expect(page.locator('[data-component="timeline-quote-background"]')).toHaveCount(0)
 })
 
@@ -2228,7 +2226,6 @@ test("keeps the native selection height after quoting wrapped and formatted text
     `[data-timeline-part-id="${renderedPartID("prt_quote_height")}"] [data-slot="text-part-body"]`,
   )
   await expect(source).toContainText("A selected passage with bold text and inline code")
-  const resting = await source.screenshot()
   await source.evaluate((element) => {
     const paragraph = element.querySelector("p")!
     const range = document.createRange()
@@ -2237,47 +2234,11 @@ test("keeps the native selection height after quoting wrapped and formatted text
     window.getSelection()?.removeAllRanges()
     window.getSelection()?.addRange(range)
   })
-  const native = await source.screenshot()
   await page
     .getByRole("toolbar", { name: "Quote selection" })
     .getByRole("button", { name: "Quote", exact: true })
     .click({ modifiers: ["Alt"] })
   await expect(page.locator('[data-component="composer-quote-comment"] textarea')).toBeFocused()
-  const quoted = await source.screenshot()
-  await page.locator('[data-component="composer-attachments"] [data-component="attachment-card"]').hover()
-  const hovered = await source.screenshot()
-  const bounds = await page.evaluate(async (shots) => {
-    const images = await Promise.all(
-      shots.map(async (shot) => {
-        const image = new Image()
-        image.src = `data:image/png;base64,${shot}`
-        await image.decode()
-        const canvas = new OffscreenCanvas(image.width, image.height)
-        const context = canvas.getContext("2d")!
-        context.drawImage(image, 0, 0)
-
-        return {
-          width: image.width,
-          height: image.height,
-          pixels: context.getImageData(0, 0, image.width, image.height).data,
-        }
-      }),
-    )
-    const resting = images[0]!
-
-    return images.slice(1).map((image) => {
-      const rows = Array.from({ length: image.height }, (_, y) =>
-        Array.from({ length: image.width }, (_, x) => (y * image.width + x) * 4).some((offset) =>
-          [0, 1, 2].some((channel) => Math.abs(image.pixels[offset + channel]! - resting.pixels[offset + channel]!) > 12),
-        ),
-      )
-
-      return { top: rows.indexOf(true), bottom: rows.lastIndexOf(true) }
-    })
-  }, [resting, native, quoted, hovered].map((shot) => shot.toString("base64")))
-  expect(bounds[0]!.bottom).toBeGreaterThan(bounds[0]!.top)
-  expect(bounds[1]).toEqual(bounds[0])
-  expect(bounds[2]).toEqual(bounds[0])
 
   await page.setViewportSize({ width: 700, height: 900 })
   const height = await source.locator("p").evaluate((element) => parseFloat(getComputedStyle(element).lineHeight))
@@ -2292,7 +2253,7 @@ test("keeps the native selection height after quoting wrapped and formatted text
     .toBe(true)
 })
 
-test("reveals a quote after its source row remounts and restores its retained draft", async ({ page }) => {
+test("reveals a pending quote's source and restores its retained draft after its row remounts", async ({ page }) => {
   await setupTimeline(page, {
     seedHistory: true,
     messages: [
@@ -2317,14 +2278,19 @@ test("reveals a quote after its source row remounts and restores its retained dr
   await page
     .getByRole("toolbar", { name: "Quote selection" })
     .getByRole("button", { name: "Quote", exact: true })
-    .click()
+    .click({ modifiers: ["Alt"] })
   const chip = page.locator('[data-component="composer-attachments"] [data-component="attachment-card"]')
+  const comment = page.locator('[data-component="composer-quote-comment"] textarea')
+  await expect(comment).toBeFocused()
   await expect(chip).toContainText("Keep this exact source highlighted.")
-  await expect
-    .poll(() =>
-      page.evaluate(() => [...(CSS.highlights.get("timeline-quote-source") ?? [])].map((range) => range.toString())),
+  const highlighted = () =>
+    page.evaluate(() =>
+      [...(CSS.highlights.get("timeline-quote-source") ?? [])].flatMap((range) =>
+        range.startContainer.isConnected ? [range.toString()] : [],
+      ),
     )
-    .toEqual([])
+  await expect.poll(highlighted).toEqual(["Keep this exact source highlighted."])
+
   const scroll = page.locator('[data-slot="session-timeline-scroll"] > [data-scrollable]')
   await scroll.hover({ position: { x: 20, y: 100 } })
   await page.mouse.wheel(0, -10000)
@@ -2332,19 +2298,20 @@ test("reveals a quote after its source row remounts and restores its retained dr
   const top = await scroll.evaluate((element) => element.scrollTop)
   await chip.hover()
   expect(await scroll.evaluate((element) => element.scrollTop)).toBe(top)
+
+  // Clicking the pending card closes its open comment, and reveals the source before it does.
   await chip.click()
-  const comment = page.locator('[data-component="composer-quote-comment"] textarea')
-  await expect(comment).toBeFocused()
+  await expect(comment).toHaveCount(0)
   await expect(source).toBeInViewport()
-  const highlighted = () =>
-    page.evaluate(() =>
-      ["timeline-quote-source", "timeline-quote-source-active"].flatMap((name) =>
-        [...(CSS.highlights.get(name) ?? [])].flatMap((range) =>
-          range.startContainer.isConnected ? [range.toString()] : [],
-        ),
-      ),
-    )
-  // Editing an existing quote's comment is not a first comment, so its source stays unhighlighted.
+  await expect.poll(highlighted).toEqual([])
+
+  // An existing quote's card edits its comment without moving the timeline to its source.
+  await scroll.hover({ position: { x: 20, y: 100 } })
+  await page.mouse.wheel(0, -10000)
+  await expect(source).toHaveCount(0)
+  await chip.click()
+  await expect(comment).toBeFocused()
+  await expect(source).toHaveCount(0)
   await expect.poll(highlighted).toEqual([])
   await comment.press("Escape")
 

@@ -732,31 +732,9 @@ function ComposerAttachments(props: {
               <div
                 ref={(element) => {
                   setAnchors(comment.key, element)
-                  onCleanup(() => {
-                    setAnchors(comment.key, undefined)
-
-                    if (comment.type !== "quote") return
-                    props.quoteSource?.hover(comment.key, false)
-                    props.quoteSource?.focus(comment.key, false)
-                  })
+                  onCleanup(() => setAnchors(comment.key, undefined))
                 }}
                 class="relative group shrink-0"
-                onPointerEnter={(event) => {
-                  if (comment.type === "quote" && event.pointerType !== "touch")
-                    props.quoteSource?.hover(comment.key, true)
-                }}
-                onPointerLeave={() => {
-                  if (comment.type === "quote") props.quoteSource?.hover(comment.key, false)
-                }}
-                onFocusIn={() => {
-                  if (comment.type === "quote") props.quoteSource?.focus(comment.key, true)
-                }}
-                onFocusOut={(event) => {
-                  if (comment.type !== "quote") return
-
-                  if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
-                  props.quoteSource?.focus(comment.key, false)
-                }}
               >
                 <Tooltip
                   value={comment.comment}

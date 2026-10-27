@@ -4,8 +4,6 @@ import { createQuoteBackground } from "./quote-background"
 
 const BASE = "timeline-quote-source"
 
-const ACTIVE = "timeline-quote-source-active"
-
 /** Capture exact offsets in stable parts, rather than finding the first occurrence of the quoted text. */
 export function captureQuoteSource(ranges: Range[]): QuoteSource {
   const indexes = new Map<Element, Map<Text, number>>()
@@ -102,17 +100,12 @@ export function createTimelineQuoteHighlight(input: {
   createEffect(() => {
     const root = input.root()
     const source = input.source()
-    const pending = source.state.pending
-    const pieces = pending ? source.state.sources[pending] : undefined
-    const sources = pending && pieces ? [[pending, pieces] as const] : []
+    const pieces = source.state.pending ? source.state.sources[source.state.pending] : undefined
 
-    if (!root || !input.enabled() || !sources.length || typeof Highlight === "undefined" || !CSS.highlights) return
+    if (!root || !input.enabled() || !pieces?.length || typeof Highlight === "undefined" || !CSS.highlights) return
     const base = new Highlight()
-    const active = new Highlight()
     base.priority = -2
-    active.priority = -1
     CSS.highlights.set(BASE, base)
-    CSS.highlights.set(ACTIVE, active)
     let frame: number | undefined
     const background = createQuoteBackground()
     const observed = new Set<Element>()
@@ -127,25 +120,20 @@ export function createTimelineQuoteHighlight(input: {
 
     const apply = () => {
       base.clear()
-      active.clear()
       observer.disconnect()
       const shadows = new Set<ShadowRoot>()
       const containers = new Map<Element, ReturnType<typeof textNodes>>()
       const ranges: Range[] = []
 
-      sources.forEach(([key, pieces]) => {
-        pieces?.forEach((piece) => {
-          const range = resolveQuoteRange(root, piece, containers, (shadow) => {
-            if (shadows.has(shadow)) return
-            shadows.add(shadow)
-          })
-
-          if (!range) return
-
-          const highlight = key === source.state.hovered || key === source.state.focused ? active : base
-          highlight.add(range)
-          ranges.push(range)
+      pieces.forEach((piece) => {
+        const range = resolveQuoteRange(root, piece, containers, (shadow) => {
+          if (shadows.has(shadow)) return
+          shadows.add(shadow)
         })
+
+        if (!range) return
+        base.add(range)
+        ranges.push(range)
       })
       background.update(ranges)
       reveal()
@@ -178,7 +166,6 @@ export function createTimelineQuoteHighlight(input: {
       if (frame !== undefined) cancelAnimationFrame(frame)
       background.clear()
       CSS.highlights.delete(BASE)
-      CSS.highlights.delete(ACTIVE)
     })
   })
 
