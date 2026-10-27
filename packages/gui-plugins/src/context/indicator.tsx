@@ -1,4 +1,4 @@
-import { Show, createMemo, type ComponentProps, type JSX } from "solid-js"
+import { Show, createMemo, type ComponentProps } from "solid-js"
 import { ProgressCircle } from "@opencode/ui/progress-circle"
 import { Button } from "@opencode/ui/button"
 import { Tooltip } from "@opencode/ui/tooltip"
@@ -6,15 +6,6 @@ import { useI18n } from "@opencode/ui/context/i18n"
 import { lastAssistantWithUsage } from "@opencode/client/solid"
 import { usePlugin, type MountedSession } from "@opencode/plugin/gui"
 import { catalogModel, syncCatalog } from "./catalog"
-
-function ContextTooltipRow(props: { name: JSX.Element; value: JSX.Element }) {
-  return (
-    <div class="flex min-w-0 items-center gap-4">
-      <span class="shrink-0 text-v2-text-text-muted">{props.name}</span>
-      <span class="ml-auto min-w-0 truncate text-right text-v2-text-text-base">{props.value}</span>
-    </div>
-  )
-}
 
 export function SessionContextUsage(props: {
   session: MountedSession
@@ -113,25 +104,12 @@ export function SessionContextUsage(props: {
     </div>
   )
 
-  const tooltipValue = () => (
-    <div class="flex w-[120px] flex-col gap-2">
-      <Show when={showCost()}>
-        <ContextTooltipRow name={ctx.t("usage.cost")} value={cost()} />
-      </Show>
-      <ContextTooltipRow name={ctx.t("usage.usage")} value={`${context()?.usage ?? 0}%`} />
-      <ContextTooltipRow name={ctx.t("usage.tokens")} value={context()?.total.toLocaleString(i18n.locale()) ?? "0"} />
-    </div>
-  )
-
   return (
     <Show when={props.session.id}>
-      <Tooltip
-        value={variant() === "indicator" ? tooltipValue() : ctx.t("usage.toggle")}
-        placement={props.placement ?? "top"}
-      >
-        <Show
-          when={variant() === "indicator"}
-          fallback={
+      <Show
+        when={variant() === "indicator"}
+        fallback={
+          <Tooltip value={ctx.t("usage.toggle")} placement={props.placement ?? "top"}>
             <Button
               type="button"
               variant="ghost-muted"
@@ -152,11 +130,11 @@ export function SessionContextUsage(props: {
                 </Show>
               </span>
             </Button>
-          }
-        >
-          {circle()}
-        </Show>
-      </Tooltip>
+          </Tooltip>
+        }
+      >
+        {circle()}
+      </Show>
     </Show>
   )
 }
