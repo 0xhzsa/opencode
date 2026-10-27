@@ -30,7 +30,10 @@ export type Decision =
   | { kind: "none" }
   | { kind: "nudge"; findings: Finding[] };
 
-// Order matters: most severe first, capped at two in render.
+// Order matters: most severe first, capped at two in render. The numeric
+// value is the severity rank (lower = more severe): 0 is critical, 9 is the
+// least severe info note. Keep the keys in this map stable; adding a new
+// finding type here is the only place it can change the render order.
 const ORDER: Record<string, number> = {
   "sql-concat": 0,
   "shell-exec": 1,
@@ -55,7 +58,14 @@ const RE_SECRET_LITERAL =
 const RE_PASSWORD_LITERAL = /(password|passwd|pwd|secret|token|api[_-]?key)\s*[:=]\s*['"][^'"]{6,}['"]/i;
 const RE_SQL_CONCAT = /\b(query|execute|raw|sql)\s*\(|\$\{/i;
 const RE_SQL_TAINT = /(req\b|req\.|request\.|user|input|search|q)\b/i;
-const RE_USER_INPUT = /(req\.params|req\.query|req\.body|req\.cookies|\.query\b|\.params\b|\.body\b)/i;
+// A request boundary that hands raw input past the validation gate: a req./request.
+// access (req.query, req.body, ...) or an Express-style route/method call
+// (route.get, app.post). Followed by the body/query/params/cookies field, it is
+// the point where the shape of the data can change. A `.body` written in a
+// test file, or a bare query string fragment, is not a request boundary and
+// is not flagged.
+const RE_REQUEST_BOUNDARY = /((?:req|request)\.(?:query|body|params|cookies)|(?:route|router|app|server)\.\w+\()/i;
+const RE_INPUT_FIELD = /\.(body|query|params|cookies)\b/i;
 const RE_SHELL_EXEC = /\b(exec|execSync|spawn|spawnSync|execFile|execFileSync)\s*\(/i;
 const RE_INNERHTML = /\.innerHTML\s*=|\bouterHTML\s*=|dangerouslySetInnerHTML/i;
 const RE_EVAL = /\beval\s*\(|\bFunction\s*\(/i;
@@ -65,13 +75,78 @@ const RE_PASSWORD_WORD = /\b(password|passwd|pwd|passphrase|credential|secret)\b
 const RE_HASH = /\b(bcrypt|argon2|scrypt|pbkdf2|hash|hashSync|createHash)\b/i;
 const RE_RATE = /\b(rate[- ]?limit|throttle|lockout|attempts?\s+per|max[- ]?attempts|brute[- ]?force)/i;
 
-// A risky call sitting in a diff with no try/catch anywhere near it.
-function hasRiskWithoutGuard(diff: string, risky: RegExp): boolean {
-  if (!risky.test(diff)) {
-    return false;
+// Words that mark a credential or authentication path: a login form, an API
+// key check, a session creation -- anywhere secrets are at stake. Broader
+// than the password words so the rate-limit finding fires on any of them,
+// not only on password handling.
+const RE_CREDENTIAL_PATH = /\b(login|sign?in|sign?up|logout|auth|password|passwd|pwd|token|credential|secret|session)\b/i;
+
+// Words that mean "the input was already validated" so we do not flag a
+// request boundary whose body/query/params were checked first.
+const VALIDATION_KEYWORDS = /zod|yup|joi|ajv|schema|validate|allowlist|whitelist/i;
+
+// A fallible call (fetch, .then, .json, a database write) sitting in a diff
+// with no error handling that actually covers it. The check is local, not
+// global: a .catch() chained onto the same promise silences the call, and a
+// try/catch block that encloses the call silences it too. A try/catch on an
+// unrelated statement, or a .catch() on a different promise elsewhere in the
+// hunk, does NOT silence the finding.
+const RE_FALLIBLE_CALL = /\b(fetch\s*\(|\.then\(|\.json\(|insertOne|insertMany|findOne|findById|save\s*\(|updateOne|deleteOne)/i;
+
+// A line that opens a `try { ... }` block.
+const isTryHead = (l: string): boolean => /^\s*try\s*\{/.test(l);
+
+function hasFallibleCallWithoutTryCatch(diff: string): boolean {
+  const lines = diff.split("\n");
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!RE_FALLIBLE_CALL.test(lines[i])) continue;
+    if (isGuarded(i, lines)) continue;
+    return true;
+  }
+  return false;
+}
+
+// Is the fallible call on `line` guarded? We walk back from the call line,
+// tracking curly-brace depth so we can see whether a `try { ... }` block
+// encloses it and has not closed by the call. A .catch() on the same
+// promise, or a try/catch on another statement elsewhere in the hunk, does
+// not silence the finding.
+function isGuarded(callLine: number, lines: string[]): boolean {
+  const line = lines[callLine];
+
+  // Same-line guard: a .catch() chained onto the fallible call's promise, or
+  // a try/catch pair that starts on this line before the call.
+  const callPos = RE_FALLIBLE_CALL.exec(line)?.index ?? -1;
+  const tryPos = line.search(/\btry\s*\{/);
+  const catchPos = line.search(/\bcatch\s*\(/);
+  if ((tryPos !== -1 && tryPos < callPos) || catchPos !== -1) {
+    return true;
+  }
+
+  // Brace depth before each line.
+  const open = (s: string) => (s.match(/{/g) ?? []).length;
+  const close = (s: string) => (s.match(/}/g) ?? []).length;
+  const d: number[] = [];
+  let depth = 0;
+  for (const l of lines) {
+    d.push(depth);
+    depth += open(l) - close(l);
   }
-  // Coarse guard: treat the whole hunk as guarded if any try/catch pair exists.
-  return !/try\s*\{[\s\S]*?catch/i.test(diff);
+  const callDepth = d[callLine];
+
+  for (let j = callLine - 1; j >= 0; j--) {
+    if (!isTryHead(lines[j])) continue;
+    if (d[j] >= callDepth) continue; // try opened at/under the call's depth
+    const tryDepth = d[j];
+    let closed = false;
+    for (let k = j + 1; k < callLine; k++) {
+      const after = d[k] + open(lines[k]) - close(lines[k]);
+      if (after <= tryDepth) { closed = true; break; }
+    }
+    if (!closed) return true;
+  }
+  return false;
 }
 
 // --- findings -------------------------------------------------------------
@@ -223,8 +298,11 @@ export function score(prompt: string, diff: string, knownTags: string[] = []): F
     found.push(passwordFinding());
   }
 
-  // Rate limiting on a credential prompt.
-  if (RE_PASSWORD_WORD.test(p) && !RE_RATE.test(p) && !RE_RATE.test(d)) {
+  // Rate limiting on any credential or authentication path: a login form,
+  // an API key check, a session creation -- anywhere secrets are at stake.
+  // Broader than the password words so the finding is not locked to
+  // password handling alone.
+  if (RE_CREDENTIAL_PATH.test(p) && !RE_RATE.test(p) && !RE_RATE.test(d)) {
     if (!found.some((f) => f.id === "rate-limit")) {
       found.push({
         id: "rate-limit",
@@ -256,15 +334,18 @@ export function score(prompt: string, diff: string, knownTags: string[] = []): F
     found.push(xssFinding());
   }
 
-  if (RE_USER_INPUT.test(d) && !/zod|yup|joi|ajv|schema|validate|allowlist|whitelist/i.test(d)) {
-    found.push(unvalidatedFinding());
+  // Request boundary with an unvalidated input field: req./request. access or
+  // an Express-style route/method call, and a body/query/params/cookies
+  // field that reaches the rest of the code unchecked.
+  if (RE_REQUEST_BOUNDARY.test(d) && RE_INPUT_FIELD.test(d) && !VALIDATION_KEYWORDS.test(d)) {
+    found.push(unvalidatedFinding());
   }
 
   if (RE_EVAL.test(d)) {
     found.push(evalFinding());
   }
 
-  if (hasRiskWithoutGuard(d, /fetch\s*\(|\.then\(|catch\s*\(|\.json\(|insertOne|insertMany|findOne|findById|save\s*\(|updateOne|deleteOne/i)) {
+  if (hasFallibleCallWithoutTryCatch(d)) {
     found.push(tryCatchFinding());
   }
 
