@@ -252,6 +252,9 @@ describe("AISDKNative", () => {
       package: "@opencode/ai/providers/amazon-bedrock/mantle/messages",
       settings: { apiKey: "token" },
     })
+    expect(rewrite("@opencode/ai/providers/amazon-bedrock-mantle", {}, "openai.gpt-oss-120b").package).toBe(
+      "@opencode/ai/providers/amazon-bedrock/mantle/chat",
+    )
     expect(rewrite("@opencode/ai/providers/azure", { useCompletionUrls: true }).package).toBe(
       "@opencode/ai/providers/azure/chat",
     )
