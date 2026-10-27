@@ -3,6 +3,7 @@
 
 import { chat, COACH_MODEL } from "./model.js";
 import { Profile } from "./profile.js";
+import { detectProject, type ProjectContext } from "./project.js";
 
 export type CoachResponse = {
   interrupt: true;
@@ -39,15 +40,19 @@ export async function coach(
   prompt: string,
   diff: string,
   profile: Profile,
-  triageReason?: string
+  triageReason?: string,
+  project?: ProjectContext
 ): Promise<CoachResponse> {
   const snap = profile.snapshot();
   const depth = snap.mastered.length > 0 ? "advanced" : snap.counts && Object.keys(snap.counts).length > 0 ? "intermediate" : "beginner";
+  const proj = project ?? detectProject();
 
   const user = `DEPTH: ${depth}
 MASTERED (do not re-teach): ${snap.mastered.join(", ") || "(none)"}
 CONCEPT COUNTS: ${JSON.stringify(snap.counts)}
 TRIAGE REASON: ${triageReason ?? "(none)"}
+PROJECT CONTEXT:
+${proj.summary}
 
 PROMPT:
 ${prompt}
@@ -58,7 +63,7 @@ ${diff || "(none)"}`;
   const raw = await chat(COACH_MODEL, [
     { role: "system", content: COACH_SYSTEM },
     { role: "user", content: user },
-  ], { maxTokens: 1024, temperature: 0.3 });
+  ], { maxTokens: 512, temperature: 0.3 });
 
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("No JSON in coach response");

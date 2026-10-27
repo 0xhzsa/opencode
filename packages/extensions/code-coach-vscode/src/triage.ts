@@ -79,7 +79,7 @@ const RE_RATE = /\b(rate[- ]?limit|throttle|lockout|attempts?\s+per|max[- ]?atte
 // key check, a session creation -- anywhere secrets are at stake. Broader
 // than the password words so the rate-limit finding fires on any of them,
 // not only on password handling.
-const RE_CREDENTIAL_PATH = /\b(login|sign?in|sign?up|logout|auth|password|passwd|pwd|token|credential|secret|session)\b/i;
+const RE_CREDENTIAL_PATH = /\b(login|sign?in|sign?up|logout|auth|api[_-]?key|password|passwd|pwd|token|credential|secret|session)\b/i;
 
 // Words that mean "the input was already validated" so we do not flag a
 // request boundary whose body/query/params were checked first.
@@ -116,12 +116,24 @@ function isGuarded(callLine: number, lines: string[]): boolean {
   const line = lines[callLine];
 
   // Same-line guard: a .catch() chained onto the fallible call's promise, or
-  // a try/catch pair that starts on this line before the call.
+  // a try/catch pair that starts on this line before the call and still
+  // encloses it. A try/catch on another statement, or a .catch() on a
+  // different promise elsewhere in the hunk, does not silence the finding.
   const callPos = RE_FALLIBLE_CALL.exec(line)?.index ?? -1;
   const tryPos = line.search(/\btry\s*\{/);
-  const catchPos = line.search(/\bcatch\s*\(/);
-  if ((tryPos !== -1 && tryPos < callPos) || catchPos !== -1) {
+  const catchPos = line.search(/\.catch\s*\(/);
+  if (catchPos !== -1) {
     return true;
+  }
+  if (tryPos !== -1 && tryPos < callPos) {
+    // The try block must enclose the call within the line: braces open at
+    // the try's '{' and stay open past the call's position.
+    let depth = 0;
+    for (let k = tryPos; k < callPos; k++) {
+      if (line[k] === "{") depth++;
+      else if (line[k] === "}") depth--;
+    }
+    if (depth > 0) return true;
   }
 
   // Brace depth before each line.

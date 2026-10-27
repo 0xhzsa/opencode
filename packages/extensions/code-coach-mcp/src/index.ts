@@ -7,6 +7,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { triage } from "./triage.js";
 import { coach } from "./coach.js";
 import { Profile } from "./profile.js";
+import { detectProject } from "./project.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -37,6 +38,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Return the current learner profile (counts + mastered concepts).",
       inputSchema: { type: "object", properties: {} },
     },
+    {
+      name: "project",
+      description: "Return the detected project context (stack, conventions, key files).",
+      inputSchema: { type: "object", properties: {} },
+    },
   ],
 }));
 
@@ -53,7 +59,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       };
     }
 
-    const result = await coach(prompt, diff, profile, t.reason);
+    const result = await coach(prompt, diff, profile, t.reason, detectProject());
     const snap = profile.snapshot();
     return {
       content: [
@@ -69,6 +75,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const snap = profile.snapshot();
     return {
       content: [{ type: "text", text: JSON.stringify(snap) }],
+    };
+  }
+
+  if (req.params.name === "project") {
+    const ctx = detectProject();
+    return {
+      content: [{ type: "text", text: JSON.stringify(ctx) }],
     };
   }
 
