@@ -169,6 +169,19 @@ export function activate(context: vscode.ExtensionContext) {
     }, DEBOUNCE_MS);
   };
 
+  // Watch terminal output for errors and feed to the coach (if API available)
+  try {
+    const terminalDisposable = (vscode.window as any).onDidWriteTerminalData?.((e: any) => {
+      const text = e.data;
+      if (text && (text.includes("Error") || text.includes("FAIL") || text.includes("error TS") || text.includes("Cannot find"))) {
+        onSave("Terminal output: " + text.slice(0, 500));
+      }
+    });
+    if (terminalDisposable) context.subscriptions.push(terminalDisposable);
+  } catch {
+    // Terminal watching not available in this VS Code version
+  }
+
   const disposable = vscode.workspace.onDidSaveTextDocument((doc) => {
     onSave(doc.getText());
   });
