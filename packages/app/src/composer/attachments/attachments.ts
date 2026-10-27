@@ -218,6 +218,13 @@ export function createComposerAttachments(
     if (files) await addAttachments(Array.from(files))
   }
 
+  // Callers start these operations without awaiting them, so a failed blob write is reported here
+  // instead of escaping as an unhandled rejection.
+  const reported =
+    <Args extends unknown[], Result>(operation: (...args: Args) => Promise<Result>) =>
+    (...args: Args) =>
+      operation(...args).catch(input.onError)
+
   onMount(() => {
     const cancel = input.onDragCancel?.(clearDrag)
 
@@ -235,13 +242,13 @@ export function createComposerAttachments(
     makeEventListener(document, "keydown", (event) => {
       if (event.key === "Escape") clearDrag()
     })
-    makeEventListener(document, "drop", handleDrop)
+    makeEventListener(document, "drop", reported(handleDrop))
   })
 
   return {
-    addAttachments,
-    handlePaste,
-    handleDrop,
+    addAttachments: reported(addAttachments),
+    handlePaste: reported(handlePaste),
+    handleDrop: reported(handleDrop),
     /** Uploads still in flight for this composer; sending waits for them. */
     pending: () => uploads.items().filter((item) => pending.ids.includes(item.id)),
     cancel(id: string) {
