@@ -63,9 +63,10 @@ export const Settings = Schema.StructWithRest(
 export type Settings = typeof Settings.Type
 
 // Variants switch request settings. The prompt cache belongs to the model, so a variant can't change it.
-const VariantSettings = Schema.StructWithRest(Schema.Struct(Struct.omit(Settings.schema.fields, ["cache"])), [
-  Schema.Record(Schema.String, Schema.Any),
-]).annotate({ identifier: "Model.VariantSettings" })
+const VariantSettings = Schema.StructWithRest(
+  Schema.Struct(Struct.omit(Settings.schema.fields, ["cache"])),
+  Settings.records,
+).annotate({ identifier: "Model.VariantSettings" })
 
 export const Overlays = {
   settings: Settings.pipe(optional),

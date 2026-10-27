@@ -97,9 +97,10 @@ class ModelConfig extends Schema.Class<ModelConfig>("Config.Model")({
     id: VariantID,
     ...ModelOverlays,
     // The prompt cache belongs to the model, so a variant can't change it.
-    settings: Schema.StructWithRest(Schema.Struct(Struct.omit(ModelSettings.schema.fields, ["cache"])), [
-      Schema.Record(Schema.String, Schema.UndefinedOr(Schema.Json)),
-    ])
+    settings: Schema.StructWithRest(
+      Schema.Struct(Struct.omit(ModelSettings.schema.fields, ["cache"])),
+      ModelSettings.records,
+    )
       .annotate({ identifier: "Config.Model.VariantSettings" })
       .pipe(optional),
   }).pipe(Schema.Array, optional),
