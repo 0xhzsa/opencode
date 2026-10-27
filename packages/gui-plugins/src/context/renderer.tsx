@@ -17,7 +17,6 @@ const setup: Plugin.Setup<typeof definition> = (ctx) => {
       return ctx.t("tab.title")
     },
     draggable: false,
-    closable: "compact",
     first: true,
     fallback: true,
     label: (state) => (
