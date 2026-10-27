@@ -28,6 +28,7 @@ test("Home keeps the session list in every interface mode", async ({ page }) => 
   // The Inbox mode moves session tabs into the sidebar inbox; Home stays the session list. It is Beta-only, so the
   // dev server offers it but the production build CI tests (see playwright.config.ts) leaves it out.
   const inbox = !process.env.CI && process.env.PLAYWRIGHT_BUILD !== "1"
+
   for (const mode of inbox ? ["Side tabs", "Inbox", "Top tabs"] : ["Side tabs", "Top tabs"]) {
     await page.keyboard.press("Control+,")
     const settings = page.getByTestId("settings-screen")
