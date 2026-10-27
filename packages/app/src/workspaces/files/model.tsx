@@ -7,7 +7,7 @@ import { useParams } from "@solidjs/router"
 import { getDirectory, getFilename } from "@opencode/util/path"
 import { useWorkspaceLocation } from "@/workspaces/location"
 import { useLanguage } from "@/runtime/i18n/language"
-import { useExtensionAttachment } from "@/runtime/extension/host-apis"
+import { usePluginAttachment } from "@/runtime/plugin/host-apis"
 import { createPathHelpers } from "./path"
 import { artifactKind } from "@opencode/util/artifact"
 import { usePlatform } from "@/runtime/platform/platform"
@@ -41,7 +41,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const serverSDK = useServerSDK()
     const platform = usePlatform()
     const language = useLanguage()
-    const extensions = useExtensionAttachment()
+    const attachment = usePluginAttachment()
 
     const scope = createMemo(() => sdk().directory)
     const path = createPathHelpers(scope)
@@ -153,7 +153,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
         }),
       )
 
-      if (silent || (notFound && extensions.files.opened().includes(file))) return
+      if (silent || (notFound && attachment.files.opened().includes(file))) return
 
       showToast({
         variant: "error",
@@ -277,7 +277,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
         invalidateFromWatcher(event, {
           normalize: path.normalize,
           hasFile: (file) => Boolean(store.file[file]),
-          isOpen: (file) => extensions.files.opened().includes(file),
+          isOpen: (file) => attachment.files.opened().includes(file),
           loadFile: (file) => {
             void load(file, { force: true, silent: true })
           },
@@ -309,7 +309,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     }
 
     createEffect(() => {
-      const stop = serverSDK.event.on("server.connected", () => extensions.files.opened().forEach(watch))
+      const stop = serverSDK.event.on("server.connected", () => attachment.files.opened().forEach(watch))
 
       onCleanup(stop)
     })
