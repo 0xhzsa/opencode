@@ -167,7 +167,7 @@ export function SessionActivityChips(props: {
                 const row = event.target.closest<HTMLElement>('[data-component="menu-v2-item"]')
 
                 if (!row) return
-                // Kobalte's scroll adjustment ignores scroll-padding; native scrolling keeps the ring clear of the edge.
+                // Kobalte's scroll adjustment ignores scroll-padding; native scrolling keeps the row clear of the edge.
                 queueMicrotask(() => row.scrollIntoView({ block: "nearest", inline: "nearest" }))
               }}
             >

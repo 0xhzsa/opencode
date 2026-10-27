@@ -55,12 +55,6 @@
   background: var(--v2-background-bg-layer-01);
   text-align: start;
 
-  /* Match the queue panel's inset-ring pattern inside a clipped scrollport. */
-  :is([data-component="menu-v2-item"], [data-component="icon-button-v2"]):is(:focus-visible, [data-state="focus"]) {
-    outline: 2px solid var(--v2-border-border-focus);
-    outline-offset: -2px;
-  }
-
   [data-slot="menu-v2-item-content"] > span[dir] {
     text-align: match-parent;
     unicode-bidi: isolate;
