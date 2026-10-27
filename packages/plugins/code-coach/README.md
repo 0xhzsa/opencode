@@ -146,6 +146,12 @@ process and is not started by the plugin.
    `COACH_DATA_DIR` overrides the data folder (`%LOCALAPPDATA%\CodeCoachData`).
    The daemon writes `daemon.pid`, `logs\daemon.log`, and `trace.jsonl` there.
 
+   **If you already run another Code Coach build, use a separate folder.** The
+   full product uses the same default folder with a different request format,
+   and its daemon will hold the pid file. Set `COACH_DATA_DIR` to something like
+   `%LOCALAPPDATA%\CodeCoachData-pr` in the daemon's environment *and* in
+   opencode's environment before starting either half.
+
 4. Send one of the prompts from the table above. The plugin writes a request
    only when the send is substantive and the daemon is alive.
 
