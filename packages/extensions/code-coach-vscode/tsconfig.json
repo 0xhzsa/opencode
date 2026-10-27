@@ -6,13 +6,12 @@
     "outDir": "dist",
     "lib": ["es2022"],
     "sourceMap": true,
-    "rootDir": "src",
     "strict": true,
     "noImplicitAny": true,
     "noUnusedLocals": false,
     "skipLibCheck": true,
     "types": ["node", "vscode", "bun"]
   },
-  "include": ["src", "tests"],
+  "include": ["src"],
   "exclude": ["node_modules", "dist"]
 }

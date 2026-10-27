@@ -14,6 +14,7 @@ import { type Finding, decide } from "./triage";
 
 const DEBOUNCE_MS = 900;
 const MAX_RESULTS = 2;
+const MAX_REVISIONS = 5; // revisions kept in the ring before scoring
 
 /** Last N saved revisions, in order. */
 class Ring {
@@ -69,11 +70,8 @@ export function activate(context: vscode.ExtensionContext) {
     }, DEBOUNCE_MS);
   };
 
-  const disposable = vscode.workspace.onDidSave((event) => {
-    const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === event.document.uri.fsPath);
-    if (doc) {
-      onSave(doc.getText());
-    }
+  const disposable = vscode.workspace.onDidSaveTextDocument((doc) => {
+    onSave(doc.getText());
   });
 
   context.subscriptions.push(disposable);

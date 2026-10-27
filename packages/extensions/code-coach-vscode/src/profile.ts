@@ -10,7 +10,7 @@
 import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-export interface Record {
+export interface ProfileRecord {
   ts: number;
   finding: string;
   tags: string[];
@@ -36,7 +36,7 @@ export class Profile {
   }
 
   record(finding: string, tags: string[]): void {
-    const rec: Record = { ts: Date.now(), finding, tags };
+    const rec: ProfileRecord = { ts: Date.now(), finding, tags };
     try {
       appendFileSync(this.file, JSON.stringify(rec) + "\n", "utf8");
     } catch {
@@ -51,7 +51,7 @@ export class Profile {
       for (const line of raw.split("\n")) {
         const t = line.trim();
         if (!t) continue;
-        let rec: Record;
+        let rec: ProfileRecord;
         try {
           rec = JSON.parse(t);
         } catch {

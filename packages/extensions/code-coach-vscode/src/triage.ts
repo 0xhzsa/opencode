@@ -167,7 +167,7 @@ function evalFinding(): Finding {
     severity: "warn",
     title: "eval() runs untrusted text as code",
     why: "eval executes a string, so any input that reaches it is running as code in the process.",
-    fix: "Replace eval with the parser you actually need â€” JSON.parse, a real templating engine, or explicit data fields.",
+    fix: "Replace eval with the parser you actually need — JSON.parse, a real templating engine, or explicit data fields.",
     tags: ["eval"],
   };
 }
