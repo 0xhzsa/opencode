@@ -2,6 +2,7 @@ import { Badge } from "@opencode/ui/badge"
 import { Dialog, DialogBody } from "@opencode/ui/dialog"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { Icon } from "@opencode/ui/icon"
+import { Keybind } from "@opencode/ui/keybind"
 import {
   displayName,
   getProjectAvatarGenerated,
@@ -21,7 +22,7 @@ import { useLanguage } from "@/runtime/i18n/language"
 import { useServerSDK } from "@/runtime/server/client"
 import { ServerConnection, useServers } from "@/runtime/server/registry"
 import { useGlobal } from "@/runtime/server/runtime"
-import { matchKeybind, parseKeybind } from "@/shell/commands/command"
+import { useCommand } from "@/shell/commands/command"
 import { workspaceSelectionDirectories } from "@/workspaces/paths"
 import "@/shell/commands/dialog.css"
 import "@/shell/palette-menu.css"
@@ -66,6 +67,7 @@ function NewSessionLocationDialog(props: {
 }) {
   const dialog = useDialog()
   const language = useLanguage()
+  const command = useCommand()
   const global = useGlobal()
   const servers = useServers()
   const serverSDK = useServerSDK()
@@ -199,12 +201,20 @@ function NewSessionLocationDialog(props: {
   }
 
   const choosesServer = () => props.project.servers().length > 1
-  const addKeybind = parseKeybind("mod+o")
+  command.register("new-session-location", () => [
+    {
+      id: "project.open",
+      title: language.t("command.project.open"),
+      category: language.t("command.category.project"),
+      keybind: "mod+o",
+      onSelect: () => choose({ id: "add", type: "add" }),
+    },
+  ])
   createEventListener(document, "keydown", (event) => {
-    if (event.isComposing || !matchKeybind(addKeybind, event)) return
+    if (event.isComposing || !command.matches("project.open", event)) return
     event.preventDefault()
     event.stopPropagation()
-    choose({ id: "add", type: "add" })
+    command.trigger("project.open", "keybind")
   })
 
   // Every step opens on its first row; the user's choice holds while it stays in the results.
@@ -488,6 +498,9 @@ function NewSessionLocationDialog(props: {
                                 </span>
                               </div>
                             </div>
+                            <Show when={command.keybindParts("project.open").length}>
+                              <Keybind keys={command.keybindParts("project.open")} variant="neutral" class="shrink-0" />
+                            </Show>
                             <Show when={choosesServer()}>
                               <DrillButton label={language.t("session.new.location.servers")} onDrill={pick} />
                             </Show>

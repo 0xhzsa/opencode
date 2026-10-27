@@ -611,6 +611,7 @@ test("the location dialog separates added projects from server projects and tags
   await expect(search).toBeFocused()
   const options = dialog.getByRole("option")
   const add = options.filter({ hasText: "Open project…" })
+  await expect(add.locator('[data-component="keybind-v2"]')).toContainText("O")
   const rows = options.filter({ has: page.locator(".new-session-location-name") })
   const names = options.locator(".new-session-location-name")
   const paths = options.locator(".command-palette-description")
@@ -719,6 +720,31 @@ test("the location dialog separates added projects from server projects and tags
   await expect(page.getByRole("button", { name: "Select folder", exact: true })).toBeEnabled()
   await expect.poll(() => files.length).toBeGreaterThan(0)
 })
+
+for (const binding of ["mod+alt+p", "none"]) {
+  test(`the location dialog honors the Open project shortcut override: ${binding}`, async ({ page }) => {
+    await openDraft(page, {
+      name: "ProjectShortcut",
+      fileList: () => [],
+      seed: { settings: { keybinds: { "project.open": binding } } },
+    })
+    await newSessionLocation(page).click()
+    const search = page.getByRole("combobox", { name: "Search projects", exact: true })
+    await expect(search).toBeFocused()
+    const keys = page.getByRole("option", { name: /^Open project…/ }).locator('[data-component="keybind-v2"]')
+    if (binding === "none") await expect(keys).toHaveCount(0)
+    if (binding !== "none") await expect(keys).toContainText("P")
+
+    const modifier = (await page.evaluate(() => navigator.platform.includes("Mac"))) ? "Meta" : "Control"
+    await search.press(`${modifier}+o`)
+    await search.fill("still searching")
+    await expect(search).toHaveValue("still searching")
+    if (binding === "none") return
+
+    await search.press(`${modifier}+Alt+p`)
+    await expect(page.getByRole("button", { name: "Select folder", exact: true })).toBeEnabled()
+  })
+}
 
 const accentRoot = "C:/OpenCode/WorkspaceAccent"
 
