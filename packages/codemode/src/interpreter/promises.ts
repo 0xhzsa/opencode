@@ -296,7 +296,9 @@ export class Pending<R> {
     for (const fiber of this.live) {
       if (!this.waits.get(fiber)?.blocked()) return
     }
-    const node = this.waits.get(this.main)?.node
+    // Main adopting a returned promise has no await of its own; point at an explicit await elsewhere instead.
+    let node = this.waits.get(this.main)?.node
+    for (const fiber of this.live) node ??= this.waits.get(fiber)?.node
     Deferred.doneUnsafe(this.deadlock, Exit.die(new PendingThrow("Error", deadlockMessage, node)))
   }
 

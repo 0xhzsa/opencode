@@ -1413,6 +1413,15 @@ await new Promise((resolve) => resolve)`)
     expect(failure.location).toEqual({ line: 2, column: 1 })
   })
 
+  test("a returned promise reports the nested await that never settles", async () => {
+    const failure = await error(`async function wait() {
+  await new Promise(() => {})
+}
+return wait()`)
+    expect(failure.message).toContain(deadlock)
+    expect(failure.location).toEqual({ line: 2, column: 3 })
+  })
+
   test("program code cannot catch the deadlock and keep going", async () => {
     const failure = await error(`
       try { await new Promise(() => {}) } catch { return "caught" }
