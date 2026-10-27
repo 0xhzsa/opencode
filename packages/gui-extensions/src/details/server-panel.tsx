@@ -26,6 +26,7 @@ import { createStore } from "solid-js/store"
 import { createKeyed, useDrawer, useExtension, type MountedSession } from "../sdk"
 import { globalConfigDirectory, serviceConfigFile } from "./config-file"
 import { configuredLsps } from "./configured-lsp"
+import { createFlyoutMotion } from "./flyout-motion"
 
 const services = [
   { type: "mcp", icon: "mcp", label: "mcp" },
@@ -100,6 +101,7 @@ function ServiceMenu(props: ServiceProps & { mobile?: boolean; name: string }) {
   const ctx = useExtension()
   const drawer = useDrawer()
   const id = createUniqueId()
+  const motion = createFlyoutMotion()
 
   // A new scope whenever visibility changes closes the flyout.
   const scope = createMemo(
@@ -434,6 +436,7 @@ function ServiceMenu(props: ServiceProps & { mobile?: boolean; name: string }) {
         ref={flyout}
         class="session-service-flyout"
         data-open={active() !== undefined || undefined}
+        data-motion={motion() || undefined}
         inert={active() === undefined || undefined}
         style={{ transform: `translateY(${offset()}px)` }}
         onKeyDown={keydown}
