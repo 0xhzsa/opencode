@@ -395,13 +395,17 @@ export function ActiveSessionComposerRegion(props: {
   })
 
   // Subagents count while their session runs, or while their blocking call waits for its child session.
+  // Keep blocking calls first, independent of the order their child sessions load.
   const subagents = createMemo<SessionActivityItem[]>(() =>
-    props.model.region.state.background.subagents().map((task) => ({
-      ...task,
-      agent: task.agent ?? (task.sessionID ? data.session.get(task.sessionID)?.agent : undefined),
-      key: task.id,
-      target: task.partID ?? task.id,
-    })),
+    props.model.region.state.background
+      .subagents()
+      .toSorted((a, b) => Number(!!b.partID) - Number(!!a.partID))
+      .map((task) => ({
+        ...task,
+        agent: task.agent ?? (task.sessionID ? data.session.get(task.sessionID)?.agent : undefined),
+        key: task.id,
+        target: task.partID ?? task.id,
+      })),
   )
 
   const shells = createMemo<SessionActivityItem[]>(() =>
