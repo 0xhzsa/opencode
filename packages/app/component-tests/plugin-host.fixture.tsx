@@ -122,6 +122,8 @@ function fakeApis(storage: (plugin: string) => Storage): HostApiFactories {
     storage,
     system: () => ({ copy: async () => {}, save: async () => false, openExternal() {} }),
     embeds: () => ({ View: () => null, capture: async () => undefined }),
+    toast: () => ({ show() {} }),
+    tabs: () => ({ list: () => [], open() {}, focus() {}, move() {}, close() {} }),
   }
 }
 
@@ -383,6 +385,7 @@ function standIn(overrides: Partial<Interface>): Interface {
     matches: () => false,
     servers: () => ["local"],
     server: () => undefined,
+    tabs: { list: () => [], open() {}, focus() {}, move() {}, close() {} },
     ...overrides,
   }
 }

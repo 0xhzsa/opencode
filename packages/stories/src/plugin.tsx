@@ -81,8 +81,8 @@ function createStoryContext(id: string, definition: Entry) {
     },
   }
   // The HostApis a story has no stand-in for fail when read.
-  ;["layout", "sessions", "screen", "storage", "system", "dialogs", "links", "embeds"].forEach((name) =>
-    Object.defineProperty(context, name, { get: unavailable(`ctx.${name}`) }),
+  ;["layout", "sessions", "screen", "storage", "system", "dialogs", "toast", "tabs", "links", "embeds"].forEach(
+    (name) => Object.defineProperty(context, name, { get: unavailable(`ctx.${name}`) }),
   )
   return context as unknown as Context
 }

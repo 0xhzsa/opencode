@@ -30,6 +30,8 @@ import type {
   Sessions,
   Storage,
   System,
+  Tabs,
+  Toast,
   Workspaces,
 } from "./host-apis.js"
 
@@ -152,6 +154,24 @@ export interface Context extends BaseContext {
    * ```
    */
   readonly dialogs: Dialogs
+  /**
+   * Short messages in the corner of the window.
+   *
+   * @example
+   * ```ts
+   * ctx.toast.show({ variant: "error", title: ctx.t("send.failed") })
+   * ```
+   */
+  readonly toast: Toast
+  /**
+   * The shell's tab strip: open, show, move and close session tabs.
+   *
+   * @example
+   * ```ts
+   * const first = (key: string) => ctx.tabs.move(key, 0)
+   * ```
+   */
+  readonly tabs: Tabs
   /**
    * Routes local links to the plugins that handle them.
    *

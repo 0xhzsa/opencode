@@ -962,6 +962,8 @@ export function mountBrowserRegion(input: RegionHost) {
       system: () => ({ copy: async () => undefined, openExternal() {}, save: async () => false }),
       sessions: () => ({ list: () => refs, current: view }),
       screen: () => ({ current: () => screen }),
+      toast: () => ({ show() {} }),
+      tabs: () => ({ list: () => [], open() {}, focus() {}, move() {}, close() {} }),
       layout,
       storage,
     }

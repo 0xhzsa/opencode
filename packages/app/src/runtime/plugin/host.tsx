@@ -16,6 +16,7 @@ import {
   untrack,
   useContext,
   type Accessor,
+  type JSX,
   type Owner,
   type ParentProps,
 } from "solid-js"
@@ -39,6 +40,7 @@ import {
   type Persisted,
   type PluginOptions,
   type Registry,
+  type SelectOptions,
   type Ipc,
   type IpcClient,
   type IpcSpec,
@@ -48,6 +50,7 @@ import {
 } from "@opencode/plugin/gui"
 import { OpenCode, type OpenCodeClient } from "@opencode/client/promise"
 import { useLanguage } from "@/runtime/i18n/language"
+import { PluginConfirmDialog, PluginPromptDialog, PluginSelectDialog } from "./dialogs"
 import { createSessionStore, whenLoaded } from "./stores"
 
 type Contribution = { key: string; registry: string; plugin: string; value: Accessor<unknown> }
@@ -110,6 +113,9 @@ type HostState = {
 }
 
 type Stores = Record<string, Persisted<object> | ((session: SessionRef) => Persisted<object>)>
+
+/** A `confirm`, `prompt` or `select` in flight: whether it answered, and the release of its owner's cleanup. */
+type Asking = { settled: boolean; release?: Cleanup }
 
 const pending: Absent = { status: "pending" }
 
@@ -292,8 +298,8 @@ function createHost(input: HostInput) {
     ...input.apis,
     links: () => links,
     // Bound to the instance that asked, so an older async call after a disable or reload opens and closes nothing.
-    dialogs: (plugin, _, context, register): Dialogs => ({
-      open(render, options) {
+    dialogs: (plugin, _, context, register): Dialogs => {
+      const open: Dialogs["open"] = (render, options) => {
         const id = `plugin:${plugin}:${sequence.value++}`
         const waiting = { cancel: () => {} }
         // This open alone: once it aborts, a deferred open neither mounts nor replaces another dialog.
@@ -347,9 +353,46 @@ function createHost(input: HostInput) {
         )
 
         return handle
-      },
-      active: () => !!dialog.active,
-    }),
+      }
+
+      // Settles once: with the dialog's answer, or with `fallback` when the dialog closes any other way, including
+      // when it never opens because its owner or the plugin ended first.
+      const ask = <T,>(fallback: T, render: (done: (value: T) => void) => JSX.Element) => {
+        const answer = Promise.withResolvers<T>()
+        // `register` runs its cleanup at once for an ended owner, before it returns the release.
+        const state: Asking = { settled: false }
+
+        const settle = (value: T) => {
+          if (state.settled) return
+          state.settled = true
+          void state.release?.()
+          answer.resolve(value)
+        }
+
+        state.release = register(() => settle(fallback))
+
+        open((handle) => {
+          onCleanup(() => settle(fallback))
+
+          return render((value) => {
+            settle(value)
+            handle.close()
+          })
+        })
+
+        return answer.promise
+      }
+
+      return {
+        open,
+        confirm: (options) => ask(false, (done) => <PluginConfirmDialog options={options} done={done} />),
+        prompt: (options) =>
+          ask<string | undefined>(undefined, (done) => <PluginPromptDialog options={options} done={done} />),
+        select: <T,>(options: SelectOptions<T>) =>
+          ask<T | undefined>(undefined, (done) => <PluginSelectDialog options={options} done={done} />),
+        active: () => !!dialog.active,
+      }
+    },
   } satisfies { readonly [K in keyof HostApis]: HostApiFactory<HostApis[K]> }
 
   const activate = async (definition: Entry) => {

@@ -51,7 +51,7 @@ export function createMountedSession(session: SessionModel) {
   // The composer region owns background tasks and is created after the view.
   const [background, setBackground] = createSignal<Accessor<readonly BackgroundTask[]>>()
   // The screen's composer view, created after this object, says whether it takes quotes and focuses its prompt.
-  const [prompt, setPrompt] = createSignal<{ quotable: Accessor<boolean>; focus: () => void }>()
+  const [prompt, setPrompt] = createSignal<{ quotable: Accessor<boolean>; focus: () => void; focused: () => boolean }>()
 
   const serverRef: ServerRef = {
     get id() {
@@ -162,6 +162,14 @@ export function createMountedSession(session: SessionModel) {
     },
     update: (id, patch) => composer.context.updateComment(id, patch),
     detach: (id) => composer.context.removeComment(id),
+    // Read through `capture`, which never suspends, unlike the composer's own `current`.
+    text: () =>
+      composer
+        .capture()
+        .current()
+        .map((part) => ("content" in part ? part.content : ""))
+        .join(""),
+    focused: () => !!prompt()?.focused(),
   }
 
   // Each object's memos live in its own root, which ends when the next object replaces it: a kept object stops
@@ -270,6 +278,7 @@ export function createMountedSession(session: SessionModel) {
     screen,
     view: mounted,
     bindBackground: (tasks: Accessor<readonly BackgroundTask[]>) => setBackground(() => tasks),
-    bindPrompt: (value: { quotable: Accessor<boolean>; focus: () => void }) => setPrompt(() => value),
+    bindPrompt: (value: { quotable: Accessor<boolean>; focus: () => void; focused: () => boolean }) =>
+      setPrompt(() => value),
   }
 }

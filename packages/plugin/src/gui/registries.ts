@@ -58,11 +58,19 @@ export interface Command {
    */
   readonly editable?: true
   /**
-   * Runs the command from the palette, the keybind or the slash command.
+   * Runs the command from the palette, the keybind or the slash command. From the keybind, return `false`
+   * synchronously to decline the key: the event goes on to its target, as if the command had no keybind, e.g. Enter
+   * reaches the prompt. `false` from the palette or a slash command does nothing more.
    *
    * @param input - The slash command's arguments, when `slash.arguments` is set.
+   * @returns `false` to decline the key; anything else handles it.
+   *
+   * @example
+   * ```ts
+   * run: () => (ctx.screen.current()?.composer.focused() ? keepGoing() : false)
+   * ```
    */
-  run(input?: string): void | Promise<void>
+  run(input?: string): void | false | Promise<void>
 }
 
 /** The fields every `MenuItem` has, whichever menu it is in. */

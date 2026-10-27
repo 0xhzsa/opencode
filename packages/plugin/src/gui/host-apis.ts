@@ -571,6 +571,21 @@ export interface Composer {
    * @param id - The part's `commentID`.
    */
   detach(id: string): void
+  /**
+   * The prompt's text as the user typed it, mentions included as their text; attached parts are not included. "" for
+   * an empty prompt. Reactive.
+   *
+   * @example
+   * const empty = () => !screen.composer.text().trim()
+   */
+  text(): string
+  /**
+   * Whether keyboard focus is in the prompt now. Not reactive: read it where you act, such as in `Command.run`.
+   *
+   * @example
+   * run: () => (screen.composer.focused() ? send() : false)
+   */
+  focused(): boolean
 }
 
 /** Work the session moved to the background. */
@@ -1151,8 +1166,196 @@ export interface Dialogs {
       readonly replace?: boolean
     },
   ): DialogHandle
+  /**
+   * Asks the user to confirm, in the app's own dialog. Opens like `open`, and closes with the owner that asked.
+   *
+   * @param options - The question and its buttons.
+   * @returns True when the user confirms; false when they cancel, dismiss the dialog, or it closes with its owner.
+   *
+   * @example
+   * ```ts
+   * if (await ctx.dialogs.confirm({ title: ctx.t("end.title"), confirm: ctx.t("end"), danger: true })) end()
+   * ```
+   */
+  confirm(options: ConfirmOptions): Promise<boolean>
+  /**
+   * Asks the user for a line of text, in the app's own dialog. Opens like `open`, and closes with the owner that asked.
+   *
+   * @param options - The question, the field and its button.
+   * @returns The text the user submits, which is never empty; undefined when they cancel, dismiss the dialog, or it
+   *   closes with its owner.
+   *
+   * @example
+   * ```ts
+   * const invite = await ctx.dialogs.prompt({ title: ctx.t("join.title"), placeholder: "https://…" })
+   * ```
+   */
+  prompt(options: PromptOptions): Promise<string | undefined>
+  /**
+   * Asks the user to pick one option from a searchable list, in the app's own dialog. Opens like `open`, and closes
+   * with the owner that asked.
+   *
+   * @param options - The title, the search field and the options.
+   * @returns The picked option's `value`; undefined when the user dismisses the dialog or it closes with its owner.
+   *
+   * @example
+   * ```ts
+   * const url = await ctx.dialogs.select({ title: ctx.t("links"), options: links.map((url) => ({ title: url, value: url })) })
+   * ```
+   */
+  select<T>(options: SelectOptions<T>): Promise<T | undefined>
   /** Some dialog is open. Reactive. */
   active(): boolean
+}
+
+/** What `Dialogs.confirm` asks. */
+export interface ConfirmOptions {
+  /** The question, as the dialog's title. */
+  readonly title: string
+  /** More detail under the title. Omit it for none. */
+  readonly description?: string
+  /** The confirm button's label. Defaults to the app's "Confirm". */
+  readonly confirm?: string
+  /** The cancel button's label. Defaults to the app's "Cancel". */
+  readonly cancel?: string
+  /** Styles the confirm button as destructive, for an action that deletes or ends something. Defaults to false. */
+  readonly danger?: boolean
+}
+
+/** What `Dialogs.prompt` asks. */
+export interface PromptOptions {
+  /** The question, as the dialog's title. */
+  readonly title: string
+  /** More detail under the title. Omit it for none. */
+  readonly description?: string
+  /** The field's placeholder. Omit it for none. */
+  readonly placeholder?: string
+  /** The field's initial text. Defaults to "". */
+  readonly value?: string
+  /**
+   * Hides what the user types, for a password or a token. The host neither stores nor logs the value. Defaults to
+   * false.
+   */
+  readonly secret?: boolean
+  /** The submit button's label. Defaults to the app's "Submit". */
+  readonly submit?: string
+}
+
+/** One option of `Dialogs.select`. */
+export interface SelectOption<T> {
+  /** The option's label; search matches it. */
+  readonly title: string
+  /** What `select` resolves with when the user picks this option. */
+  readonly value: T
+  /** A muted second line; search matches it too. Omit it for none. */
+  readonly description?: string
+  /** The heading the option lists under. Options of one group list together, in the order first seen. */
+  readonly group?: string
+}
+
+/** What `Dialogs.select` asks. */
+export interface SelectOptions<T> {
+  /** The dialog's title. */
+  readonly title: string
+  /** The search field's placeholder. Defaults to the app's "Search". */
+  readonly placeholder?: string
+  /** The options, in display order. */
+  readonly options: readonly SelectOption<T>[]
+  /** The value of the option to highlight first, compared with `===`. Defaults to the first option. */
+  readonly current?: T
+}
+
+/**
+ * The look of a toast.
+ * - `default`: information.
+ * - `success`: something finished.
+ * - `error`: something failed.
+ */
+export type ToastVariant = "default" | "success" | "error"
+
+/** What `Toast.show` shows. Give it a `title`, a `description`, or both. */
+export interface ToastOptions {
+  /** The toast's heading. */
+  readonly title?: string
+  /** The toast's text, under the title. */
+  readonly description?: string
+  /** The toast's look. Defaults to `default`. */
+  readonly variant?: ToastVariant
+  /** Milliseconds before the toast hides itself. Defaults to the app's 5 seconds. */
+  readonly duration?: number
+}
+
+/** Short messages in the corner of the window. */
+export interface Toast {
+  /**
+   * Shows a toast. A toast the same as the newest one pulses that one instead of stacking. A toast outlives the
+   * plugin that showed it until it hides or the user dismisses it.
+   *
+   * @param options - What the toast shows.
+   *
+   * @example
+   * ```ts
+   * ctx.toast.show({ variant: "success", title: ctx.t("copied") })
+   * ```
+   */
+  show(options: ToastOptions): void
+}
+
+/** One tab of the shell's tab strip. */
+export interface ShellTab {
+  /** The tab's key, `SessionRef.tab` for a session's tab. Stays the same while the tab is open. */
+  readonly key: string
+  /** The session the tab shows; undefined for a draft. */
+  readonly session: SessionRef | undefined
+  /** The tab is the one on screen. */
+  readonly active: boolean
+}
+
+/**
+ * The shell's tab strip: the sessions and drafts open as tabs. Nothing throws before the app interface mounts:
+ * `list` is empty, and writes wait and apply in call order once it mounts.
+ */
+export interface Tabs {
+  /** The open tabs, in strip order. Reactive. */
+  list(): readonly ShellTab[]
+  /**
+   * Opens a session as a tab at the end of the strip, or keeps its open tab where it is. Does nothing when the app does
+   * not list the server.
+   *
+   * @param session - The session's server and id.
+   * @param options - Whether to show the tab.
+   */
+  open(
+    session: {
+      /** The server's `ServerRef.id`. */
+      readonly server: string
+      /** The session's id on that server. */
+      readonly id: string
+    },
+    options?: {
+      /** Also shows the tab, as a click on it does. Defaults to false: the tab opens in the background. */
+      readonly focus?: boolean
+    },
+  ): void
+  /**
+   * Shows an open tab, as a click on it does. Does nothing when no open tab has the key.
+   *
+   * @param key - The tab's `ShellTab.key`.
+   */
+  focus(key: string): void
+  /**
+   * Moves an open tab to a place in the strip. Does nothing when no open tab has the key.
+   *
+   * @param key - The tab's `ShellTab.key`.
+   * @param index - The tab's new place, from 0; clamped to the strip.
+   */
+  move(key: string, index: number): void
+  /**
+   * Closes an open tab, as the user does: it lists under recently closed tabs. Does nothing when no open tab has the key.
+   *
+   * @param key - The tab's `ShellTab.key`.
+   */
+  close(key: string): void
 }
 
 /** Props of `Embeds.View`. */

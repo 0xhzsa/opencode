@@ -24,8 +24,10 @@ import {
   type ServerRef,
   type SessionRef,
   type SessionScreen,
+  type ShellTab,
   type Storage,
   type StorageScope,
+  type Tabs,
 } from "@opencode/plugin/gui"
 import { BuiltinPanel, type BuiltinStoreFrom, type BuiltinStoreOptions } from "@opencode/plugin/gui/builtin"
 import { usePlatform } from "@/runtime/platform/platform"
@@ -41,6 +43,7 @@ import { sessionPaneTab, sessionTabPane, type SessionPane } from "@/shell/state/
 import { terminalFontFamily, useSettings } from "@/settings/model"
 import { useSettingsSurface } from "@/settings/surface"
 import { formatKeybindParts, useCommand } from "@/shell/commands/command"
+import { showToast } from "@/shell/notifications/toast"
 import { createMediaQuery } from "@solid-primitives/media"
 import { useIsRouting, useLocation } from "@solidjs/router"
 import { useLanguage } from "@/runtime/i18n/language"
@@ -82,6 +85,7 @@ type Attached = {
   matches: (command: string, event: KeyboardEvent) => boolean
   servers: Accessor<readonly string[]>
   server: (id: string) => ServerRef | undefined
+  tabs: Tabs
 }
 
 /**
@@ -294,6 +298,24 @@ export function createHostApis() {
     servers: () => ({
       list: () => current()?.servers() ?? [],
       get: (id) => current()?.server(id),
+    }),
+    // Only the fields the SDK documents reach the app's toast.
+    toast: () => ({
+      show: (options) =>
+        void showToast({
+          title: options.title,
+          description: options.description,
+          variant: options.variant,
+          duration: options.duration,
+        }),
+    }),
+    // Before the interface mounts, no tabs are listed and writes wait for it.
+    tabs: () => ({
+      list: () => current()?.tabs.list() ?? [],
+      open: (session, options) => write((value) => value.tabs.open(session, options)),
+      focus: (key) => write((value) => value.tabs.focus(key)),
+      move: (key, index) => write((value) => value.tabs.move(key, index)),
+      close: (key) => write((value) => value.tabs.close(key)),
     }),
     workspaces: (_plugin, _owner, _context, register) => ({
       on(_event, handler) {
@@ -845,6 +867,59 @@ export function createPluginAttachment(apis: HostApis) {
     if (!region && opened) openedFor.set(opened, key)
   }
 
+  // The tab the route shows: a session's, a draft's, or none (Home, Settings).
+  const routedTab = () => {
+    const value = route()
+
+    if (value.type === "session") return findSessionTab(tabs.store, value.server, value.sessionId)
+
+    if (value.type !== "draft") return
+
+    return tabs.store.find((tab) => tab.type === "draft" && tab.draftID === value.draftID)
+  }
+
+  const shellTabs = createMemo((): readonly ShellTab[] => {
+    const refs = new Map(sessions().map((ref) => [ref.key, ref]))
+    const active = routedTab()
+
+    return tabs.store.map((tab) => ({
+      key: tabKey(tab),
+      session: tab.type === "session" ? refs.get(`${tab.server}\n${tab.sessionId}`) : undefined,
+      active: tab === active,
+    }))
+  })
+
+  const findTab = (key: string) => tabs.store.find((tab) => tabKey(tab) === key)
+
+  const shell: Tabs = {
+    list: shellTabs,
+    open(input, options) {
+      const conn = servers.list.find((item) => ServerConnection.key(item) === input.server)
+
+      if (!conn) return
+      const tab = tabs.addSessionTab({ server: ServerConnection.key(conn), sessionId: input.id })
+
+      if (options?.focus) tabs.select(tab)
+    },
+    focus(key) {
+      const tab = findTab(key)
+
+      if (tab) tabs.select(tab)
+    },
+    move(key, index) {
+      const keys = tabs.store.map(tabKey).filter((item) => item !== key)
+
+      if (keys.length === tabs.store.length) return
+      const at = Math.min(Math.max(0, Math.trunc(index)), keys.length)
+      tabs.reorder([...keys.slice(0, at), key, ...keys.slice(at)])
+    },
+    close(key) {
+      const index = tabs.store.findIndex((tab) => tabKey(tab) === key)
+
+      if (index !== -1) tabs.closeTab(index)
+    },
+  }
+
   const setScroll = (session: SessionRef, key: string, next: { readonly x: number; readonly y: number }) => {
     const value = stateKey(session)
 
@@ -872,6 +947,7 @@ export function createPluginAttachment(apis: HostApis) {
     matches: command.matches,
     servers: () => global.servers.list().map(ServerConnection.key),
     server,
+    tabs: shell,
     // SAFETY: a plugin names a page it contributed through `SettingsPage`, which settings lists as a plugin tab.
     settings: (page) => surface.open(page as Parameters<typeof surface.open>[0]),
     layout: {

@@ -247,7 +247,9 @@ to the displayed repository or worktree instead of adding a second menu item.
 | `ctx.storage`                | `Storage`                                                                          | Stores for keys known only at runtime, and window memory         |
 | `ctx.system`                 | `System`                                                                           | Clipboard, saving files, `openExternal`                          |
 | `ctx.desktop`                | `Desktop \| undefined`                                                             | Desktop-only: reveal, launch, installed, zoom                    |
-| `ctx.dialogs`                | `Dialogs`                                                                          | `open` returns a handle to close; a dialog closes with its owner |
+| `ctx.dialogs`                | `Dialogs`                                                                          | Opens dialogs; `confirm`, `prompt` and `select` ask the user too |
+| `ctx.toast`                  | `Toast`                                                                            | Short messages in the corner of the window                       |
+| `ctx.tabs`                   | `Tabs`                                                                             | The shell's tab strip: list, open, show, move and close tabs     |
 | `ctx.links`                  | `Links`                                                                            | Opens a local link, or checks it exists, with the best handler   |
 | `ctx.embeds`                 | `Embeds`                                                                           | Shows a web page the main entry created                          |
 | `ctx.app`                    | `App`                                                                              | Version, channel, platform, packaged                             |
