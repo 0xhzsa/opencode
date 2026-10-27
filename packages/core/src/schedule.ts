@@ -1,7 +1,7 @@
 export * as Schedule from "./schedule.js"
 
 import { and, asc, eq, gt, isNull, lte, min, or } from "drizzle-orm"
-import { Clock, Context, Cron, DateTime, Effect, Latch, Layer, Option, Result, Schema } from "effect"
+import { Cause, Clock, Context, Cron, DateTime, Effect, Latch, Layer, Option, Result, Schema } from "effect"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { Schedule as ScheduleSchema } from "@opencode/schema/schedule"
 import { Config } from "./config.js"
@@ -61,7 +61,6 @@ type Row = typeof ScheduleTable.$inferSelect
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
-const DAY = 24 * HOUR
 const MIN_INTERVAL = MINUTE
 /** A firing this far past its due time is marked late. */
 const LATE_AFTER = 60_000
@@ -69,11 +68,16 @@ const LATE_AFTER = 60_000
 const MAX_SLEEP = 30_000
 /** How long a due schedule waits before its location's flag is read again, while schedules are off there. */
 const DISABLED_RETRY = HOUR
+/** How long a schedule whose prompt failed waits before trying again. */
+const FAILED_RETRY = 5 * MINUTE
 
 const duration = (value: string) =>
   Option.match(ScheduleSchema.durationMillis(value), {
     onNone: () => Effect.fail(new InvalidError({ reason: `Invalid duration: ${value}` })),
-    onSome: Effect.succeed,
+    onSome: (millis) =>
+      millis > 0
+        ? Effect.succeed(millis)
+        : Effect.fail(new InvalidError({ reason: `Duration must be positive: ${value}` })),
   })
 
 /** Stored durations were validated on create. */
@@ -81,55 +85,26 @@ const millis = (value: string) =>
   Option.getOrThrowWith(ScheduleSchema.durationMillis(value), () => new Error(`Invalid duration: ${value}`))
 
 const OFFSET = /T.*(?:z|[+-]\d{2}:?\d{2})$/i
-const BRACKETED_ZONE = /^(.*)\[([^\]]+)\]$/
 
-/** Parses an instant with an offset, or a wall-clock time in a `[Zone]` suffix or else in `zone`. */
-const parseAt = (input: string, zone: DateTime.TimeZone) => {
-  const bracketed = BRACKETED_ZONE.exec(input)
-  const local = bracketed?.[1] ?? input
-  const parsed: Option.Option<DateTime.DateTime> = OFFSET.test(local)
-    ? DateTime.make(local)
-    : Option.flatMap(bracketed ? DateTime.zoneMakeNamed(bracketed[2]) : Option.some(zone), (timeZone) =>
-        DateTime.makeZoned(local, { timeZone, adjustForTimeZone: true }),
-      )
-  return Option.map(parsed, DateTime.toEpochMillis)
-}
+/** Parses an instant with an offset, or a wall-clock time in `zone`. */
+const parseAt = (input: string, zone: DateTime.TimeZone) =>
+  Option.map(
+    OFFSET.test(input) ? DateTime.make(input) : DateTime.makeZoned(input, { timeZone: zone, adjustForTimeZone: true }),
+    DateTime.toEpochMillis,
+  )
 
 const cronNext = Option.liftThrowable(Cron.next)
 
 /**
- * Cron.next keeps only the first occurrence of wall-clock times that repeat when clocks fall back. Inside the repeated
- * hour it maps back to that first occurrence, which is already past, so step forward until a slot lands after `now`.
+ * The first slot strictly after `now`, or undefined if the expression never matches a date. When clocks fall back,
+ * Cron.next maps a repeated wall-clock time to its first occurrence, which is already past during the repeated hour,
+ * so no slot fires twice: step past each such slot until one lands after `now`.
  */
-const firstOccurrence = (cron: Cron.Cron, now: number) => {
-  for (let cursor = now; cursor < now + DAY; cursor += MINUTE) {
-    const next = cronNext(cron, new Date(cursor))
-    if (Option.isNone(next)) return undefined
-    if (next.value.getTime() > now) return next.value.getTime()
-  }
-  return undefined
-}
-
-/** Whether the minute or hour field is a wildcard or step, which standard cron keeps running through a repeated hour. */
-const repeatsInFold = (expression: string) => {
-  const fields = expression.trim().split(/\s+/)
-  const [minute, hour] = fields.length === 6 ? fields.slice(1) : fields
-  return minute?.startsWith("*") === true || hour?.startsWith("*") === true
-}
-
-/**
- * The first slot strictly after `now`, or undefined if the expression never matches a date. Like standard cron, a
- * fixed-time job fires once on the first occurrence of a repeated hour, while a wildcard or step job keeps firing
- * through it, so for those scan the next two hours of real minutes for a match that Cron.next skipped.
- */
-const nextCron = (expression: string, cron: Cron.Cron, now: number) => {
-  const first = firstOccurrence(cron, now)
-  if (!repeatsInFold(expression)) return first
-  const second = cron.seconds.values().next().value ?? 0
-  const end = Math.min(first ?? Infinity, now + 2 * HOUR)
-  for (let at = Math.floor(now / MINUTE) * MINUTE + second * 1000; at < end; at += MINUTE)
-    if (at > now && Cron.match(cron, new Date(at))) return at
-  return first
+const nextCron = (cron: Cron.Cron, now: number, from = now): number | undefined => {
+  const next = cronNext(cron, new Date(from))
+  if (Option.isNone(next)) return undefined
+  const at = next.value.getTime()
+  return at > now ? at : nextCron(cron, now, at + HOUR)
 }
 
 /** The first slot strictly after `now`, or undefined for one-shots. */
@@ -145,12 +120,12 @@ const following = (row: Pick<Row, "when" | "tz" | "next_due_at">, now: number) =
       return due + (Math.floor((now - due) / every) + 1) * every
     }
     case "cron":
-      return nextCron(row.when.cron, Cron.parseUnsafe(row.when.cron, row.tz), now)
+      return nextCron(Cron.parseUnsafe(row.when.cron, row.tz), now)
   }
 }
 
 const finished = (row: Pick<Row, "ends_at">, next: number | undefined, remaining: number | null) =>
-  next === undefined || remaining === 0 || (row.ends_at !== null && next > row.ends_at)
+  next === undefined || (remaining !== null && remaining <= 0) || (row.ends_at !== null && next > row.ends_at)
 
 const optionalTime = (value: number | null) => (value === null ? undefined : DateTime.makeUnsafe(value))
 
@@ -250,17 +225,6 @@ const layer = Layer.effect(
       })
     })
 
-    // Pause or remove may have landed since the tick read the row.
-    const reload = (row: Row, due: number) =>
-      db
-        .select()
-        .from(ScheduleTable)
-        .where(
-          and(eq(ScheduleTable.id, row.id), eq(ScheduleTable.status, "active"), eq(ScheduleTable.next_due_at, due)),
-        )
-        .get()
-        .pipe(Effect.orDie)
-
     const step = Effect.fnUntraced(function* (row: Row, now: number) {
       const due = row.next_due_at
       if (due === null || row.session_id === null) return
@@ -285,9 +249,7 @@ const layer = Layer.effect(
         })
         return
       }
-      const current = yield* reload(row, due)
-      if (current === undefined) return
-      yield* fire(current, session.id, due, now)
+      yield* fire(row, session.id, due, now)
     })
 
     const tickAt = Effect.fnUntraced(function* (now: number) {
@@ -308,7 +270,16 @@ const layer = Layer.effect(
         due,
         (row) =>
           step(row, now).pipe(
-            Effect.catchCause((cause) => Effect.logWarning("schedule failed to fire", { scheduleID: row.id, cause })),
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.interrupt
+                : // Back off rather than retrying a failing prompt on every tick.
+                  Effect.logWarning("schedule failed to fire", { scheduleID: row.id, cause }).pipe(
+                    Effect.andThen(
+                      update(row, { last_outcome: "failed", retry_at: now + FAILED_RETRY, time_updated: now }),
+                    ),
+                  ),
+            ),
           ),
         { discard: true },
       )
@@ -386,7 +357,7 @@ const layer = Layer.effect(
           if (Result.isFailure(cron)) return yield* new InvalidError({ reason: cron.failure.message })
           if (cron.success.seconds.size !== 1)
             return yield* new InvalidError({ reason: "cron must fire at most once a minute" })
-          const next = nextCron(when.cron, cron.success, now)
+          const next = nextCron(cron.success, now)
           if (next === undefined) return yield* new InvalidError({ reason: `cron never fires: ${when.cron}` })
           return next
         }
@@ -413,6 +384,8 @@ const layer = Layer.effect(
         const zone = yield* resolveZone(input.when.tz ?? config.timezone)
         const now = yield* Clock.currentTimeMillis
         const due = yield* firstDue(input.when, zone, now)
+        if (input.ends?.times !== undefined && input.ends.times < 1)
+          return yield* new InvalidError({ reason: "ends.times must be at least 1" })
         const ends = yield* endsAt(input.ends, zone, now)
         if (ends !== null && due > ends)
           return yield* new InvalidError({ reason: "The schedule ends before it first fires" })

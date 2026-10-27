@@ -506,19 +506,18 @@ describe("Schedule", () => {
       action: { type: "prompt", prompt: expression },
     })
 
-  it.effect("keeps a step cron firing through the repeated hour", () =>
+  it.effect("does not fire a step cron again in the repeated hour", () =>
     Effect.gen(function* () {
       yield* setTime("2026-11-01T05:50:00Z")
       const schedules = yield* setup()
       const schedule = yield* cron(schedules, "*/10 * * * *")
-      expect(iso(schedule.nextDueAt)).toBe("2026-11-01T06:00:00.000Z")
+      // 1:50 EDT fired the last 1:xx slot; the next is 2:00 EST, an hour and ten minutes later.
+      expect(iso(schedule.nextDueAt)).toBe("2026-11-01T07:00:00.000Z")
 
-      yield* setTime("2026-11-01T06:00:00Z")
-      yield* schedules.tick
-      expect(iso((yield* schedules.get(schedule.id)).nextDueAt)).toBe("2026-11-01T06:10:00.000Z")
-
-      yield* setTime("2026-11-01T06:05:00Z")
-      expect(iso((yield* cron(schedules, "*/10 * * * *")).nextDueAt)).toBe("2026-11-01T06:10:00.000Z")
+      // Created inside the repeated hour, the next slot is the first one after it, not three hours on.
+      yield* setTime("2026-11-01T06:35:00Z")
+      expect(iso((yield* cron(schedules, "*/10 * * * *")).nextDueAt)).toBe("2026-11-01T07:00:00.000Z")
+      expect(iso((yield* cron(schedules, "0,30 * * * *")).nextDueAt)).toBe("2026-11-01T07:00:00.000Z")
       expect(iso((yield* cron(schedules, "0 * * * *")).nextDueAt)).toBe("2026-11-01T07:00:00.000Z")
     }),
   )
@@ -582,7 +581,7 @@ describe("Schedule", () => {
     }),
   )
 
-  it.effect("parses at times with offsets and bracketed zones", () =>
+  it.effect("parses at times with offsets or in the schedule's zone", () =>
     Effect.gen(function* () {
       yield* setTime("2026-11-01T12:00:00Z")
       const schedules = yield* setup()
@@ -592,8 +591,6 @@ describe("Schedule", () => {
           .pipe(Effect.map((schedule) => iso(schedule.nextDueAt)))
       expect(yield* at("2026-11-02T09:30:00-0500")).toBe("2026-11-02T14:30:00.000Z")
       expect(yield* at("2026-11-02T09:30:00-05:00")).toBe("2026-11-02T14:30:00.000Z")
-      expect(yield* at("2026-11-02T09:30:00[Europe/Paris]")).toBe("2026-11-02T08:30:00.000Z")
-      expect(yield* at("2026-11-02T09:30:00+01:00[Europe/Paris]")).toBe("2026-11-02T08:30:00.000Z")
       expect(yield* at("2026-11-02T09:30")).toBe("2026-11-02T14:30:00.000Z")
     }),
   )
@@ -626,24 +623,47 @@ describe("Schedule", () => {
     }),
   )
 
-  it.effect("does not fire a schedule paused after the tick read it", () =>
+  it.effect("backs off for five minutes when a prompt fails, then fires once", () =>
     Effect.gen(function* () {
       const schedules = yield* setup()
-      const first = yield* schedules.create({
+      const schedule = yield* schedules.create({
         sessionID,
         when: { type: "in", in: "1 minute" },
-        action: { type: "prompt", prompt: "first" },
+        action: { type: "prompt", prompt: "flaky" },
       })
-      const second = yield* schedules.create({
-        sessionID,
-        when: { type: "in", in: "61 seconds" },
-        action: { type: "prompt", prompt: "second" },
-      })
-      yield* TestClock.adjust("61 seconds")
-      duringWake = schedules.pause(second.id).pipe(Effect.orDie, Effect.asVoid)
+      yield* TestClock.adjust("1 minute")
+      duringWake = Effect.die("wake failed")
       yield* schedules.tick
-      expect(yield* pending).toEqual([messageID(first, 1)])
-      expect(yield* schedules.get(second.id)).toMatchObject({ status: "paused", runCount: 0 })
+      expect(yield* schedules.get(schedule.id)).toMatchObject({ status: "active", runCount: 0, lastOutcome: "failed" })
+
+      // Not retried on every tick.
+      wakes.length = 0
+      yield* TestClock.adjust("4 minutes")
+      yield* schedules.tick
+      expect(wakes).toEqual([])
+
+      yield* TestClock.adjust("1 minute")
+      yield* schedules.tick
+      expect(wakes).toEqual([sessionID])
+      expect(yield* pending).toEqual([messageID(schedule, 1)])
+      expect(yield* schedules.get(schedule.id)).toMatchObject({ status: "done", runCount: 1, lastOutcome: "late" })
+    }),
+  )
+
+  it.effect("rejects a zero duration or ends.times below 1", () =>
+    Effect.gen(function* () {
+      const schedules = yield* setup()
+      const create = (input: Omit<Schedule.CreateInput, "sessionID" | "action">) =>
+        Effect.flip(schedules.create({ sessionID, action: { type: "prompt", prompt: "x" }, ...input }))
+      expect(yield* create({ when: { type: "in", in: "0 seconds" } })).toMatchObject({
+        _tag: "Schedule.InvalidError",
+        reason: "Duration must be positive: 0 seconds",
+      })
+      expect(yield* create({ when: { type: "every", every: "1 hour" }, ends: { times: 0 } })).toMatchObject({
+        _tag: "Schedule.InvalidError",
+        reason: "ends.times must be at least 1",
+      })
+      expect(yield* schedules.list({ sessionID })).toEqual([])
     }),
   )
 })
