@@ -115,8 +115,11 @@ The lane is not password-specific. Each finding has its own trigger, its own
 | Input without validation | input read, stored, or uploaded with no check | `validate`, `schema`, `zod`, `allowlist` |
 
 - **Credential ask.** A credential word (`password`, `passphrase`, `credential`,
-  `login`, `sign in`) plus a build verb plus an auth surface. A bug fix such as
-  `fix the login flow` is not a build ask and stays silent.
+  `login`, `sign in`) plus a build verb plus an auth surface plus a
+  credential-handling word (`check`, `verify`, `compare`, `store`, `hash`,
+  `reset`, `against the database`, `==`). A bug fix such as `fix the login flow`
+  is not a build ask, and `make the login page look nicer` or `write unit tests
+  for the login form` handle no credential, so all three stay silent.
 - **Independent suppression.** `stores bcrypt passwords` still gets the
   rate-limit finding, and `rate limited to 5 per minute` still gets the password
   finding.

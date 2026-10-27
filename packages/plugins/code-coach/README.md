@@ -81,7 +81,10 @@ target; `delete all the .ts files` is not.
 A credential ask is a credential word (`password`, `passphrase`, `credential`,
 `login`, `sign in`) plus a build verb (`add`, `create`, `build`, `implement`,
 `write`, `set up`, `wire`) plus an auth surface (`endpoint`, `route`, `form`,
-`handler`, `service`, `flow`, `api`, ...).
+`handler`, `service`, `flow`, `api`, ...) plus a credential-handling word
+(`check`, `verify`, `compare`, `store`, `hash`, `reset`, `against the database`,
+`==`). Without the last one, `make the login page look nicer` and `write unit
+tests for the login form` stay silent.
 
 One finding → `1 thing`, two → `2 things`. More than two are cut to the two most
 severe, so the card stays a nudge. Destructive wins over security when an ask is

@@ -23,6 +23,10 @@ $script:ReCredential = '(?i)\b(password|passwd|passphrase|passwords|credential|c
 $script:ReBuild = '(?i)\b(add|adds|adding|create|creates|creating|build|builds|building|implement|implements|implementing|make|makes|making|write|writes|writing|set up|setup|wire|wires|wiring)\b'
 $script:ReAuthSurface = '(?i)\b(endpoint|route|form|page|handler|service|flow|api|controller|view|screen|middleware|portal|backend)\b'
 $script:ReCompare = '(?i)\b(compare|compares|comparing|check|checks|checking|verify|verifies|verifying|validate|validates|validating|against the database|against the db|against db|store|stores|storing|save|saves|saving|plaintext|plain[- ]text|==|===|equals)\b'
+# A login word plus a UI word is not credential handling. A card only fires when
+# the ask actually does something with a credential, so "make the login page look
+# nicer" and "write unit tests for the login form" stay silent.
+$script:ReCredHandling = '(?i)\b(compare|compares|comparing|check\w*|verify|verif\w*|validat\w*|authenticat\w*|store\w*|sav\w*|hash\w*|against\s+the\s+(?:database|db)|==|===|equals|reset\w*|change\w*|updat\w*)\b'
 $script:ReHashed = '(?i)\b(bcrypt|argon2\w*|scrypt|pbkdf2|hash|hashed|hashes|hashing|salt|salted|salting|constant[- ]?time|timing[- ]?safe)\b'
 $script:ReRateLimit = '(?i)\b(rate[- ]?limit\w*|ratelimit\w*|throttl\w*|backoff|lockout|lock[- ]?out|attempts? per|max(imum)? attempts|captcha|fail2ban|brute[- ]?force protection)\b'
 
@@ -119,7 +123,8 @@ function Test-Destructive([string]$Text) {
 function Test-AuthAsk([string]$Text) {
   $t = [string]$Text
   if (-not $t) { return $false }
-  return (($t -match $script:ReCredential) -and ($t -match $script:ReBuild) -and ($t -match $script:ReAuthSurface))
+  if (-not (($t -match $script:ReCredential) -and ($t -match $script:ReBuild) -and ($t -match $script:ReAuthSurface))) { return $false }
+  return ($t -match $script:ReCredHandling)
 }
 
 function Test-SecretAsk([string]$Text) {

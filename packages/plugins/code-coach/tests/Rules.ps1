@@ -47,6 +47,12 @@ Check 'login bug fix -> silent' ((Kind 'fix the login flow so the second attempt
 Check 'unrelated endpoint -> silent' ((Kind 'create an API endpoint that returns the current time') -eq 'none')
 Check 'empty -> silent' ((Kind '') -eq 'none')
 
+# A login word plus a UI word is not credential handling. These came from the
+# review on #59596; each one used to produce a rate-limit card.
+Check 'login page styling -> silent' ((Kind 'make the login page look nicer on mobile') -eq 'none') (Kind 'make the login page look nicer on mobile')
+Check 'login screen dark mode -> silent' ((Kind 'add a dark mode toggle to the login screen') -eq 'none') (Kind 'add a dark mode toggle to the login screen')
+Check 'login form tests -> silent' ((Kind 'write unit tests for the login form') -eq 'none') (Kind 'write unit tests for the login form')
+
 # --- security: the example from the design issue ---------------------------
 
 $example = 'Add a login endpoint that checks the user''s password against the database'
@@ -87,6 +93,8 @@ $one = Get-CoachDecision 'add a password reset endpoint'
 Check 'password reset endpoint -> security' ($one.kind -eq 'security')
 Check 'password reset endpoint names one finding' (@($one.findings).Count -eq 1) (@($one.findings).Count.ToString() + ' findings')
 Check 'password reset endpoint title is singular' ($one.title -eq '1 thing before you accept this') $one.title
+Check 'single finding fixed prompt skips hashing' ($one.fixed -notmatch 'bcrypt|argon2') $one.fixed
+Check 'single finding fixed prompt adds the rate limit' ($one.fixed -match 'Rate-limit') $one.fixed
 
 # --- security: the card is not password-only --------------------------------
 
