@@ -35,14 +35,17 @@ export function Typeahead<T>(props: {
     answered?: string
     failed?: boolean
     loading?: boolean
-  }>({ query: "", searched: false, answered: props.initial ? "" : undefined, failed: props.initial?.failed })
+  }>({ query: "", searched: false, answered: props.initial ? "" : undefined })
 
-  const cache = new Map<string, T[]>(props.initial && !props.initial.failed ? [["", props.initial.items]] : [])
+  const cache = new Map<string, T[]>()
   let request: AbortController | undefined
   let input: HTMLInputElement | undefined
   onCleanup(() => abort(request))
 
   const query = () => store.query.trim()
+  // The parent owns the opening list, so a refresh reaches an open panel without remounting the input.
+  const opening = () => (query() ? undefined : props.initial)
+  const failed = () => (opening() ? opening()?.failed : store.failed)
   const pending = () => store.loading || store.answered !== query()
 
   const search = (query: string) => {
@@ -78,6 +81,9 @@ export function Typeahead<T>(props: {
   // Narrow visible rows while pending; broadening waits for a cached or server answer, avoiding speculative rows flashing.
   const results = createMemo<{ items: T[]; stale: boolean }>((previous) => {
     const next = query()
+    const preloaded = opening()
+
+    if (preloaded) return { items: preloaded.failed ? [] : preloaded.items, stale: false }
 
     if (store.answered === next && store.failed) return { items: [], stale: false }
     const cached = cache.get(next) ?? previous?.items.filter((item) => props.match(item, next)) ?? []
@@ -189,7 +195,7 @@ export function Typeahead<T>(props: {
               class="mx-1 flex h-8 items-center px-2 pb-1 text-v2-text-text-faint"
               classList={{ invisible: store.answered === undefined }}
             >
-              <Show when={store.failed} fallback={props.emptyLabel}>
+              <Show when={failed()} fallback={props.emptyLabel}>
                 <button
                   type="button"
                   class="-mx-2 flex h-7 flex-1 items-center rounded-sm px-2 text-start text-v2-text-text-base outline-none hover:bg-v2-overlay-simple-overlay-hover focus-visible:bg-v2-overlay-simple-overlay-hover"

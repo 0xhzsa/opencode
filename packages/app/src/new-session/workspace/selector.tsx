@@ -89,7 +89,12 @@ export function NewSessionBranch(props: { workspace: NewSessionWorkspaceControll
         >
           <Popover
             open={state.open}
-            onOpenChange={(open) => setState("open", open)}
+            onOpenChange={(open) => {
+              setState("open", open)
+
+              // Revalidate on every open, as before the preload; the loaded list stays on screen meanwhile.
+              if (open && initial()) branchActions.refetch()
+            }}
             placement="bottom-start"
             gutter={4}
           >

@@ -101,7 +101,8 @@ test("the combined location picker shows checkout branches and chooses the base 
   await expect(search).toBeFocused()
   await expect(search).toHaveValue("")
   await expect(page.getByRole("option")).toHaveCount(3)
-  expect(searches).toHaveLength(2)
+  // Reopening revalidates the branch list.
+  expect(searches).toHaveLength(3)
   await page.getByRole("option", { name: "release/base", exact: true }).click()
   await expect(view.editor).toBeFocused()
 
@@ -173,6 +174,25 @@ test("a pending branch picker can be dismissed before its results arrive", async
   await base.click()
   await expect(search).toBeFocused()
   await expect(page.getByRole("option")).toHaveText(["dev", "origin/dev"])
+})
+
+test("reopening the branch picker shows branches created since it last opened", async ({ page }) => {
+  let created = false
+
+  await openWorktreeDraft(page, {
+    name: "BranchRefresh",
+    vcs: () => ({ current: "dev", default: "dev" }),
+    branches: () => (created ? ["dev", "feature/new"] : ["dev"]),
+  })
+
+  const base = page.getByRole("button", { name: "from dev", exact: true })
+  await base.click()
+  await expect(page.getByRole("option")).toHaveText(["dev"])
+  created = true
+  await base.click()
+  await expect(page.getByRole("combobox", { name: "Search branches", exact: true })).toHaveCount(0)
+  await base.click()
+  await expect(page.getByRole("option")).toHaveText(["dev", "feature/new"])
 })
 
 test("branch search keeps results on screen while a query is pending", async ({ page }) => {
