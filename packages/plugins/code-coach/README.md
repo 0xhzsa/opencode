@@ -1,34 +1,58 @@
-# Code Coach (slice 1: the gate)
+# Code Coach (slice 1: the destructive-ask nudge)
 
-An opt-in opencode plugin that reviews a prompt **after** it is sent and stays
-quiet unless it has a concrete objection. This first slice is the wire and the
-card: a deterministic gate that answers `pass`, `attach`, or `hold`, plus one
-Windows card that can add a guardrail to the outgoing model call.
+An opt-in opencode plugin that watches a prompt **after** it is sent and stays
+quiet unless the ask destroys state with no recovery point. When it does, one
+card offers a guardrail you can paste into the conversation.
 
-The send is never held, rewritten, or re-sent. `prompt.text` is never mutated.
+The plugin never delays, blocks, rewrites, or re-sends anything.
 
 ## What this slice does
 
-| Prompt | Verdict | What the developer sees |
-| --- | --- | --- |
-| `Summarize the current state of the parser` | `pass` | nothing |
-| `fix the login flow so the second attempt works` | `attach` | nothing; one `Target:` line rides along as context |
-| `delete all the logs from last week` | `hold` | one card: **Add the guardrail** or **Send as written** |
+| Prompt | What happens |
+| --- | --- |
+| `Summarize the current state of the parser` | nothing |
+| `delete the old logs after committing the current state first` | nothing — the ask has a recovery point |
+| `delete all the logs from last week` | one card: **Copy the guardrail** or **Dismiss** |
 
-- `pass` — no objection.
-- `attach` — the ask names a change but no file, route, or function. The plugin
-  adds one `Target:` sentence to the model request as a system block. The
-  submitted text is untouched.
-- `hold` — the ask destroys or rewrites state with no recovery point. One card
-  offers the guardrail. If nobody clicks within 4.5 s, the prompt goes as
-  written. **Add the guardrail** attaches the guardrail to that model call only;
-  **Send as written** answers `pass`.
+The card is a nudge after the fact, not a gate. It appears next to the
+composer, cannot take focus, and dismisses itself after 60 seconds (hovering
+pauses the countdown). **Copy the guardrail** puts this on the clipboard:
 
-Two deterministic rules, no model call and no network:
+> Before you delete or rewrite anything, commit the current state, take a
+> backup, and run the change against one target first; confirm the result
+> before widening it.
 
-1. destructive verb + destructive object, with no guard → `hold`
-2. change verb, with no file named → `attach`
-3. anything else → `pass`
+One deterministic rule, no model call and no network:
+
+1. a destructive verb (`delete`, `reset`, `drop`, `truncate`, `overwrite`,
+   `wipe`, `purge`, `destroy`, `remove`, `clear`) plus a destructive object
+   (`files`, `database`, `logs`, `history`, `cache`, `config`, `secrets`, ...),
+   or a hard pattern (`rm -rf`, `git clean`, `force-push`, `drop table`)
+   **and no recovery point** in the text → one card
+2. anything else → silence
+
+A recovery point is any of `backup`, `commit first`, `dry run`, `snapshot`,
+`confirm`, `only`, `specific`, `this file`, `one file`. Saying one of those
+turns the rule off for that prompt.
+
+## Why the hook does not wait
+
+opencode core awaits the `prompt` hook inside `SessionPrompt.prepare`, **before
+the message is admitted**. Anything slow in that hook is felt as a delay on
+every send that matches. An earlier revision of this package polled for a
+verdict (1.5 s) and then for a card decision (5 s) inside that hook, which
+turned the coach into a pre-send gate and contradicted the design.
+
+This revision does one small file write and returns:
+
+```text
+prompt hook  -> filter -> write req-<id>.json -> return the event untouched
+daemon       -> read the request, delete it, decide, maybe show one card
+```
+
+There is no verdict file, no decision file, no polling, no timeout, and no
+mutation of `event.prompt`. The card's buttons cannot change a send that has
+already happened; they copy text or dismiss.
 
 ## What is not here yet
 
@@ -40,17 +64,15 @@ This is the first reviewable slice requested in
 - Explain why, Fix my prompt, Ignore, Snooze
 - the learner, lessons, insights, and persisted snooze state
 - autostart install/uninstall, `coach-guard`, and the doctor
-- the full live proof driver and screenshots
+- earned context attached to a later model call
 
 Until then the daemon is started by hand and stopped with a `stop` file.
 
 ## Requirements
 
 - Windows 10 or 11. The daemon is Windows PowerShell 5.1 + WPF; on macOS and
-  Linux the plugin logs `skip: unsupported platform` and leaves every prompt
-  untouched.
-- opencode with the v2 plugin API (`session.hook("prompt")` and
-  `session.hook("context")`).
+  Linux the plugin logs `skip: unsupported platform` and does nothing.
+- opencode with the v2 plugin API (`session.hook("prompt")`).
 - Node or Bun only for the plugin's tests.
 
 ## Run it from a checkout
@@ -84,8 +106,9 @@ process and is not started by the plugin.
    `COACH_DATA_DIR` overrides the data folder (`%LOCALAPPDATA%\CodeCoachData`).
    The daemon writes `daemon.pid`, `logs\daemon.log`, and `trace.jsonl` there.
 
-4. Send a prompt from opencode. The plugin writes a request only when the send
-   is substantive; the daemon answers it.
+4. Send a destructive prompt from opencode. The plugin writes a request only
+   when the send is substantive and the daemon is alive; the daemon shows a
+   card when the ask has no recovery point.
 
 5. Stop the daemon:
 
@@ -108,38 +131,36 @@ one-command installer are a later slice.
 
 ## Privacy
 
-- The request file holds the prompt text only while the plugin is waiting for a
-  verdict (1.5 s, or 5 s for a card). The plugin deletes it on every exit path,
-  including timeouts and errors.
-- The daemon logs the prompt **length** and the verdict, never the text.
+- The plugin writes prompt text only when `daemon.pid` names a live process. If
+  the coach is not running, nothing is written and the send is untouched.
+- The daemon deletes the request as soon as it reads it. A request older than
+  120 s is deleted without a card.
+- The daemon logs the prompt **length** and the outcome, never the text.
 - There is no transcript, no key, and no network call in this slice.
-- The guardrail attachment is held in memory by the plugin for 15 minutes and
-  injected into one model call, then dropped.
-- The plugin never reads assistant prose. Its digest is counts, file names, and
-  short error/test/constraint snippets, capped at 2200 characters.
+- The guardrail is a fixed string; the card never reads the session.
 
 ## Verify
 
 ```powershell
 cd packages/plugins/code-coach
-bun test                                  # 4 tests, fake daemon, all platforms
+bun test                                  # 7 tests, no daemon, all platforms
 bun run typecheck:tsc                     # clean
-powershell -File tests\Run-Minimal.ps1    # 38 live checks, Windows desktop
+powershell -STA -File tests\Run-Minimal.ps1   # 35 live checks, Windows desktop
 ```
 
 The live test starts the real daemon in a child process, writes the same
 `req-<id>.json` the plugin writes, drives the card through UI Automation, and
-parses every verdict with Node. Its receipt is in `docs/PROOF.md`.
+asserts the clipboard contents. Its receipt is in `docs/PROOF.md`.
 
 ## Files
 
 | Path | What |
 | --- | --- |
-| `index.ts` | plugin half: digest, request, verdict, `context` hook |
-| `src/Coach.Daemon.ps1` | daemon half: two rules, one card, pid guard |
-| `index.test.ts` | fake-daemon tests for the plugin contract |
+| `index.ts` | plugin half: filter, write one request, return |
+| `src/Coach.Daemon.ps1` | daemon half: one rule, one card, clipboard, pid guard |
+| `index.test.ts` | plugin tests; no daemon, no timers |
 | `tests/Run-Minimal.ps1` | live end-to-end test for the daemon and card |
-| `docs/IPC.md` | the file contract |
+| `docs/IPC.md` | the one-file contract |
 | `docs/PROOF.md` | receipts |
 
 ## Design notes
@@ -147,10 +168,11 @@ parses every verdict with Node. Its receipt is in `docs/PROOF.md`.
 - **Post-send, not pre-send.** A pre-send gate turns a coach into a blocker and
   trains people to click through. A post-send card costs nothing when it is
   wrong.
+- **One write, no wait.** The hook is on the send path; the daemon is not.
 - **The card cannot take focus.** The window uses `WS_EX_NOACTIVATE` and
   `ShowActivated = false`, so a click leaves the caret where it was.
-- **Fail-open everywhere.** A dead daemon, a malformed file, a missing request,
-  or a timeout sends the developer's words untouched. The gate has no path that
-  drops a send.
-- **One card at a time.** A second `hold` while a card is up is answered `pass`
-  rather than stacked. Queuing is a later slice.
+- **Fail-open everywhere.** A dead daemon, a missing folder, a malformed file,
+  or a write error leaves the developer's send untouched. There is no path that
+  drops or alters a prompt.
+- **One card at a time.** A second destructive ask while a card is up is dropped
+  and traced, not stacked.

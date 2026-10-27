@@ -1,20 +1,26 @@
 # Coach.Daemon.ps1 - slice 1 of the code-coach gate.
 #
-# Reads req-<id>.json from the IPC folder, answers res-<id>.json with
-# pass | attach | hold, and on hold shows one card with two buttons. The
-# plugin waits at most five seconds for a decision; if nobody clicks, the
-# prompt is sent as written. Nothing here reads or writes the prompt itself.
+# Watches the IPC folder for req-<id>.json, decides whether the ask destroys
+# state with no recovery point, and - if it does - shows one card with
+# "Copy the guardrail" and "Dismiss".
 #
-# Two deterministic rules:
-#   destructive ask with no recovery point -> hold, offer the guardrail
-#   change ask that names no file           -> attach, name the target
-#   anything else                           -> pass
+# This process never talks back to the plugin. The plugin does not wait for it,
+# so nothing here can delay or change a send. The card is a nudge after the
+# fact: it copies a guardrail to the clipboard so the developer can paste it
+# into the conversation, or dismisses itself.
 #
-# The plugin's own regexes decide whether a send is substantive enough to ask
-# about; the verdicts below are this file's alone.
+# One deterministic rule:
+#   destructive verb + destructive object, no recovery point -> card
+#   hard pattern (rm -rf, git clean, force-push, drop table) -> card
+#   anything else                                            -> silence
 #
-# One card at a time. A second hold while a card is up is answered pass rather
-# than stacked; queuing is slice 2.
+# One card at a time. A second destructive ask while a card is up is dropped
+# and logged rather than stacked.
+#
+# Nothing here reads or writes the prompt itself beyond matching the rule, and
+# no prompt text is ever logged or traced.
+
+param([switch]$Once)
 
 $ErrorActionPreference = 'Stop'
 
@@ -41,11 +47,18 @@ $Trace = Join-Path $Data 'trace.jsonl'
 $PidFile = Join-Path $Data 'daemon.pid'
 $StopFile = Join-Path $Data 'stop'
 
+# How long a card stays up. Hovering pauses the countdown. The card is the only
+# interruption this slice can produce, so it gets long enough to actually read.
+$CardSeconds = 60
+# A request older than this belongs to a session that has moved on. Answering it
+# with a card would be a nudge about something the developer finished minutes ago.
+$MaxRequestAgeSeconds = 120
+
 New-Item -ItemType Directory -Force -Path $Ipc, $LogDir | Out-Null
 
-# Windows PowerShell 5.1's `Set-Content -Encoding UTF8` writes a BOM, and the
-# plugin parses these files with JSON.parse, which rejects one. Write UTF-8
-# without a BOM so the Node side can read every verdict.
+# Windows PowerShell 5.1's `Set-Content -Encoding UTF8` writes a BOM. Everything
+# this daemon writes is read by Node or by ConvertFrom-Json, so write UTF-8
+# without one.
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 function Write-Log([string]$Line) {
@@ -57,12 +70,6 @@ function Write-Trace($Event) {
     $Event.ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     Add-Content -LiteralPath $Trace -Value ($Event | ConvertTo-Json -Compress -Depth 6) -Encoding UTF8
   } catch { }
-}
-
-function Write-Json([string]$Path, $Payload) {
-  $tmp = $Path + '.tmp'
-  [System.IO.File]::WriteAllText($tmp, ($Payload | ConvertTo-Json -Compress -Depth 6), $Utf8NoBom)
-  Move-Item -LiteralPath $tmp -Destination $Path -Force
 }
 
 # A second daemon on the same folder would double-answer every request.
@@ -81,32 +88,19 @@ $script:ReGuard = '(?i)\b(backup|backed up|commit first|commit before|commit the
 $script:ReHard = '(?i)\b(rm\s+-rf|git\s+clean|force[- ]?push|drop\s+table|truncate\s+table)\b'
 $script:ReVerb = '(?i)\b(delete|deletes|deleting|reset|resets|resetting|drop|drops|dropping|truncate|truncates|truncating|overwrite|overwrites|overwriting|wipe|wipes|wiping|purge|purges|purging|destroy|destroys|destroying|remove|removes|removing|clear|clears|clearing)\b'
 $script:ReObject = '(?i)\b(files?|folders?|directories?|dirs?|data|database|db|tables?|rows?|records?|logs?|history|branch(es)?|commits?|repo(sitory)?|worktree|build|output|cache|config|credentials?|secrets?|disk|drive|migrations?)\b'
-$script:ReChange = '(?i)\b(fix|fixes|fixing|make|makes|making|improve|improves|improving|refactor\w*|rewrite|update|updates|updating|change|changes|changing|handle|handles|handling|support|add|adds|adding|move|moves|rename|remove|removes|removing)\b'
-$script:ReFile = '(?i)\b[\w./\\-]+\.(ps1|psm1|psd1|js|mjs|cjs|ts|tsx|jsx|py|cs|go|rs|rb|java|kt|swift|json|ya?ml|toml|md|css|html|sql|sh|bash|bat|cmd|c|h|cpp|hpp)\b'
 
-function Get-Decision([string]$Text) {
+$script:Guardrail = 'Before you delete or rewrite anything, commit the current state, take a backup, and run the change against one target first; confirm the result before widening it.'
+
+function Test-Destructive([string]$Text) {
   $t = [string]$Text
-  if (-not $t) { return @{ action = 'pass' } }
-  if ($t -match $script:ReGuard) { return @{ action = 'pass' } }
-  if (($t -match $script:ReHard) -or (($t -match $script:ReVerb) -and ($t -match $script:ReObject))) {
-    return @{
-      action = 'hold'
-      title = 'Destructive ask without a recovery point'
-      body = 'This deletes or rewrites state, and nothing in the ask makes it reversible. Add the commit, backup, or dry run first.'
-      guardrail = 'Before you delete or rewrite anything, commit the current state, take a backup, and run the change against one target first; confirm the result before widening it.'
-    }
-  }
-  if (($t -match $script:ReChange) -and -not ($t -match $script:ReFile)) {
-    return @{
-      action = 'attach'
-      attachment = 'Target: name the file, route, or function this change touches, and the check that proves it works.'
-    }
-  }
-  return @{ action = 'pass' }
+  if (-not $t) { return $false }
+  # A recovery point in the ask is the whole point of the rule.
+  if ($t -match $script:ReGuard) { return $false }
+  if ($t -match $script:ReHard) { return $true }
+  return (($t -match $script:ReVerb) -and ($t -match $script:ReObject))
 }
 
 $script:ActiveCard = $null
-$script:CardGuardrail = ''
 $script:PumpFrame = $null
 $script:Seen = @{}
 
@@ -114,19 +108,38 @@ function Close-Card {
   $card = $script:ActiveCard
   if (-not $card) { return }
   $script:ActiveCard = $null
+  try { if ($card.timer) { $card.timer.Stop() } } catch { }
   try { $card.window.Close() } catch { }
+}
+
+function Set-ClipboardText([string]$Text) {
+  # Another process can hold the clipboard open for a few milliseconds; a
+  # single throw would lose the copy and leave the card up with no feedback.
+  for ($i = 0; $i -lt 5; $i++) {
+    try {
+      [System.Windows.Clipboard]::SetText($Text)
+      return $true
+    } catch {
+      Start-Sleep -Milliseconds 40
+    }
+  }
+  return $false
 }
 
 function Complete-Card([string]$Action) {
   $card = $script:ActiveCard
   if (-not $card) { return }
   try {
-    $payload = @{ action = $Action }
-    if ($Action -eq 'attach') { $payload.attachment = $script:CardGuardrail }
-    Write-Json (Join-Path $Ipc ('dec-' + $card.id + '.json')) $payload
-    Write-Trace @{ ev = 'card_decision'; action = $Action }
+    if ($Action -eq 'copy') {
+      $ok = Set-ClipboardText $script:Guardrail
+      Write-Trace @{ ev = 'card_action'; action = 'copy'; ok = $ok }
+      Write-Log ('card: copy ' + $(if ($ok) { 'ok' } else { 'failed' }))
+    } else {
+      Write-Trace @{ ev = 'card_action'; action = 'dismiss' }
+      Write-Log 'card: dismissed'
+    }
   } catch {
-    Write-Log ('card decision failed: ' + $_.Exception.Message)
+    Write-Log ('card action failed: ' + $_.Exception.Message)
   }
   Close-Card
 }
@@ -140,9 +153,7 @@ function Invoke-Pump([int]$Milliseconds = 40) {
   try { [System.Windows.Threading.Dispatcher]::PushFrame($script:PumpFrame) } finally { $timer.Stop() }
 }
 
-function Show-Card([string]$Id, $Decision) {
-  $script:CardGuardrail = [string]$Decision.guardrail
-
+function Show-Card([string]$Id, [string]$Text) {
   $win = New-Object System.Windows.Window
   $win.Title = 'Code Coach'
   $win.WindowStyle = 'None'
@@ -162,37 +173,43 @@ function Show-Card([string]$Id, $Decision) {
   $panel.MaxWidth = 420
 
   $title = New-Object System.Windows.Controls.TextBlock
-  $title.Text = [string]$Decision.title
+  $title.Text = 'Destructive ask without a recovery point'
   $title.FontSize = 15
   $title.FontWeight = 'SemiBold'
   $title.TextWrapping = 'Wrap'
   [void]$panel.Children.Add($title)
 
   $body = New-Object System.Windows.Controls.TextBlock
-  $body.Text = [string]$Decision.body
+  $body.Text = 'This deletes or rewrites state, and nothing in the ask makes it reversible. Copy the guardrail and paste it into the conversation.'
   $body.FontSize = 12
   $body.Margin = '0,6,0,0'
   $body.TextWrapping = 'Wrap'
   [void]$panel.Children.Add($body)
 
+  $meta = New-Object System.Windows.Controls.TextBlock
+  $meta.FontSize = 10.5
+  $meta.Margin = '0,8,0,0'
+  $meta.Foreground = [System.Windows.Media.Brushes]::Gray
+  [void]$panel.Children.Add($meta)
+
   $row = New-Object System.Windows.Controls.StackPanel
   $row.Orientation = 'Horizontal'
   $row.Margin = '0,12,0,0'
 
-  $add = New-Object System.Windows.Controls.Button
-  $add.Content = 'Add the guardrail'
-  $add.Padding = '10,4'
-  $add.Add_Click({ Complete-Card 'attach' })
-  [System.Windows.Automation.AutomationProperties]::SetAutomationId($add, 'CoachAddGuardrail')
-  [void]$row.Children.Add($add)
+  $copy = New-Object System.Windows.Controls.Button
+  $copy.Content = 'Copy the guardrail'
+  $copy.Padding = '10,4'
+  $copy.Add_Click({ Complete-Card 'copy' })
+  [System.Windows.Automation.AutomationProperties]::SetAutomationId($copy, 'CoachCopyGuardrail')
+  [void]$row.Children.Add($copy)
 
-  $keep = New-Object System.Windows.Controls.Button
-  $keep.Content = 'Send as written'
-  $keep.Padding = '10,4'
-  $keep.Margin = '8,0,0,0'
-  $keep.Add_Click({ Complete-Card 'pass' })
-  [System.Windows.Automation.AutomationProperties]::SetAutomationId($keep, 'CoachSendAsWritten')
-  [void]$row.Children.Add($keep)
+  $dismiss = New-Object System.Windows.Controls.Button
+  $dismiss.Content = 'Dismiss'
+  $dismiss.Padding = '10,4'
+  $dismiss.Margin = '8,0,0,0'
+  $dismiss.Add_Click({ Complete-Card 'dismiss' })
+  [System.Windows.Automation.AutomationProperties]::SetAutomationId($dismiss, 'CoachDismiss')
+  [void]$row.Children.Add($dismiss)
 
   [void]$panel.Children.Add($row)
 
@@ -216,10 +233,25 @@ function Show-Card([string]$Id, $Decision) {
   $win.Left = [Math]::Max($area.Left, $area.Right - $win.ActualWidth - 24)
   $win.Top = [Math]::Max($area.Top, $area.Bottom - $win.ActualHeight - 24)
 
-  # The plugin's DECISION_MS is 5000. The card must be gone before that poll
-  # gives up, or a click lands on a card nobody is waiting for any more.
-  $script:ActiveCard = @{ id = $Id; window = $win; deadline = (Get-Date).AddMilliseconds(4500) }
-  Write-Log ('card up: ' + $Decision.title)
+  $script:ActiveCard = @{ id = $Id; window = $win; timer = $null }
+
+  # Hovering stops the countdown so a card can be read at the reader's pace.
+  $timer = New-Object System.Windows.Threading.DispatcherTimer
+  $timer.Interval = [TimeSpan]::FromSeconds($CardSeconds)
+  $timer.add_Tick({
+    Write-Log 'card: expired'
+    Write-Trace @{ ev = 'card_expired' }
+    Close-Card
+  })
+  $timer.Start()
+  $script:ActiveCard.timer = $timer
+  $script:ActiveCard.meta = $meta
+  $meta.Text = ('dismisses in {0}s' -f $CardSeconds)
+
+  $win.add_MouseEnter({ try { if ($script:ActiveCard -and $script:ActiveCard.timer) { $script:ActiveCard.timer.Stop(); $script:ActiveCard.meta.Text = 'paused while you read' } } catch { } })
+  $win.add_MouseLeave({ try { if ($script:ActiveCard -and $script:ActiveCard.timer) { $script:ActiveCard.timer.Start(); $script:ActiveCard.meta.Text = ('dismisses in {0}s' -f $CardSeconds) } } catch { } })
+
+  Write-Log 'card up'
   Write-Trace @{ ev = 'card_shown'; id = $Id }
 }
 
@@ -232,36 +264,37 @@ try {
       if ($script:Seen.ContainsKey($file.Name)) { continue }
       $script:Seen[$file.Name] = $true
       try {
-        $req = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop | ConvertFrom-Json
-        $id = [string]$req.id
-        if (-not $id) { continue }
-
-        # A request the plugin has already abandoned must not raise a card.
-        # The plugin waits 1500 ms for the verdict, so anything older than
-        # 1200 ms has no reader left. Answer pass and remove it.
-        $age = ((Get-Date) - $file.LastWriteTime).TotalMilliseconds
-        if ($age -gt 1200) {
-          Write-Json (Join-Path $Ipc ('res-' + $id + '.json')) @{ action = 'pass' }
-          Write-Trace @{ ev = 'gate_stale'; len = ([string]$req.text).Length }
+        $age = ((Get-Date) - $file.LastWriteTime).TotalSeconds
+        if ($age -gt $MaxRequestAgeSeconds) {
+          Write-Log ('request stale, dropped age=' + [int]$age)
+          Write-Trace @{ ev = 'request_stale' }
           Remove-Item -LiteralPath $file.FullName -Force
           continue
         }
 
-        $decision = Get-Decision ([string]$req.text)
-        if ($decision.action -eq 'hold' -and $script:ActiveCard) {
-          $decision = @{ action = 'pass' }
-          Write-Log ('card busy, passed: ' + $id)
+        $req = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop | ConvertFrom-Json
+        $id = [string]$req.id
+        $text = [string]$req.text
+
+        # Delete first: the plugin never reads this back, and a card that is
+        # about to appear must not depend on a file the loop might re-read.
+        Remove-Item -LiteralPath $file.FullName -Force
+
+        if (-not (Test-Destructive $text)) {
+          Write-Trace @{ ev = 'silent'; len = $text.Length }
+          continue
         }
 
-        $res = @{ action = $decision.action }
-        if ($decision.attachment) { $res.attachment = $decision.attachment }
-        Write-Json (Join-Path $Ipc ('res-' + $id + '.json')) $res
-        Write-Trace @{ ev = 'gate'; action = $decision.action; len = ([string]$req.text).Length }
-        if ($decision.action -eq 'hold') { Show-Card $id $decision }
+        if ($script:ActiveCard) {
+          Write-Log 'card busy, dropped'
+          Write-Trace @{ ev = 'card_dropped'; len = $text.Length }
+          continue
+        }
+
+        Show-Card $id $text
       } catch {
-        # One malformed request or one failed window must not stop the gate.
-        # Delete the unreadable request rather than retrying it every 40 ms:
-        # it holds prompt text, and the plugin fails open on a missing verdict.
+        # One malformed request must not stop the gate. The file holds prompt
+        # text, so remove it rather than retrying it every 40 ms.
         Write-Log ('request failed: ' + $_.Exception.Message)
         try { Remove-Item -LiteralPath $file.FullName -Force } catch { }
       }
@@ -269,16 +302,6 @@ try {
 
     foreach ($name in @($script:Seen.Keys)) {
       if (-not (Test-Path -LiteralPath (Join-Path $Ipc $name))) { $script:Seen.Remove($name) }
-    }
-
-    if ($script:ActiveCard) {
-      $card = $script:ActiveCard
-      $dec = Join-Path $Ipc ('dec-' + $card.id + '.json')
-      $req = Join-Path $Ipc ('req-' + $card.id + '.json')
-      if ((Test-Path -LiteralPath $dec) -or -not (Test-Path -LiteralPath $req) -or (Get-Date) -gt $card.deadline) {
-        Write-Log ('card closed: ' + $card.id)
-        Close-Card
-      }
     }
 
     Invoke-Pump 40

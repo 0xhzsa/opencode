@@ -1,16 +1,19 @@
 # Run-Minimal.ps1 - live end-to-end test for the slice-1 gate.
 #
-# Starts the real daemon in a child process, writes the same req-<id>.json the
-# plugin writes, and checks every answer against the plugin's contract:
+# Starts the real daemon in a child process and writes the same req-<id>.json
+# the plugin writes. The plugin never waits for an answer, so this test asserts
+# what the developer can actually observe:
 #
-#   pass    - no objection, nothing shown
-#   attach  - earned context, no card
-#   hold    - one card; "Add the guardrail" answers attach with the guardrail
-#             and "Send as written" answers pass
-#   close   - the card goes away when the request disappears
-#   guard   - a second daemon on the same folder refuses to start
-#   quiet   - no prompt text reaches daemon.log or trace.jsonl
-#   wire    - every verdict is BOM-less UTF-8 and parses in Node
+#   card     - a destructive ask with no recovery point shows one card
+#   copy     - "Copy the guardrail" puts the guardrail on the clipboard
+#   dismiss  - "Dismiss" closes the card without touching the clipboard
+#   silent   - a non-destructive ask, or a destructive ask with a recovery
+#              point, shows no card at all
+#   one      - a second destructive ask while a card is up is dropped, not stacked
+#   stale    - a request older than the limit is dropped without a card
+#   quiet    - no prompt text reaches daemon.log or trace.jsonl
+#   guard    - a second daemon on the same folder refuses to start
+#   stop     - the stop file closes the card and removes the pid file
 #
 # Windows only, like the daemon. Exits non-zero if any check fails.
 
@@ -20,6 +23,8 @@ $ErrorActionPreference = 'Stop'
 
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName PresentationCore
+Add-Type -AssemblyName WindowsBase
 
 $root = Split-Path -Parent $PSScriptRoot
 $daemon = Join-Path $root 'src\Coach.Daemon.ps1'
@@ -33,7 +38,6 @@ $pidFile = Join-Path $data 'daemon.pid'
 New-Item -ItemType Directory -Force -Path $ipc | Out-Null
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-$node = (Get-Command node -ErrorAction SilentlyContinue).Source
 $checks = 0
 $fails = 0
 
@@ -50,13 +54,7 @@ function Check([string]$Name, [bool]$Ok, [string]$Detail = '') {
 
 function Write-Req([string]$Text, [int]$AgeSeconds = 0) {
   $id = [guid]::NewGuid().ToString()
-  $payload = @{
-    id = $id
-    text = $Text
-    ctx = @{ turn = 0; attempts = 0; files = @(); errors = @(); tests = @(); constraints = @(); success = @(); goals = @() }
-    cwd = 'C:\repo'
-    sid = 's-live'
-  } | ConvertTo-Json -Depth 8 -Compress
+  $payload = @{ id = $id; text = $Text; cwd = 'C:\repo'; sid = 's-live'; at = 0 } | ConvertTo-Json -Compress
   $path = Join-Path $ipc ('req-' + $id + '.json')
   $tmp = $path + '.tmp'
   [System.IO.File]::WriteAllText($tmp, $payload, $utf8)
@@ -65,46 +63,39 @@ function Write-Req([string]$Text, [int]$AgeSeconds = 0) {
   return $id
 }
 
-function Wait-Json([string]$Name, [int]$Milliseconds = 3000) {
-  $path = Join-Path $ipc $Name
+function Wait-Gone([string]$Id, [int]$Milliseconds = 3000) {
+  $path = Join-Path $ipc ('req-' + $Id + '.json')
   $until = (Get-Date).AddMilliseconds($Milliseconds)
   while ((Get-Date) -lt $until) {
-    if (Test-Path -LiteralPath $path) {
-      try { return (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json) } catch { }
-    }
-    Start-Sleep -Milliseconds 40
+    if (-not (Test-Path -LiteralPath $path)) { return $true }
+    Start-Sleep -Milliseconds 30
+  }
+  return $false
+}
+
+function Find-Cards() {
+  $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
+  $idCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'CodeCoachGateCard')
+  return @($rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, $idCond))
+}
+
+function Wait-Card([int]$Milliseconds = 3000) {
+  $until = (Get-Date).AddMilliseconds($Milliseconds)
+  while ((Get-Date) -lt $until) {
+    $cards = Find-Cards
+    if ($cards.Count -gt 0) { return $cards[0] }
+    Start-Sleep -Milliseconds 50
   }
   return $null
 }
 
-function Test-NodeJson([string]$Path) {
-  if (-not $node) { return $false }
-  & $node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" $Path 2>$null
-  return ($LASTEXITCODE -eq 0)
-}
-
-function Test-NoBom([string]$Path) {
-  $bytes = [System.IO.File]::ReadAllBytes($Path)
-  return -not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
-}
-
-function Find-Card([int]$Milliseconds = 3000) {
+function Wait-CardGone([int]$Milliseconds = 3000) {
   $until = (Get-Date).AddMilliseconds($Milliseconds)
   while ((Get-Date) -lt $until) {
-    $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
-    $idCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'CodeCoachGateCard')
-    $el = $rootEl.FindFirst([System.Windows.Automation.TreeScope]::Children, $idCond)
-    if ($el) { return $el }
-    # Fallback for a build that does not surface the window's AutomationId.
-    $nameCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, 'Code Coach')
-    $wins = $rootEl.FindAll([System.Windows.Automation.TreeScope]::Children, $nameCond)
-    foreach ($w in $wins) {
-      $btnCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'CoachAddGuardrail')
-      if ($w.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $btnCond)) { return $w }
-    }
-    Start-Sleep -Milliseconds 80
+    if ((Find-Cards).Count -eq 0) { return $true }
+    Start-Sleep -Milliseconds 50
   }
-  return $null
+  return $false
 }
 
 function Invoke-CardButton($Card, [string]$AutomationId) {
@@ -116,13 +107,12 @@ function Invoke-CardButton($Card, [string]$AutomationId) {
   return $true
 }
 
-function Wait-CardGone([int]$Milliseconds = 3000) {
-  $until = (Get-Date).AddMilliseconds($Milliseconds)
-  while ((Get-Date) -lt $until) {
-    if (-not (Find-Card 60)) { return $true }
-    Start-Sleep -Milliseconds 60
-  }
-  return $false
+function Read-Clipboard() {
+  try { return [System.Windows.Clipboard]::GetText() } catch { return '' }
+}
+
+function Set-ClipboardSafe([string]$Text) {
+  try { [System.Windows.Clipboard]::SetText($Text); return $true } catch { return $false }
 }
 
 $previous = $env:COACH_DATA_DIR
@@ -138,79 +128,61 @@ try {
   Check 'daemon process is alive' (-not $proc.HasExited)
   if ($proc.HasExited) { throw 'daemon exited before the first request' }
 
-  # pass
-  $id = Write-Req 'Summarize the current state of the parser'
-  $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  $res = Wait-Json ('res-' + $id + '.json') 1500
-  $sw.Stop()
-  Check 'pass: verdict inside VERDICT_MS' ($null -ne $res -and $sw.ElapsedMilliseconds -lt 1500) ($sw.ElapsedMilliseconds.ToString() + ' ms')
-  Check 'pass: action is pass' ($null -ne $res -and $res.action -eq 'pass') ($res | ConvertTo-Json -Compress)
-  Check 'pass: response parses in Node' (Test-NodeJson (Join-Path $ipc ('res-' + $id + '.json')))
-  Check 'pass: response has no BOM' (Test-NoBom (Join-Path $ipc ('res-' + $id + '.json')))
-  Remove-Item -LiteralPath (Join-Path $ipc ('req-' + $id + '.json')) -Force
-
-  # attach
-  $id = Write-Req 'fix the login flow so the second attempt works'
-  $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  $res = Wait-Json ('res-' + $id + '.json') 1500
-  $sw.Stop()
-  Check 'attach: verdict inside VERDICT_MS' ($null -ne $res -and $sw.ElapsedMilliseconds -lt 1500) ($sw.ElapsedMilliseconds.ToString() + ' ms')
-  Check 'attach: action is attach' ($null -ne $res -and $res.action -eq 'attach') ($res | ConvertTo-Json -Compress)
-  Check 'attach: names the missing target' ($null -ne $res -and [string]$res.attachment -match 'Target: name the file')
-  Check 'attach: response parses in Node' (Test-NodeJson (Join-Path $ipc ('res-' + $id + '.json')))
-  Remove-Item -LiteralPath (Join-Path $ipc ('req-' + $id + '.json')) -Force
-
-  # hold -> Add the guardrail
+  # 1. destructive ask -> one card
   $id = Write-Req 'delete all the logs from last week'
-  $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  $res = Wait-Json ('res-' + $id + '.json') 1500
-  $sw.Stop()
-  Check 'hold: verdict inside VERDICT_MS' ($null -ne $res -and $sw.ElapsedMilliseconds -lt 1500) ($sw.ElapsedMilliseconds.ToString() + ' ms')
-  Check 'hold: action is hold' ($null -ne $res -and $res.action -eq 'hold') ($res | ConvertTo-Json -Compress)
-  $card = Find-Card 3000
-  Check 'hold: card is up' ($null -ne $card)
-  $clicked = if ($card) { Invoke-CardButton $card 'CoachAddGuardrail' } else { $false }
-  Check 'hold: Add the guardrail clicked' $clicked
-  $dec = Wait-Json ('dec-' + $id + '.json') 3000
-  Check 'hold: decision is attach' ($null -ne $dec -and $dec.action -eq 'attach') ($dec | ConvertTo-Json -Compress)
-  Check 'hold: decision carries the guardrail' ($null -ne $dec -and [string]$dec.attachment -match 'commit the current state')
-  Check 'hold: decision parses in Node' (Test-NodeJson (Join-Path $ipc ('dec-' + $id + '.json')))
-  Check 'hold: decision has no BOM' (Test-NoBom (Join-Path $ipc ('dec-' + $id + '.json')))
-  Check 'hold: card closed after the click' (Wait-CardGone 3000)
-  Remove-Item -LiteralPath (Join-Path $ipc ('req-' + $id + '.json')) -Force
+  $card = Wait-Card 4000
+  Check 'destructive ask shows a card' ($null -ne $card)
+  Check 'the request is consumed' (Wait-Gone $id 2000)
+  Check 'exactly one card' ((Find-Cards).Count -eq 1) (([string](Find-Cards).Count) + ' cards')
 
-  # hold -> Send as written
+  # 2. copy the guardrail
+  $sentinel = 'coach-test-sentinel-' + [guid]::NewGuid().ToString('N').Substring(0, 6)
+  Check 'clipboard can be seeded' (Set-ClipboardSafe $sentinel)
+  $clicked = if ($card) { Invoke-CardButton $card 'CoachCopyGuardrail' } else { $false }
+  Check 'Copy the guardrail clicked' $clicked
+  Start-Sleep -Milliseconds 200
+  $clip = Read-Clipboard
+  Check 'clipboard holds the guardrail' ($clip -like 'Before you delete or rewrite anything*') $clip
+  Check 'clipboard replaced the sentinel' ($clip -ne $sentinel)
+  Check 'card closed after the copy' (Wait-CardGone 3000)
+
+  # 3. a non-destructive ask stays silent
+  $id = Write-Req 'summarize the current state of the parser'
+  Check 'non-destructive request is consumed' (Wait-Gone $id 3000)
+  Check 'non-destructive ask shows no card' ((Find-Cards).Count -eq 0)
+
+  # 4. a destructive ask with a recovery point stays silent
+  $id = Write-Req 'delete the old logs after committing the current state first'
+  Check 'guarded request is consumed' (Wait-Gone $id 3000)
+  Check 'guarded destructive ask shows no card' ((Find-Cards).Count -eq 0)
+
+  # 5. dismiss does not touch the clipboard
   $id = Write-Req 'wipe the cache directory completely'
-  $res = Wait-Json ('res-' + $id + '.json') 1500
-  Check 'hold: second verdict arrives' ($null -ne $res -and $res.action -eq 'hold')
-  $card = Find-Card 3000
-  Check 'hold: second card is up' ($null -ne $card)
-  $clicked = if ($card) { Invoke-CardButton $card 'CoachSendAsWritten' } else { $false }
-  Check 'hold: Send as written clicked' $clicked
-  $dec = Wait-Json ('dec-' + $id + '.json') 3000
-  Check 'hold: Send as written answers pass' ($null -ne $dec -and $dec.action -eq 'pass') ($dec | ConvertTo-Json -Compress)
-  Check 'hold: second card closed' (Wait-CardGone 3000)
-  Remove-Item -LiteralPath (Join-Path $ipc ('req-' + $id + '.json')) -Force
+  $card = Wait-Card 4000
+  Check 'second destructive ask shows a card' ($null -ne $card)
+  Check 'clipboard can be re-seeded' (Set-ClipboardSafe $sentinel)
+  $clicked = if ($card) { Invoke-CardButton $card 'CoachDismiss' } else { $false }
+  Check 'Dismiss clicked' $clicked
+  Check 'card closed after dismiss' (Wait-CardGone 3000)
+  Start-Sleep -Milliseconds 150
+  Check 'dismiss left the clipboard alone' ((Read-Clipboard) -eq $sentinel)
 
-  # card closes when the request disappears
-  $id = Write-Req 'reset the database to a clean state'
-  $res = Wait-Json ('res-' + $id + '.json') 1500
-  Check 'close: hold verdict arrives' ($null -ne $res -and $res.action -eq 'hold')
-  $card = Find-Card 3000
-  Check 'close: card is up before the request is removed' ($null -ne $card)
-  Remove-Item -LiteralPath (Join-Path $ipc ('req-' + $id + '.json')) -Force
-  Check 'close: card goes away with the request' (Wait-CardGone 3000)
-  Check 'close: no decision is invented' (-not (Test-Path -LiteralPath (Join-Path $ipc ('dec-' + $id + '.json'))))
+  # 6. a second destructive ask while a card is up is dropped, not stacked
+  $idA = Write-Req 'reset the database to a clean state'
+  $card = Wait-Card 4000
+  Check 'card is up before the second ask' ($null -ne $card)
+  $idB = Write-Req 'drop the users table'
+  Check 'second request is consumed' (Wait-Gone $idB 3000)
+  Check 'still exactly one card' ((Find-Cards).Count -eq 1) (([string](Find-Cards).Count) + ' cards')
+  if ($card) { [void](Invoke-CardButton $card 'CoachDismiss') }
+  Check 'card closes after the drop' (Wait-CardGone 3000)
 
-  # stale request from a plugin that is no longer waiting
-  $id = Write-Req 'delete all the logs from last week' 5
-  $path = Join-Path $ipc ('req-' + $id + '.json')
-  $res = Wait-Json ('res-' + $id + '.json') 1500
-  Check 'stale: abandoned request is answered pass' ($null -ne $res -and $res.action -eq 'pass')
-  Check 'stale: no card for an abandoned request' (-not (Find-Card 400))
-  Check 'stale: request is removed' (-not (Test-Path -LiteralPath $path))
+  # 7. a stale request is dropped without a card
+  $id = Write-Req 'delete all the logs from last week' 600
+  Check 'stale request is consumed' (Wait-Gone $id 3000)
+  Check 'stale request shows no card' ((Find-Cards).Count -eq 0)
 
-  # pid guard
+  # 8. pid guard
   $env:COACH_DATA_DIR = $data
   $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $daemon 2>&1
   $code = $LASTEXITCODE
@@ -218,28 +190,33 @@ try {
   Check 'guard: second daemon exits 2' ($code -eq 2) ('exit ' + $code)
   Check 'guard: second daemon names the running pid' (($out -join "`n") -match 'refused: daemon \d+ is already running')
 
-  # quiet + wire
+  # 9. quiet + trace
   $requests = @(Get-ChildItem -LiteralPath $ipc -Filter 'req-*.json' -File -ErrorAction SilentlyContinue)
-  Check 'quiet: no request files left behind' ($requests.Count -eq 0) ($requests.Count.ToString() + ' left')
+  Check 'no request files left behind' ($requests.Count -eq 0) ($requests.Count.ToString() + ' left')
   $logText = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Raw } else { '' }
   $traceText = if (Test-Path -LiteralPath $trace) { Get-Content -LiteralPath $trace -Raw } else { '' }
   $secrets = @(
-    'Summarize the current state of the parser',
-    'fix the login flow so the second attempt works',
     'delete all the logs from last week',
+    'summarize the current state of the parser',
+    'delete the old logs after committing the current state first',
     'wipe the cache directory completely',
-    'reset the database to a clean state'
+    'reset the database to a clean state',
+    'drop the users table'
   )
   $leaked = @($secrets | Where-Object { $logText -like ('*' + $_ + '*') -or $traceText -like ('*' + $_ + '*') })
-  Check 'quiet: no prompt text in daemon.log or trace.jsonl' ($leaked.Count -eq 0) ($leaked -join ' | ')
+  Check 'no prompt text in daemon.log or trace.jsonl' ($leaked.Count -eq 0) ($leaked -join ' | ')
+
   $actions = @()
   foreach ($line in @($traceText -split '\r?\n')) {
     if (-not $line) { continue }
-    try { $ev = $line | ConvertFrom-Json; if ($ev.action) { $actions += [string]$ev.action } } catch { }
+    try { $ev = $line | ConvertFrom-Json; if ($ev.ev) { $actions += [string]$ev.ev } } catch { }
   }
-  Check 'wire: trace records pass, attach, and hold' (($actions -contains 'pass') -and ($actions -contains 'attach') -and ($actions -contains 'hold')) (($actions -join ','))
+  Check 'trace records a shown card' ($actions -contains 'card_shown')
+  Check 'trace records a copied guardrail' ($actions -contains 'card_action')
+  Check 'trace records the dropped second card' ($actions -contains 'card_dropped')
+  Check 'trace records the stale request' ($actions -contains 'request_stale')
 
-  # graceful stop
+  # 10. graceful stop
   [System.IO.File]::WriteAllText((Join-Path $data 'stop'), 'stop', $utf8)
   $exited = $proc.WaitForExit(5000)
   Check 'stop: daemon exits on the stop file' $exited
