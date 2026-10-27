@@ -42,14 +42,20 @@ The next prompt is better and the developer knows why. That is the loop.
 | Prompt | Card |
 | --- | --- |
 | `Summarize the current state of the parser` | none |
-| `fix the login flow so the second attempt works` | none — a bug fix is not a credential ask |
+| `fix the login flow so the second attempt works` | none — a bug fix is not a build ask |
 | `delete the old logs after committing the current state first` | none — the ask has a recovery point |
 | `delete src/app.ts` | none — one named target is specific |
 | `delete all the logs from last week` | **Destructive ask without a recovery point** → Copy the guardrail / Dismiss |
 | `Add a login endpoint that checks the user's password against the database` | **2 things before you accept this** → Explain why / Fix my prompt / Ignore |
-| `add a password reset endpoint` | **1 thing before you accept this** → same three buttons |
+| `hardcode the Stripe API key in the config` | **1 thing**: a secret would be committed |
+| `build a SQL query from the user's input` | **1 thing**: SQL built from input |
+| `run the user's command with child_process.exec` | **1 thing**: shell command built from input |
+| `render user comments as raw HTML` | **1 thing**: user content rendered as HTML |
+| `accept a file upload and save it to disk` | **1 thing**: input used without validation |
 
-Two deterministic rules, no model call and no network:
+Two deterministic lanes, no model call and no network. The security lane is not
+password-specific: it covers the patterns below, and every finding gets the same
+three actions.
 
 **Destructive.** A destructive verb (`delete`, `reset`, `drop`, `truncate`,
 `overwrite`, `wipe`, `purge`, `destroy`, `remove`, `clear`) plus a destructive
@@ -60,20 +66,26 @@ object (`files`, `database`, `logs`, `history`, `cache`, `config`, `secrets`,
 `specific`, `this file`, `one file`. Naming a single file is also a specific
 target; `delete all the .ts files` is not.
 
-**Security.** A credential word (`password`, `passphrase`, `credential`,
+**Security.** Ordered by severity, capped at two findings per card:
+
+| Finding | Fires when | Silence when the ask says |
+| --- | --- | --- |
+| Plaintext password | a credential ask compares or stores a password and never mentions hashing | `bcrypt`, `argon2`, `scrypt`, `hash`, `salt`, `constant time` |
+| Missing rate limit | a credential ask has no limit on attempts | `rate limit`, `throttle`, `lockout`, `attempts per`, `captcha` |
+| Secret in the repo | a key or token is put in code or config | `environment`, `secret manager`, `vault`, `never commit` |
+| SQL built from input | a query takes user input by concatenation or interpolation | `parameterized`, `prepared statement`, `bind`, `ORM` |
+| Shell command built from input | input reaches `exec`, `spawn`, `system`, or a shell | `args array`, `no shell`, `allowlist`, `validate` |
+| User content as HTML | user content is rendered as markup | `escape`, `sanitize`, `DOMPurify`, `textContent` |
+| Input without validation | input is read, stored, or uploaded with no check | `validate`, `schema`, `zod`, `allowlist` |
+
+A credential ask is a credential word (`password`, `passphrase`, `credential`,
 `login`, `sign in`) plus a build verb (`add`, `create`, `build`, `implement`,
 `write`, `set up`, `wire`) plus an auth surface (`endpoint`, `route`, `form`,
-`handler`, `service`, `flow`, `api`, ...). Then:
+`handler`, `service`, `flow`, `api`, ...).
 
-- if the text has no hashing word (`bcrypt`, `argon2`, `scrypt`, `pbkdf2`,
-  `hash`, `salt`, `constant time`) but does have a comparison or storage word
-  (`compare`, `check`, `verify`, `against the database`, `store`, `plaintext`,
-  `==`), add the plaintext-password finding;
-- if the text has no rate-limiting word (`rate limit`, `throttle`, `lockout`,
-  `attempts per`, `captcha`, `fail2ban`), add the missing-rate-limit finding.
-
-Both suppressed → silence. One → `1 thing`, two → `2 things`. Destructive wins
-over security when an ask is both.
+One finding → `1 thing`, two → `2 things`. More than two are cut to the two most
+severe, so the card stays a nudge. Destructive wins over security when an ask is
+both.
 
 ## Why the hook does not wait
 
@@ -193,28 +205,27 @@ one-command installer are a later slice.
 cd packages/plugins/code-coach
 bun test                                       # 7 tests, no daemon, all platforms
 bun run typecheck:tsc                          # clean
-powershell -STA -File tests\Rules.ps1          # 38 rule checks, headless
-powershell -STA -File tests\Run-Minimal.ps1    # 66 live checks, Windows desktop
+powershell -STA -File tests\Rules.ps1          # 65 rule checks, headless
+powershell -STA -File tests\Run-Minimal.ps1    # 76 live checks, Windows desktop
 ```
 
 `tests/Rules.ps1` asserts every branch of the rule engine with no daemon and no
 desktop, so it runs anywhere PowerShell runs. `tests/Run-Minimal.ps1` starts the
 real daemon in a child process, writes the same `req-<id>.json` the plugin
 writes, drives the real WPF card through UI Automation, clicks every button, and
-reads the real clipboard. Its receipt is in `docs/PROOF.md`.
+reads the real clipboard.
 
 ## Files
 
 | Path | What |
 | --- | --- |
 | `index.ts` | plugin half: filter, write one request, return |
-| `src/Coach.Rules.ps1` | the decisions: destructive, security, suppression, fixed prompt |
+| `src/Coach.Rules.ps1` | the decisions: destructive, the seven security findings, suppression, fixed prompt |
 | `src/Coach.Daemon.ps1` | daemon half: scan, one card, buttons, clipboard, pid guard |
 | `index.test.ts` | plugin tests; no daemon, no timers |
 | `tests/Rules.ps1` | headless rule tests; no desktop needed |
 | `tests/Run-Minimal.ps1` | live end-to-end test for the daemon and card |
 | `docs/IPC.md` | the one-file contract |
-| `docs/PROOF.md` | receipts |
 
 ## Design notes
 

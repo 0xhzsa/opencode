@@ -231,6 +231,25 @@ try {
   Start-Sleep -Milliseconds 150
   Check 'Ignore left the clipboard alone' ((Read-Clipboard) -eq $sentinel)
 
+  # 6b. a non-password finding gets the same card and the same actions
+  $sqlAsk = 'build a SQL query from the user''s input'
+  $id = Write-Req $sqlAsk
+  $card = Wait-Card
+  Check 'sql ask shows a card' ($null -ne $card)
+  Check 'sql request is consumed' (Wait-Gone $id 2000)
+  $text = if ($card) { Get-CardText $card } else { '' }
+  Check 'sql card names the sql finding' ($text -like '*SQL built from input*') $text
+  Check 'sql card offers Explain why' ($null -ne (Find-Button $card 'CoachExplain'))
+  Check 'sql card offers Fix my prompt' ($null -ne (Find-Button $card 'CoachFixPrompt'))
+  Check 'sql card offers Ignore' ($null -ne (Find-Button $card 'CoachIgnore'))
+  Check 'clipboard can be seeded for sql' (Set-ClipboardSafe $sentinel)
+  $clicked = if ($card) { Invoke-CardButton $card 'CoachFixPrompt' } else { $false }
+  Check 'sql Fix my prompt clicked' $clicked
+  Start-Sleep -Milliseconds 200
+  $fixedSql = Read-Clipboard
+  Check 'sql fix puts parameterized on the clipboard' ($fixedSql -match 'parameterized') $fixedSql
+  Check 'sql card closed after the fix' (Wait-CardGone 3000)
+
   # 7. a second card-worthy ask while a card is up is dropped, not stacked
   $idA = Write-Req 'reset the database to a clean state'
   $card = Wait-Card
@@ -266,7 +285,8 @@ try {
     'delete src/app.ts',
     "checks the user's password against the database",
     'reset the database to a clean state',
-    'drop the users table'
+    'drop the users table',
+    'build a SQL query from the user''s input'
   )
   $leaked = @($secrets | Where-Object { $logText -like ('*' + $_ + '*') -or $traceText -like ('*' + $_ + '*') })
   Check 'no prompt text in daemon.log or trace.jsonl' ($leaked.Count -eq 0) ($leaked -join ' | ')

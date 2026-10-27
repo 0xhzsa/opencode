@@ -88,6 +88,54 @@ Check 'password reset endpoint -> security' ($one.kind -eq 'security')
 Check 'password reset endpoint names one finding' (@($one.findings).Count -eq 1) (@($one.findings).Count.ToString() + ' findings')
 Check 'password reset endpoint title is singular' ($one.title -eq '1 thing before you accept this') $one.title
 
+# --- security: the card is not password-only --------------------------------
+
+$secret = Get-CoachDecision 'hardcode the Stripe API key in the config'
+$secretIds = @($secret.findings | ForEach-Object { $_.id })
+Check 'hardcoded key -> security' ($secret.kind -eq 'security')
+Check 'hardcoded key names the secret finding' ($secretIds -contains 'secret')
+Check 'hardcoded key fix says environment' ($secret.fixed -match 'environment')
+Check 'read key from environment -> silent' ((Kind 'read the Stripe API key from the environment') -eq 'none')
+
+$sql = Get-CoachDecision 'build a SQL query from the user''s input'
+$sqlIds = @($sql.findings | ForEach-Object { $_.id })
+Check 'sql from input -> security' ($sql.kind -eq 'security')
+Check 'sql from input names the sql finding' ($sqlIds -contains 'sql')
+Check 'sql fix says parameterized' ($sql.fixed -match 'parameterized')
+Check 'parameterized query -> silent' ((Kind 'use a parameterized query for the user search') -eq 'none')
+
+$cmd = Get-CoachDecision 'run the user''s command with child_process.exec'
+$cmdIds = @($cmd.findings | ForEach-Object { $_.id })
+Check 'command from input -> security' ($cmd.kind -eq 'security')
+Check 'command from input names the command finding' ($cmdIds -contains 'command')
+Check 'command fix says no shell' ($cmd.fixed -match 'no shell')
+Check 'args array -> silent' ((Kind 'run the user''s command with an args array and no shell') -eq 'none')
+
+$html = Get-CoachDecision 'render user comments as raw HTML'
+$htmlIds = @($html.findings | ForEach-Object { $_.id })
+Check 'user html -> security' ($html.kind -eq 'security')
+Check 'user html names the html finding' ($htmlIds -contains 'html')
+Check 'html fix says escape' ($html.fixed -match 'Escape')
+Check 'sanitized html -> silent' ((Kind 'sanitize the HTML before rendering user comments') -eq 'none')
+
+$input = Get-CoachDecision 'accept a file upload and save it to disk'
+$inputIds = @($input.findings | ForEach-Object { $_.id })
+Check 'unvalidated upload -> security' ($input.kind -eq 'security')
+Check 'unvalidated upload names the input finding' ($inputIds -contains 'input')
+Check 'input fix says schema' ($input.fixed -match 'schema')
+Check 'validated upload -> silent' ((Kind 'validate the file upload with a schema before saving') -eq 'none')
+
+# Every class gets the same three actions, not a password-only script.
+foreach ($card in @($secret, $sql, $cmd, $html, $input)) {
+  $actions = @($card.buttons | ForEach-Object { $_.action })
+  Check ('class card offers explain/fix/ignore: ' + $card.findings[0].id) (($actions -contains 'explain') -and ($actions -contains 'fix') -and ($actions -contains 'ignore'))
+}
+
+# The card stays a nudge: three findings collapse to the two most severe.
+$many = Get-CoachDecision 'add a login endpoint that checks the password against the database and hardcodes the API key'
+Check 'three findings cap at two' (@($many.findings).Count -eq 2) (@($many.findings).Count.ToString() + ' findings')
+Check 'the cap keeps the two auth findings' ((@($many.findings | ForEach-Object { $_.id }) -join ',') -eq 'password,rate')
+
 # --- precedence -------------------------------------------------------------
 
 Check 'destructive wins over security' ((Kind 'delete the password table') -eq 'destructive')

@@ -82,8 +82,8 @@ only renders what they return, so the same decisions are tested headless by
 ### Precedence
 
 1. **Destructive** — if the ask destroys state with no recovery point, that card
-   wins even when the ask is also a credential ask (`delete the password table`).
-2. **Security** — otherwise, if the ask is a credential ask, one or two findings.
+   wins even when the ask also has security findings (`delete the password table`).
+2. **Security** — otherwise, the findings below, most severe first, capped at two.
 3. **Silence** — everything else.
 
 ### Destructive
@@ -101,17 +101,28 @@ only renders what they return, so the same decisions are tested headless by
 
 ### Security
 
+The lane is not password-specific. Each finding has its own trigger, its own
+"why", and its own line in the rewritten prompt.
+
+| Finding | Trigger | Suppressed by |
+| --- | --- | --- |
+| Plaintext password | credential ask, comparison or storage, no hashing word | `bcrypt`, `argon2`, `scrypt`, `hash`, `salt`, `constant time` |
+| Missing rate limit | credential ask with no limit on attempts | `rate limit`, `throttle`, `lockout`, `attempts per`, `captcha` |
+| Secret in the repo | key or token placed in code or config | `environment`, `secret manager`, `vault`, `never commit` |
+| SQL built from input | query takes input by concatenation or interpolation | `parameterized`, `prepared statement`, `bind`, `ORM` |
+| Shell command built from input | input reaches `exec`, `spawn`, `system`, or a shell | `args array`, `no shell`, `allowlist`, `validate` |
+| User content as HTML | user content rendered as markup | `escape`, `sanitize`, `DOMPurify`, `textContent` |
+| Input without validation | input read, stored, or uploaded with no check | `validate`, `schema`, `zod`, `allowlist` |
+
 - **Credential ask.** A credential word (`password`, `passphrase`, `credential`,
   `login`, `sign in`) plus a build verb plus an auth surface. A bug fix such as
   `fix the login flow` is not a build ask and stays silent.
-- **Plaintext-password finding.** Added when the text has a comparison or
-  storage word but no hashing word.
-- **Missing-rate-limit finding.** Added when the text has no rate-limiting word.
-- **Suppression.** Each finding is suppressed independently, so
-  `stores bcrypt passwords` still gets the rate-limit finding and
-  `rate limited to 5 per minute` still gets the password finding.
+- **Independent suppression.** `stores bcrypt passwords` still gets the
+  rate-limit finding, and `rate limited to 5 per minute` still gets the password
+  finding.
 - **Title count.** One finding → `1 thing before you accept this`; two →
-  `2 things before you accept this`.
+  `2 things before you accept this`. Three or more are cut to the two most
+  severe, so the card stays a nudge.
 
 ### Daemon
 
