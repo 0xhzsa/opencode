@@ -109,6 +109,8 @@ describe("MCP end-to-end (mock model)", () => {
         });
 
         expect(result.interrupt).toBe(true);
+        expect(result.source).toBe("e2e");
+        expect(typeof result.uncertain).toBe("boolean");
         expect(typeof result.nudge).toBe("string");
         expect(result.nudge.length).toBeGreaterThan(0);
         expect(typeof result.explanation).toBe("string");

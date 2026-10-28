@@ -4,22 +4,24 @@ import { Profile } from "./profile";
 import { rewritePrompt } from "./rewriter";
 import { McpClient } from "./mcpClient";
 import { computeDiff } from "./diff";
-import { looksLikePrompt } from "./promptCapture";
+import { ObserverHub, type Observation } from "./observe/hub";
+import { BrowserObserver } from "./observe/cdp";
+import { UiaObserver } from "./observe/uia";
+import { ClipboardObserver } from "./observe/clipboard";
 
 /**
  * Code Coach extension entry point.
  *
- * Watches three signals:
- *   1. Saved diffs  - on save, computes a real line diff vs. the last baseline
- *                     and sends { prompt, diff } to the coach.
- *   2. Clipboard    - the developer's prompt from Cursor/Copilot/Claude chat is
- *                     copied to the clipboard; we keep the last prose-looking
- *                     text and pair it with the next diff.
- *   3. Terminal     - error output is captured and sent as context.
+ * Every signal goes through one ObserverHub:
+ *   1. Saved diffs   - LCS diff vs. the last baseline.
+ *   2. Terminal      - error/failure lines as context.
+ *   3. Clipboard     - prose copied from any chat UI.
+ *   4. Browser (CDP) - the composer of a real browser chat tab, opt-in.
+ *   5. Windows UIA   - the focused Edit control in desktop apps, opt-in.
  *
- * The card is persistent: it stays until Ignore or Snooze. Silence is the
- * default. The AI coach (MCP server) is used when available; the deterministic
- * regex engine is the offline fallback.
+ * Prompt-only observations run the coach on the prompt. Diff observations
+ * pair the latest prompt with the change. The card is persistent: it stays
+ * until Ignore or Snooze. Silence is the default.
  */
 
 const DEBOUNCE_MS = 900;
@@ -37,6 +39,7 @@ interface CoachResult {
   concept_tags?: string[];
   quiz?: string | null;
   reason?: string;
+  source?: string;
   profile?: { counts: Record<string, number>; mastered: string[] };
 }
 
@@ -47,9 +50,7 @@ export function activate(context: vscode.ExtensionContext) {
   let mcpStarting: Promise<boolean> | null = null;
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  status.text = "$(eye) Code Coach";
-  status.tooltip = "Code Coach is watching. Save a file or run 'Code Coach: Coach this prompt'.";
-  status.command = "code-coach.coachPrompt";
+  status.command = "code-coach.showObservers";
   status.show();
   context.subscriptions.push(status);
 
@@ -66,6 +67,13 @@ export function activate(context: vscode.ExtensionContext) {
   let lastPromptUsed = "";
   let snoozedUntil = 0;
   let timer: NodeJS.Timeout | undefined;
+  let coachSeq = 0;
+
+  let clipboard: ClipboardObserver | undefined;
+  let browser: BrowserObserver | undefined;
+  let uia: UiaObserver | undefined;
+
+  const hub = new ObserverHub((observation) => onObservation(observation));
 
   // Seed the baseline so the first save has something to diff against.
   for (const doc of vscode.workspace.textDocuments) {
@@ -89,44 +97,167 @@ export function activate(context: vscode.ExtensionContext) {
     return mcpStarting;
   }
 
-  async function runCoach(prompt: string, diff: string, source: string): Promise<void> {
+  function rememberPrompt(text: string): void {
+    const t = text.trim();
+    if (!t) return;
+    // Never let a generated placeholder become the "last prompt".
+    if (/^Edit to /.test(t) || t === "Terminal error") return;
+    lastPrompt.text = t;
+    lastPrompt.ts = Date.now();
+  }
+
+  function freshPrompt(): string {
+    if (!lastPrompt.text) return "";
+    if (Date.now() - lastPrompt.ts > PROMPT_TTL_MS) return "";
+    return lastPrompt.text;
+  }
+
+  function sourceLabel(o: Observation): string {
+    if (o.source === "browser") return `browser:${o.app ?? "unknown"}`;
+    if (o.source === "uia") return `uia:${o.app ?? "unknown"}`;
+    return o.source;
+  }
+
+  async function runCoach(
+    prompt: string,
+    diff: string,
+    source: string,
+    contextText = ""
+  ): Promise<void> {
     if (Date.now() < snoozedUntil) return;
     if (!diff.trim() && !prompt.trim()) return;
 
-    lastPromptUsed = prompt;
+    const seq = ++coachSeq;
     status.text = "$(sync~spin) Code Coach";
     status.tooltip = "Thinking about your last change...";
 
     let result: CoachResult | null = null;
     if (await ensureMcp()) {
       try {
-        result = (await mcp.callTool("coach", { prompt, diff, source })) as CoachResult;
+        result = (await mcp.callTool("coach", {
+          prompt,
+          diff,
+          context: contextText,
+          source,
+        })) as CoachResult;
       } catch {
         result = null;
       }
     }
 
     if (!result) result = offlineCoach(prompt, diff, profile);
+    if (seq !== coachSeq) return; // a newer observation won
+
+    lastPromptUsed = prompt;
 
     if (result?.interrupt) {
-      lastResult = result;
-      panel.webview.html = renderCard(result);
+      lastResult = { ...result, source: result.source ?? source };
+      panel.webview.html = renderCard(lastResult);
       status.text = "$(eye) Code Coach — 1 nudge";
-      status.tooltip = result.nudge ?? "";
+      status.tooltip = `${result.nudge ?? ""}\nWatching: ${observerSummary()}`;
       panel.reveal(vscode.ViewColumn.Beside, true);
     } else {
-      lastResult = null;
-      panel.webview.html = renderCard(null, result?.reason);
-      status.text = "$(eye) Code Coach";
-      status.tooltip = "Silence is the default.";
+      // Do not overwrite a card the developer is still reading with a
+      // "nothing found" message. Silence means leave the current state alone.
+      if (!lastResult) panel.webview.html = renderCard(null, result?.reason);
+      setIdleStatus();
     }
   }
 
-  function schedule(prompt: string, diff: string, source: string): void {
+  function schedule(prompt: string, diff: string, source: string, contextText = ""): void {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
-      void runCoach(prompt, diff, source);
+      void runCoach(prompt, diff, source, contextText);
     }, DEBOUNCE_MS);
+  }
+
+  function onObservation(o: Observation): void {
+    if (Date.now() < snoozedUntil) return;
+
+    if (o.diff || o.source === "terminal") {
+      rememberPrompt(o.prompt);
+      schedule(o.prompt, o.diff, sourceLabel(o), o.context ?? "");
+      return;
+    }
+
+    // Prompt-only observation: the composer was submitted or the field lost
+    // focus. Remember it so the next save pairs with it, and coach the prompt
+    // itself right away.
+    rememberPrompt(o.prompt);
+    void runCoach(o.prompt, "", sourceLabel(o), o.context ?? "");
+  }
+
+  function observerSummary(): string {
+    const parts = ["diff", "terminal"];
+    if (clipboard) parts.push("clipboard");
+    if (browser) parts.push(`browser(${browser.connected})`);
+    if (uia) parts.push("uia");
+    return parts.join(", ");
+  }
+
+  function setIdleStatus(): void {
+    status.text = "$(eye) Code Coach";
+    status.tooltip = `Watching: ${observerSummary()}. Click for observer status.`;
+  }
+
+  function stopObservers(): void {
+    clipboard?.stop();
+    clipboard = undefined;
+    browser?.stop();
+    browser = undefined;
+    uia?.stop();
+    uia = undefined;
+  }
+
+  function startObservers(): void {
+    stopObservers();
+    const cfg = vscode.workspace.getConfiguration("codeCoach");
+
+    if (cfg.get<boolean>("observe.clipboard", true)) {
+      clipboard = new ClipboardObserver(
+        () => vscode.env.clipboard.readText(),
+        (text) => {
+          hub.push({ prompt: text, diff: "", source: "clipboard" });
+        }
+      );
+      clipboard.start();
+    }
+
+    if (cfg.get<boolean>("observe.browser", false)) {
+      browser = new BrowserObserver({
+        port: cfg.get<number>("cdpPort", 9222),
+        onPrompt: (p) => {
+          hub.push({
+            prompt: p.text,
+            diff: "",
+            source: "browser",
+            app: p.host,
+            title: p.title,
+          });
+        },
+        onStatus: () => setIdleStatus(),
+      });
+      browser.start();
+    }
+
+    if (cfg.get<boolean>("observe.uia", false)) {
+      const candidate = new UiaObserver({
+        scriptPath: resolveUiaScript(context),
+        onPrompt: (p) => {
+          hub.push({
+            prompt: p.text,
+            diff: "",
+            source: "uia",
+            app: p.app,
+            title: p.title,
+          });
+        },
+        onStatus: () => setIdleStatus(),
+      });
+      if (candidate.start()) uia = candidate;
+    }
+
+    setIdleStatus();
   }
 
   // --- signal 1: saved diffs ------------------------------------------------
@@ -136,46 +267,46 @@ export function activate(context: vscode.ExtensionContext) {
     const after = doc.getText();
     baseline.set(key, after);
     if (before === undefined) return;
+
     const diff = computeDiff(before, after);
     if (!diff.trim()) return;
 
-    const freshPrompt =
-      lastPrompt.text && Date.now() - lastPrompt.ts < PROMPT_TTL_MS ? lastPrompt.text : "";
-    const prompt = freshPrompt || `Edit to ${vscode.workspace.asRelativePath(doc.uri)}`;
-    schedule(prompt, diff, "save");
+    const prompt = freshPrompt() || `Edit to ${vscode.workspace.asRelativePath(doc.uri)}`;
+    hub.push({ prompt, diff, source: "save" });
   });
   context.subscriptions.push(saveSub);
 
-  // --- signal 2: clipboard prompt capture -----------------------------------
-  const clipTimer = setInterval(async () => {
-    try {
-      const text = await vscode.env.clipboard.readText();
-      if (text && text !== lastPrompt.text && looksLikePrompt(text)) {
-        lastPrompt.text = text;
-        lastPrompt.ts = Date.now();
-      }
-    } catch {
-      // clipboard can be unavailable; ignore
-    }
-  }, 2000);
-  context.subscriptions.push({ dispose: () => clearInterval(clipTimer) });
-
-  // --- signal 3: terminal errors --------------------------------------------
+  // --- signal 2: terminal errors --------------------------------------------
   try {
     const anyWindow = vscode.window as unknown as {
       onDidWriteTerminalData?: (cb: (e: { data: string }) => void) => vscode.Disposable;
     };
     const termSub = anyWindow.onDidWriteTerminalData?.((e) => {
       const text = String(e?.data ?? "");
-      if (/error|fail|cannot find|exception|traceback/i.test(text)) {
-        const prompt = lastPrompt.text || "Terminal error";
-        schedule(prompt, "TERMINAL:\n" + text.slice(0, 2000), "terminal");
-      }
+      if (!/error|fail|cannot find|exception|traceback/i.test(text)) return;
+      hub.push({
+        prompt: freshPrompt() || "Terminal error",
+        diff: "",
+        source: "terminal",
+        title: "terminal",
+        context: "TERMINAL:\n" + text.slice(0, 2000),
+      });
     });
     if (termSub) context.subscriptions.push(termSub);
   } catch {
     // terminal data API is proposed in some VS Code versions
   }
+
+  // --- observers ------------------------------------------------------------
+  startObservers();
+  context.subscriptions.push(
+    { dispose: stopObservers },
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("codeCoach.observe") || e.affectsConfiguration("codeCoach.cdpPort")) {
+        startObservers();
+      }
+    })
+  );
 
   // --- commands -------------------------------------------------------------
   context.subscriptions.push(
@@ -186,8 +317,7 @@ export function activate(context: vscode.ExtensionContext) {
         value: lastPrompt.text,
       });
       if (!prompt) return;
-      lastPrompt.text = prompt;
-      lastPrompt.ts = Date.now();
+      rememberPrompt(prompt);
       const doc = vscode.window.activeTextEditor?.document;
       const diff = doc ? computeDiff(baseline.get(doc.uri.toString()) ?? "", doc.getText()) : "";
       await runCoach(prompt, diff || doc?.getText() || "", "command");
@@ -199,15 +329,64 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage("Code Coach: clipboard is empty.");
         return;
       }
-      lastPrompt.text = prompt;
-      lastPrompt.ts = Date.now();
+      rememberPrompt(prompt);
       const doc = vscode.window.activeTextEditor?.document;
       const diff = doc ? computeDiff(baseline.get(doc.uri.toString()) ?? "", doc.getText()) : "";
       await runCoach(prompt, diff || doc?.getText() || "", "clipboard");
     }),
 
+    vscode.commands.registerCommand("code-coach.showObservers", async () => {
+      const cfg = vscode.workspace.getConfiguration("codeCoach");
+      const port = cfg.get<number>("cdpPort", 9222);
+      const items: (vscode.QuickPickItem & { id: string })[] = [
+        {
+          id: "save",
+          label: "Save diffs",
+          description: "always on",
+          detail: "Line diff against the last saved baseline on every save.",
+        },
+        {
+          id: "terminal",
+          label: "Terminal errors",
+          description: "when the VS Code API is available",
+          detail: "Error/failure lines are sent as context.",
+        },
+        {
+          id: "clipboard",
+          label: "Clipboard",
+          description: clipboard ? "on" : "off",
+          detail: "Prose copied from any chat UI.",
+        },
+        {
+          id: "browser",
+          label: "Browser chat (CDP)",
+          description: browser ? `on — ${browser.connected} tab(s)` : "off",
+          detail: `Reads the composer of Claude/ChatGPT/Gemini tabs on 127.0.0.1:${port}. Requires launching the browser with --remote-debugging-port.`,
+        },
+        {
+          id: "uia",
+          label: "Desktop apps (Windows UIA)",
+          description: uia ? "on" : "off",
+          detail: "Reads the focused Edit control. Best effort; never hooks the keyboard.",
+        },
+      ];
+
+      const picked = await vscode.window.showQuickPick(items, {
+        title: "Code Coach — Observers",
+      });
+      if (picked?.id !== "browser") return;
+
+      const command = `chrome.exe --remote-debugging-port=${port} --user-data-dir="%TEMP%\\code-coach-chrome"`;
+      const action = await vscode.window.showInformationMessage(
+        "Launch Chrome with the debugging port, then log in to Claude/ChatGPT once in that profile.",
+        "Copy command"
+      );
+      if (action === "Copy command") await vscode.env.clipboard.writeText(command);
+    }),
+
     vscode.commands.registerCommand("code-coach.snooze", () => {
       snoozedUntil = Date.now() + SNOOZE_MS;
+      lastResult = null;
       panel.webview.html = renderCard(null, "Snoozed for 5 minutes.");
     }),
 
@@ -257,9 +436,11 @@ export function activate(context: vscode.ExtensionContext) {
         break;
       case "snooze":
         snoozedUntil = Date.now() + SNOOZE_MS;
+        lastResult = null;
         panel.webview.html = renderCard(null, "Snoozed for 5 minutes.");
         break;
       case "ignore":
+        lastResult = null;
         panel.webview.html = renderCard(null);
         break;
       case "back":
@@ -280,8 +461,11 @@ function profileFile(context: vscode.ExtensionContext): string {
 function resolveMcpPath(context: vscode.ExtensionContext): string {
   const configured = vscode.workspace.getConfiguration("codeCoach").get<string>("mcpServerPath");
   if (configured && configured.trim()) return configured.trim();
-  // Default: sibling package in the same repo.
   return vscode.Uri.joinPath(context.extensionUri, "..", "code-coach-mcp", "dist", "index.js").fsPath;
+}
+
+function resolveUiaScript(context: vscode.ExtensionContext): string {
+  return vscode.Uri.joinPath(context.extensionUri, "media", "uia-observer.ps1").fsPath;
 }
 
 function offlineCoach(prompt: string, diff: string, profile: Profile): CoachResult {
@@ -308,6 +492,13 @@ function offlineCoach(prompt: string, diff: string, profile: Profile): CoachResu
   };
 }
 
+function metaLine(result: CoachResult): string {
+  const parts: string[] = [];
+  if (result.source) parts.push(`From ${result.source}`);
+  if (result.uncertain) parts.push("uncertain — verify before trusting");
+  return parts.join(" · ");
+}
+
 function renderCard(result: CoachResult | null, message?: string): string {
   if (message && !result) {
     return wrapCard(`<p class="empty">${escapeHtml(message)}</p>`, "");
@@ -319,9 +510,11 @@ function renderCard(result: CoachResult | null, message?: string): string {
   const severity = result.severity ?? "info";
   const color = severity === "critical" ? "#f44747" : severity === "warn" ? "#cca700" : "#3794ff";
   const tags = (result.concept_tags ?? []).join(", ");
+  const meta = metaLine(result);
 
   const body = `
     <div class="finding">
+      ${meta ? `<p class="meta">${escapeHtml(meta)}</p>` : ""}
       <h2 style="color:${color}">${escapeHtml(severity.toUpperCase())} · ${escapeHtml(result.nudge ?? "")}</h2>
       ${result.explanation ? `<p>${escapeHtml(result.explanation)}</p>` : ""}
       ${result.better_prompt ? `<p class="better"><strong>Better prompt:</strong> ${escapeHtml(result.better_prompt)}</p>` : ""}
@@ -346,8 +539,10 @@ function renderCard(result: CoachResult | null, message?: string): string {
 }
 
 function renderExplain(result: CoachResult): string {
+  const meta = metaLine(result);
   const body = `
     <div class="finding">
+      ${meta ? `<p class="meta">${escapeHtml(meta)}</p>` : ""}
       <h2>Deep dive</h2>
       <p>${escapeHtml(result.explanation ?? "")}</p>
       ${result.better_prompt ? `<p class="better"><strong>Better prompt:</strong> ${escapeHtml(result.better_prompt)}</p>` : ""}
@@ -373,6 +568,7 @@ function wrapCard(body: string, script: string): string {
   h2 { margin: 0 0 8px; font-size: 14px; }
   p { margin: 8px 0; line-height: 1.45; }
   .empty { color: var(--vscode-descriptionForeground); font-style: italic; }
+  .meta { color: var(--vscode-descriptionForeground); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
   .actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
   button { padding: 6px 12px; cursor: pointer; border: none; border-radius: 4px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
   button:hover { background: var(--vscode-button-hoverBackground); }

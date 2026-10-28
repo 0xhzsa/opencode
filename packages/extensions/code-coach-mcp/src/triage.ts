@@ -11,7 +11,9 @@ export type TriageResult = {
   reason?: string;
 };
 
-const TRIAGE_SYSTEM = `You are Code Coach's triage step. You receive a developer's prompt to an AI coding agent and the diff it produced. Decide if there is a real issue worth interrupting for.
+const TRIAGE_SYSTEM = `You are Code Coach's triage step. You receive a developer's prompt to an AI coding agent, the diff it produced (if any), and optional terminal output. Decide if there is a real issue worth interrupting for.
+
+The source tells you where the observation came from. A prompt-only observation (browser, uia, clipboard) has no diff yet: judge the prompt itself, because the prompt is what shapes the code.
 
 Categories: security, scalability, correctness, maintainability, prompt-quality.
 If nothing is worth interrupting for, return {"interrupt": false}. Silence is the default.
@@ -21,8 +23,21 @@ Be honest about uncertainty. Don't invent vulnerabilities. Only flag real issues
 Return ONLY valid JSON, no prose:
 {"interrupt": bool, "uncertain": bool, "severity": "info"|"warn"|"critical", "category": "...", "reason": "..."}`;
 
-export async function triage(prompt: string, diff: string): Promise<TriageResult> {
-  const user = `PROMPT:\n${prompt}\n\nDIFF:\n${diff || "(none)"}`;
+export async function triage(
+  prompt: string,
+  diff: string,
+  extra: { context?: string; source?: string } = {}
+): Promise<TriageResult> {
+  const user = `SOURCE: ${extra.source ?? "unknown"}
+
+PROMPT:
+${prompt}
+
+DIFF:
+${diff || "(none)"}
+
+CONTEXT:
+${extra.context || "(none)"}`;
   const raw = await chat(TRIAGE_MODEL, [
     { role: "system", content: TRIAGE_SYSTEM },
     { role: "user", content: user },

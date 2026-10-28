@@ -3,6 +3,10 @@
 An AI coach that watches your prompts and diffs, teaches first principles, and
 learns from you. It observes; it never writes code.
 
+This is the model half. The editor/browser/desktop observers live in
+[`code-coach-vscode`](../code-coach-vscode); the full architecture is documented
+there.
+
 ## How it works
 
 Two steps, not one:
@@ -19,16 +23,18 @@ The learner profile persists across sessions. Concept tags accumulate; after
 escalates per concept: beginner (analogy) → intermediate (principle) →
 advanced (failure mode only).
 
-## What it watches
+## What feeds it
+
+The server is editor-agnostic: any MCP client can call `coach`. The bundled
+VS Code extension adds these observers:
 
 | Signal | Where it comes from | How |
 |---|---|---|
-| **Diff** | VS Code extension | On save, a real line diff against the last baseline |
-| **Prompt** | Clipboard | The last prose-looking text copied from Cursor / Copilot / Claude chat |
-| **Terminal** | VS Code extension | Error/failure lines are sent as context |
-
-The MCP server itself is editor-agnostic. Cursor, Claude Code, or any MCP
-client can call the `coach` tool directly with a prompt and a diff.
+| **Diff** | VS Code / Cursor / Windsurf | On save, a real line diff against the last baseline |
+| **Prompt** | Clipboard | The last prose-looking text copied from any chat UI |
+| **Prompt** | Browser chat tabs | CDP reads the composer; emits when it clears (submit) |
+| **Prompt** | Desktop apps (Windows) | UI Automation reads the focused Edit control; emits on submit/blur |
+| **Terminal** | VS Code | Error/failure lines are sent as `context` |
 
 ## Setup
 
@@ -77,7 +83,19 @@ Add to your MCP client config (Cursor, Claude Code, etc.):
 
 ### `coach`
 
-Input: `{ prompt: string, diff?: string, source?: string }`
+Input:
+
+```json
+{
+  "prompt": "Add a login endpoint that checks the user's password",
+  "diff": "app.post('/login', ...)",
+  "context": "TERMINAL:\nTypeError: ...",
+  "source": "browser:claude.ai"
+}
+```
+
+`diff`, `context`, and `source` are optional. `source` tells the model where the
+observation came from, which matters when there is no diff yet.
 
 Output:
 
@@ -90,7 +108,8 @@ Output:
   "explanation": "...",
   "better_prompt": "...",
   "concept_tags": ["password-hashing", "rate-limiting"],
-  "quiz": "..." ,
+  "quiz": "...",
+  "source": "browser:claude.ai",
   "profile": { "counts": {}, "mastered": [] }
 }
 ```
@@ -133,9 +152,10 @@ bun test
 
 ## Honest limitations
 
-- **Prompt capture is clipboard-based.** Cursor and Claude chat prompts live in
-  webviews the extension cannot read. Copying the prompt (or using the
-  "Coach this prompt" command) is the reliable path.
+- **Embedded chat webviews are opaque.** Cursor's and Claude's in-app chat
+  panels expose no public API. The extension uses UI Automation as a best
+  effort there, plus clipboard and an explicit command.
+- **Browser capture needs a debug port.** It is opt-in and local.
 - **Terminal capture depends on a proposed VS Code API.** When unavailable, the
   extension simply does not watch the terminal.
 - **Free-tier OpenRouter accounts are tight.** The default models are paid;
@@ -144,6 +164,9 @@ bun test
 - **The coach is a model.** It can be wrong. The `uncertain` flag and the
   "don't invent vulnerabilities" instruction reduce false positives but do not
   eliminate them.
+- **No keyboard hook, by design.** A global keylogger would see passwords and
+  every other app; reading the composer achieves the same goal with a much
+  smaller blast radius.
 
 Inspired by Clicky (AI teacher buddy), Interview Coder (stealth desktop), and
 Cluely (screen-aware AI).

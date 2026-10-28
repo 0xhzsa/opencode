@@ -30,9 +30,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           prompt: { type: "string", description: "The developer's prompt to the coding agent" },
           diff: { type: "string", description: "The diff or code the agent produced (optional)" },
+          context: {
+            type: "string",
+            description: "Extra context such as terminal or test output (optional)",
+          },
           source: {
             type: "string",
-            description: "Where the observation came from: save, terminal, clipboard, command",
+            description:
+              "Where the observation came from: save, terminal, clipboard, browser:host, uia:app, command",
           },
         },
         required: ["prompt"],
@@ -60,17 +65,19 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const args = (req.params.arguments ?? {}) as {
     prompt?: string;
     diff?: string;
+    context?: string;
     source?: string;
   };
 
   if (req.params.name === "coach") {
     const prompt = String(args.prompt ?? "");
     const diff = String(args.diff ?? "");
+    const context = String(args.context ?? "");
     const source = String(args.source ?? "unknown");
 
     let t;
     try {
-      t = await triage(prompt, diff);
+      t = await triage(prompt, diff, { context, source });
     } catch (e) {
       return {
         content: [
@@ -98,7 +105,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
     let result;
     try {
-      result = await coach(prompt, diff, profile, t.reason, detectProject());
+      result = await coach(prompt, diff, profile, t.reason, detectProject(), { context, source });
     } catch (e) {
       return {
         content: [

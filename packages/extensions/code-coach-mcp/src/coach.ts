@@ -62,12 +62,14 @@ export async function coach(
   diff: string,
   profile: Profile,
   triageReason?: string,
-  project?: ProjectContext
+  project?: ProjectContext,
+  extra: { context?: string; source?: string } = {}
 ): Promise<CoachResponse> {
   const snap = profile.snapshot();
   const proj = project ?? detectProject();
 
-  const user = `CONCEPT COUNTS: ${JSON.stringify(snap.counts)}
+  const user = `SOURCE: ${extra.source ?? "unknown"}
+CONCEPT COUNTS: ${JSON.stringify(snap.counts)}
 MASTERED (do not re-teach): ${snap.mastered.join(", ") || "(none)"}
 TRIAGE REASON: ${triageReason ?? "(none)"}
 PROJECT CONTEXT:
@@ -77,7 +79,10 @@ PROMPT:
 ${prompt}
 
 DIFF:
-${diff || "(none)"}`;
+${diff || "(none)"}
+
+CONTEXT:
+${extra.context || "(none)"}`;
 
   const raw = await chat(
     COACH_MODEL,

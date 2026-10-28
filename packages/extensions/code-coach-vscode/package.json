@@ -2,7 +2,7 @@
   "name": "code-coach",
   "displayName": "Code Coach",
   "description": "An AI coach that watches your prompts and diffs, teaches first principles, and learns from you.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -10,7 +10,8 @@
   "activationEvents": [
     "onView:code-coach.welcome",
     "onCommand:code-coach.coachPrompt",
-    "onCommand:code-coach.coachClipboard"
+    "onCommand:code-coach.coachClipboard",
+    "onCommand:code-coach.showObservers"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -40,6 +41,10 @@
         "title": "Code Coach: Coach the clipboard prompt"
       },
       {
+        "command": "code-coach.showObservers",
+        "title": "Code Coach: Show observers"
+      },
+      {
         "command": "code-coach.snooze",
         "title": "Code Coach: Snooze for 5 minutes"
       },
@@ -59,6 +64,26 @@
           "type": "string",
           "default": "",
           "description": "Absolute path to the code-coach-mcp dist/index.js. Leave empty to use the sibling package."
+        },
+        "codeCoach.observe.clipboard": {
+          "type": "boolean",
+          "default": true,
+          "description": "Read the clipboard for prose copied from Cursor, Claude, Copilot, or any other chat UI."
+        },
+        "codeCoach.observe.browser": {
+          "type": "boolean",
+          "default": false,
+          "description": "Watch Claude/ChatGPT/Gemini browser tabs over the Chrome DevTools Protocol. Requires launching the browser with --remote-debugging-port."
+        },
+        "codeCoach.observe.uia": {
+          "type": "boolean",
+          "default": false,
+          "description": "Watch the focused Edit control in desktop apps on Windows via UI Automation. Best effort; never hooks the keyboard."
+        },
+        "codeCoach.cdpPort": {
+          "type": "number",
+          "default": 9222,
+          "description": "Local Chrome DevTools Protocol port used by the browser observer."
         }
       }
     }
