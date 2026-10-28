@@ -17,9 +17,7 @@
   "contributes": {
     "viewsWelcome": [
       {
-        "viewpoint": "code-coach.welcome",
-        "activationEvents": "onView:code-coach.welcome",
-        "group": "1_high",
+        "view": "code-coach.welcome",
         "contents": "Code Coach is watching your edits. Save a file to start."
       }
     ],

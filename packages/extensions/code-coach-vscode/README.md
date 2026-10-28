@@ -166,7 +166,8 @@ A long-lived PowerShell helper reads `AutomationElement.FocusedElement` every
 700ms. It only reports `ControlType.Edit` (never a `Document`, which would dump
 a whole page), and only emits when the field is cleared or loses focus. The
 TypeScript side keeps prose-looking prompts from known chat apps and rejects
-address bars, URLs, and code.
+URL-shaped and path-shaped text (so a browser address bar's URL is ignored)
+plus code.
 
 Best effort by design: an Electron composer that is not exposed as an Edit
 control produces no events. The status bar tells you which observers are live.
@@ -255,7 +256,7 @@ Each interaction records the concept tags that fired. The read model is:
 bun test
 ```
 
-60 tests across 10 files:
+64 tests across 10 files:
 
 - `diff.test.ts` — LCS diff, context lines, truncation, a SQL-injection diff.
 - `promptCapture.test.ts` — prose vs. code.
@@ -267,8 +268,11 @@ bun test
 - `clipboard.test.ts` — prose emitted once, code rejected, clipboard failure.
 - `triage.test.ts`, `profile.test.ts` — the deterministic fallback engine.
 
-The CDP DOM expression was also checked against a real headless Chrome: it read
-the composer text, then read empty after the composer cleared.
+The CDP path was also exercised end to end against a real headless Chrome: a
+local page served as `claude.ai` through `--host-resolver-rules`, the composer
+filled through CDP, then cleared. `BrowserObserver` attached, read the text, and
+emitted exactly one prompt with the right host. The DOM expression alone was
+checked the same way before that.
 
 ---
 
@@ -278,6 +282,8 @@ the composer text, then read empty after the composer cleared.
   tab, so CDP cannot attach to it; UIA is best effort. Clipboard/command remain.
 - **CDP needs a debug port.** That is a deliberate opt-in, not a default.
 - **UIA is best effort.** Only Edit controls, only known apps, only on Windows.
+  A prose search typed into a browser address bar still looks like a prompt;
+  URL- and path-shaped text is filtered, arbitrary prose is not.
 - **The coach is a model.** It can be wrong. `uncertain` and the "don't invent
   vulnerabilities" instruction reduce false positives; they do not eliminate
   them.

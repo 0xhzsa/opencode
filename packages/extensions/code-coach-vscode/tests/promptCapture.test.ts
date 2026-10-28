@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { looksLikePrompt } from "../src/promptCapture";
+import { looksLikeLocation, looksLikePrompt } from "../src/promptCapture";
 
 describe("looksLikePrompt", () => {
   test("accepts a natural-language prompt", () => {
@@ -27,5 +27,29 @@ describe("looksLikePrompt", () => {
 
   test("rejects a huge paste", () => {
     expect(looksLikePrompt("word ".repeat(2000))).toBe(false);
+  });
+
+  test("rejects a URL, a bare domain, and a file path", () => {
+    expect(looksLikePrompt("https://github.com/anomalyco/opencode")).toBe(false);
+    expect(looksLikePrompt("chrome://extensions")).toBe(false);
+    expect(looksLikePrompt("github.com/foo/bar")).toBe(false);
+    expect(looksLikePrompt("C:\\Users\\stagh\\notes.txt")).toBe(false);
+    expect(looksLikePrompt("/home/stagh/notes.md")).toBe(false);
+  });
+
+  test("keeps a prompt that merely mentions a URL", () => {
+    expect(looksLikePrompt("Read https://example.com/docs and add the retry logic it describes")).toBe(true);
+  });
+});
+
+describe("looksLikeLocation", () => {
+  test("recognizes address-bar text", () => {
+    expect(looksLikeLocation("https://claude.ai/chat/abc")).toBe(true);
+    expect(looksLikeLocation("localhost:3000")).toBe(true);
+    expect(looksLikeLocation("127.0.0.1:9222/json")).toBe(true);
+  });
+
+  test("does not treat prose as a location", () => {
+    expect(looksLikeLocation("Add rate limiting to the login endpoint")).toBe(false);
   });
 });
