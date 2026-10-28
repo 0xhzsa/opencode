@@ -256,7 +256,7 @@ Each interaction records the concept tags that fired. The read model is:
 bun test
 ```
 
-64 tests across 10 files:
+65 tests across 11 files:
 
 - `diff.test.ts` — LCS diff, context lines, truncation, a SQL-injection diff.
 - `promptCapture.test.ts` — prose vs. code.
@@ -267,6 +267,10 @@ bun test
 - `hub.test.ts` — dedupe, min/max, same prompt from different sources.
 - `clipboard.test.ts` — prose emitted once, code rejected, clipboard failure.
 - `triage.test.ts`, `profile.test.ts` — the deterministic fallback engine.
+- `host.test.ts` — loads the compiled extension against a stubbed `vscode` API
+  (`scripts/host-smoke.cjs`) and drives a clipboard prompt and a save diff
+  through the real MCP server in mock mode: activation, six commands, observer
+  wiring, and card rendering, with no editor installed.
 
 The CDP path was also exercised end to end against a real headless Chrome: a
 local page served as `claude.ai` through `--host-resolver-rules`, the composer
