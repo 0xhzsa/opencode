@@ -1,0 +1,4 @@
+[test]
+# The smoke/e2e tests hit a real API; running files in parallel exhausts the
+# provider's in-flight budget and causes spurious 402s. Keep it serial.
+maxConcurrency = 1

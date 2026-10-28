@@ -1,13 +1,17 @@
 {
   "name": "code-coach",
   "displayName": "Code Coach",
-  "description": "A silent side-coach that watches your edits and nudges you before bad habits ship. No model, no network, no excuses.",
-  "version": "0.1.0",
+  "description": "An AI coach that watches your prompts and diffs, teaches first principles, and learns from you.",
+  "version": "0.2.0",
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["Other"],
-  "activationEvents": ["onView:code-coach.welcome"],
+  "categories": ["Other", "Linters", "Education"],
+  "activationEvents": [
+    "onView:code-coach.welcome",
+    "onCommand:code-coach.coachPrompt",
+    "onCommand:code-coach.coachClipboard"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsWelcome": [
@@ -28,10 +32,36 @@
     },
     "commands": [
       {
-        "command": "code-coach.openSettings",
-        "title": "Code Coach: Open Settings"
+        "command": "code-coach.coachPrompt",
+        "title": "Code Coach: Coach this prompt"
+      },
+      {
+        "command": "code-coach.coachClipboard",
+        "title": "Code Coach: Coach the clipboard prompt"
+      },
+      {
+        "command": "code-coach.snooze",
+        "title": "Code Coach: Snooze for 5 minutes"
+      },
+      {
+        "command": "code-coach.showProfile",
+        "title": "Code Coach: Show learner profile"
+      },
+      {
+        "command": "code-coach.clearProfile",
+        "title": "Code Coach: Reset learner profile"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Code Coach",
+      "properties": {
+        "codeCoach.mcpServerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the code-coach-mcp dist/index.js. Leave empty to use the sibling package."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

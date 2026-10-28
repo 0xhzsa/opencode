@@ -1,35 +1,38 @@
-import * as vscode from "vscode";
-import { spawn, ChildProcess } from "node:child_process";
-import { join } from "node:path";
+/*
+ * mcpClient.ts - minimal MCP client over stdio.
+ *
+ * Spawns the code-coach-mcp server and speaks JSON-RPC 2.0. Used by the
+ * extension to get AI-powered coaching (triage + coach models, learner
+ * profile, project context) instead of only the deterministic regex engine.
+ */
 
-interface McpResponse {
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+
+interface RpcResponse {
   jsonrpc: string;
   id: number;
-  result?: any;
+  result?: unknown;
   error?: { code: number; message: string };
 }
 
-/**
- * MCP client that spawns the code-coach-mcp server and communicates
- * via JSON-RPC over stdio. This lets the VS Code extension use the
- * AI-powered coach (triage + coach models) instead of just regex.
- */
 export class McpClient {
-  private proc: ChildProcess | null = null;
+  private proc: ChildProcessWithoutNullStreams | null = null;
   private requestId = 0;
-  private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private buffer = "";
 
   constructor(private serverPath: string) {}
 
   async start(): Promise<void> {
     if (this.proc) return;
+    if (!this.serverPath) throw new Error("MCP server path is not configured");
+
     this.proc = spawn("node", [this.serverPath], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
-    });
+    }) as ChildProcessWithoutNullStreams;
 
-    this.proc.stdout?.on("data", (data: Buffer) => {
+    this.proc.stdout.on("data", (data: Buffer) => {
       this.buffer += data.toString();
       const lines = this.buffer.split("\n");
       this.buffer = lines.pop() ?? "";
@@ -37,75 +40,76 @@ export class McpClient {
         const trimmed = line.trim();
         if (!trimmed) continue;
         try {
-          const msg = JSON.parse(trimmed) as McpResponse;
-          if (msg.id !== undefined && this.pending.has(msg.id)) {
+          const msg = JSON.parse(trimmed) as RpcResponse;
+          if (typeof msg.id === "number" && this.pending.has(msg.id)) {
             const p = this.pending.get(msg.id)!;
             this.pending.delete(msg.id);
             if (msg.error) p.reject(new Error(msg.error.message));
             else p.resolve(msg.result);
           }
         } catch {
-          // ignore non-JSON lines (stderr, etc.)
+          // ignore non-JSON output
         }
       }
     });
 
-    this.proc.stderr?.on("data", () => {
-      // ignore stderr
+    this.proc.stderr.on("data", () => {
+      // server logs go to stderr; ignore
     });
 
-    // Initialize handshake
-    await this.sendRequest("initialize", {
+    this.proc.on("exit", () => {
+      this.proc = null;
+      for (const [, p] of this.pending) p.reject(new Error("MCP server exited"));
+      this.pending.clear();
+    });
+
+    await this.request("initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
       clientInfo: { name: "code-coach-vscode", version: "0.1.0" },
     });
 
-    // Send initialized notification
-    this.sendNotification("notifications/initialized", {});
+    this.notify("notifications/initialized", {});
   }
 
-  private sendRequest(method: string, params: any): Promise<any> {
+  private request(method: string, params: unknown, timeoutMs = 45000): Promise<unknown> {
     return new Promise((resolve, reject) => {
-      if (!this.proc?.stdin) {
-        reject(new Error("MCP server not running"));
+      if (!this.proc?.stdin.writable) {
+        reject(new Error("MCP server is not running"));
         return;
       }
       const id = ++this.requestId;
       this.pending.set(id, { resolve, reject });
-      const msg = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
-      this.proc.stdin.write(msg);
+      this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
 
-      // Timeout after 30s
       setTimeout(() => {
         if (this.pending.has(id)) {
           this.pending.delete(id);
-          reject(new Error("MCP request timeout"));
+          reject(new Error("MCP request timed out"));
         }
-      }, 30000);
+      }, timeoutMs);
     });
   }
 
-  private sendNotification(method: string, params: any): void {
-    if (!this.proc?.stdin) return;
-    const msg = JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n";
-    this.proc.stdin.write(msg);
+  private notify(method: string, params: unknown): void {
+    if (!this.proc?.stdin.writable) return;
+    this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
   }
 
-  async callTool(name: string, args: Record<string, any>): Promise<any> {
-    const result = await this.sendRequest("tools/call", { name, arguments: args });
+  async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+    const result = (await this.request("tools/call", { name, arguments: args })) as {
+      content?: { text?: string }[];
+    };
     const text = result?.content?.[0]?.text;
-    if (text) {
-      try {
-        return JSON.parse(text);
-      } catch {
-        return { raw: text };
-      }
+    if (!text) return result;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { raw: text };
     }
-    return result;
   }
 
-  async stop(): Promise<void> {
+  stop(): void {
     if (this.proc) {
       this.proc.kill();
       this.proc = null;

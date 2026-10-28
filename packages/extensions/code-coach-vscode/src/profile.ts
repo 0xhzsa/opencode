@@ -76,8 +76,17 @@ export class Profile {
     return tags.some((t) => (counts[t] ?? 0) >= MASTERED_AT);
   }
 
+  // Clear the profile. Used by the "Reset learner profile" command.
+  reset(): void {
+    try {
+      writeFileSync(this.file, "", "utf8");
+    } catch {
+      // best effort
+    }
+  }
+
   // A path this profile lives at; helpers use it for tests.
   static pathOf(dir: string): string {
-    return join(dirname(dir), "profile.jsonl");
+    return join(dir, "profile.jsonl");
   }
 }

@@ -11,7 +11,8 @@ import { detectProject } from "./project.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const profile = new Profile(Profile.pathOf(join(homedir(), ".code-coach")));
+const dataDir = process.env.CODE_COACH_DATA_DIR?.trim() || join(homedir(), ".code-coach");
+const profile = new Profile(Profile.pathOf(dataDir));
 
 const server = new Server(
   { name: "code-coach", version: "0.1.0" },
@@ -29,6 +30,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           prompt: { type: "string", description: "The developer's prompt to the coding agent" },
           diff: { type: "string", description: "The diff or code the agent produced (optional)" },
+          source: {
+            type: "string",
+            description: "Where the observation came from: save, terminal, clipboard, command",
+          },
         },
         required: ["prompt"],
       },
@@ -43,45 +48,101 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Return the detected project context (stack, conventions, key files).",
       inputSchema: { type: "object", properties: {} },
     },
+    {
+      name: "reset-profile",
+      description: "Clear the learner profile. The coach starts from scratch.",
+      inputSchema: { type: "object", properties: {} },
+    },
   ],
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  const args = (req.params.arguments ?? {}) as {
+    prompt?: string;
+    diff?: string;
+    source?: string;
+  };
+
   if (req.params.name === "coach") {
-    const args = (req.params.arguments ?? {}) as { prompt?: string; diff?: string };
     const prompt = String(args.prompt ?? "");
     const diff = String(args.diff ?? "");
+    const source = String(args.source ?? "unknown");
 
-    const t = await triage(prompt, diff);
-    if (!t.interrupt) {
+    let t;
+    try {
+      t = await triage(prompt, diff);
+    } catch (e) {
       return {
-        content: [{ type: "text", text: JSON.stringify({ interrupt: false, reason: t.reason }) }],
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              interrupt: false,
+              error: e instanceof Error ? e.message : String(e),
+            }),
+          },
+        ],
       };
     }
 
-    const result = await coach(prompt, diff, profile, t.reason, detectProject());
+    if (!t.interrupt) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ interrupt: false, uncertain: t.uncertain ?? false, reason: t.reason }),
+          },
+        ],
+      };
+    }
+
+    let result;
+    try {
+      result = await coach(prompt, diff, profile, t.reason, detectProject());
+    } catch (e) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              interrupt: false,
+              error: e instanceof Error ? e.message : String(e),
+            }),
+          },
+        ],
+      };
+    }
     const snap = profile.snapshot();
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify({ ...result, profile: { counts: snap.counts, mastered: snap.mastered } }),
+          text: JSON.stringify({
+            ...result,
+            source,
+            profile: { counts: snap.counts, mastered: snap.mastered },
+          }),
         },
       ],
     };
   }
 
   if (req.params.name === "profile") {
-    const snap = profile.snapshot();
     return {
-      content: [{ type: "text", text: JSON.stringify(snap) }],
+      content: [{ type: "text", text: JSON.stringify(profile.snapshot()) }],
     };
   }
 
   if (req.params.name === "project") {
-    const ctx = detectProject();
     return {
-      content: [{ type: "text", text: JSON.stringify(ctx) }],
+      content: [{ type: "text", text: JSON.stringify(detectProject()) }],
+    };
+  }
+
+  if (req.params.name === "reset-profile") {
+    profile.reset();
+    return {
+      content: [{ type: "text", text: JSON.stringify({ ok: true }) }],
     };
   }
 

@@ -5,6 +5,7 @@ import { chat, TRIAGE_MODEL } from "./model.js";
 
 export type TriageResult = {
   interrupt: boolean;
+  uncertain?: boolean;
   severity?: "info" | "warn" | "critical";
   category?: "security" | "scalability" | "correctness" | "maintainability" | "prompt-quality";
   reason?: string;
@@ -15,22 +16,17 @@ const TRIAGE_SYSTEM = `You are Code Coach's triage step. You receive a developer
 Categories: security, scalability, correctness, maintainability, prompt-quality.
 If nothing is worth interrupting for, return {"interrupt": false}. Silence is the default.
 
-Be honest about uncertainty. Don't invent vulnerabilities. Only flag real issues.
+Be honest about uncertainty. Don't invent vulnerabilities. Only flag real issues. If something looks suspicious but you are not sure, set "uncertain": true and explain what would confirm it; do not escalate a guess to a critical.
 
 Return ONLY valid JSON, no prose:
-{"interrupt": bool, "severity": "info"|"warn"|"critical", "category": "...", "reason": "..."}`;
+{"interrupt": bool, "uncertain": bool, "severity": "info"|"warn"|"critical", "category": "...", "reason": "..."}`;
 
 export async function triage(prompt: string, diff: string): Promise<TriageResult> {
   const user = `PROMPT:\n${prompt}\n\nDIFF:\n${diff || "(none)"}`;
-  let raw: string;
-  try {
-    raw = await chat(TRIAGE_MODEL, [
-      { role: "system", content: TRIAGE_SYSTEM },
-      { role: "user", content: user },
-    ], { maxTokens: 256, temperature: 0.1 });
-  } catch (e) {
-    return { interrupt: false, reason: `triage error: ${e instanceof Error ? e.message : String(e)}` };
-  }
+  const raw = await chat(TRIAGE_MODEL, [
+    { role: "system", content: TRIAGE_SYSTEM },
+    { role: "user", content: user },
+  ], { maxTokens: 160, temperature: 0.1 });
 
   // Extract JSON from the response (model may wrap in code fences).
   const match = raw.match(/\{[\s\S]*\}/);
@@ -39,11 +35,28 @@ export async function triage(prompt: string, diff: string): Promise<TriageResult
     const parsed = JSON.parse(match[0]);
     return {
       interrupt: Boolean(parsed.interrupt),
+      uncertain: Boolean(parsed.uncertain),
       severity: parsed.severity,
       category: parsed.category,
       reason: parsed.reason,
     };
   } catch {
-    return { interrupt: false, reason: "invalid JSON in triage response" };
+    // Truncated JSON is common when max_tokens is tight. Pull the fields we
+    // need with regex so a cut-off response does not silently read as "no".
+    const interrupt = /"interrupt"\s*:\s*true/.test(raw);
+    const uncertain = /"uncertain"\s*:\s*true/.test(raw);
+    const severity = raw.match(/"severity"\s*:\s*"(info|warn|critical)"/)?.[1] as
+      | "info"
+      | "warn"
+      | "critical"
+      | undefined;
+    const category = raw.match(
+      /"category"\s*:\s*"(security|scalability|correctness|maintainability|prompt-quality)"/
+    )?.[1] as TriageResult["category"];
+    const reason = raw.match(/"reason"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1];
+    if (!interrupt) {
+      return { interrupt: false, reason: "invalid JSON in triage response" };
+    }
+    return { interrupt, uncertain, severity, category, reason };
   }
 }

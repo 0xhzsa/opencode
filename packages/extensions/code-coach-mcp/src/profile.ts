@@ -82,6 +82,15 @@ export class Profile {
     return 0;
   }
 
+  // Clear the profile. Used by the reset-profile tool.
+  reset(): void {
+    try {
+      writeFileSync(this.file, "", "utf8");
+    } catch {
+      // best effort
+    }
+  }
+
   static pathOf(dir: string): string {
     return join(dir, "profile.jsonl");
   }
