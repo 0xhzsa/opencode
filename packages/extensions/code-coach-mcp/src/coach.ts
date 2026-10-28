@@ -90,21 +90,24 @@ ${extra.context || "(none)"}`;
       { role: "system", content: COACH_SYSTEM },
       { role: "user", content: user },
     ],
-    { maxTokens: 200, temperature: 0.3 }
+    { maxTokens: 400, temperature: 0.3 }
   );
 
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("No JSON in coach response");
   const parsed = safeParse(match[0]);
 
+  const nudge = String(parsed.nudge ?? "").trim();
+  if (!nudge) throw new Error("coach returned an empty nudge");
+
   const tags: string[] = Array.isArray(parsed.concept_tags) ? parsed.concept_tags : [];
-  profile.record(parsed.nudge ?? "", tags);
+  profile.record(nudge, tags);
 
   return {
     interrupt: true,
     uncertain: Boolean(parsed.uncertain),
     severity: parsed.severity ?? "warn",
-    nudge: parsed.nudge ?? "",
+    nudge,
     explanation: parsed.explanation ?? "",
     better_prompt: parsed.better_prompt ?? "",
     concept_tags: tags,

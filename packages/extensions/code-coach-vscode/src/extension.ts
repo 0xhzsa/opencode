@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { randomBytes } from "node:crypto";
 import { type Finding, decide } from "./triage";
 import { Profile } from "./profile";
 import { rewritePrompt } from "./rewriter";
@@ -39,6 +40,7 @@ interface CoachResult {
   concept_tags?: string[];
   quiz?: string | null;
   reason?: string;
+  error?: string;
   source?: string;
   profile?: { counts: Record<string, number>; mastered: string[] };
 }
@@ -145,7 +147,9 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
 
-    if (!result) result = offlineCoach(prompt, diff, profile);
+    // Any MCP error (no key, rate limit, malformed model output) falls back to
+    // the deterministic engine instead of going silent.
+    if (!result || result.error) result = offlineCoach(prompt, diff, profile);
     if (seq !== coachSeq) return; // a newer observation won
 
     lastPromptUsed = prompt;
@@ -557,10 +561,12 @@ function renderExplain(result: CoachResult): string {
 }
 
 function wrapCard(body: string, script: string): string {
+  const nonce = randomBytes(16).toString("base64");
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';" />
 <style>
   body { font-family: var(--vscode-font-family); margin: 0; padding: 12px; background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); }
   .card { max-width: 640px; margin: 0 auto; padding: 16px; border: 1px solid var(--vscode-focusBorder); border-radius: 8px; background: var(--vscode-editorWidget-background); }
@@ -583,7 +589,7 @@ function wrapCard(body: string, script: string): string {
     <h1>Code Coach</h1>
     ${body}
   </div>
-  <script>
+  <script nonce="${nonce}">
     (() => {
       ${script}
     })();

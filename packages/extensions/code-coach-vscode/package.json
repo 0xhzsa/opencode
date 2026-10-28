@@ -8,6 +8,7 @@
   },
   "categories": ["Other", "Linters", "Education"],
   "activationEvents": [
+    "onStartupFinished",
     "onView:code-coach.welcome",
     "onCommand:code-coach.coachPrompt",
     "onCommand:code-coach.coachClipboard",

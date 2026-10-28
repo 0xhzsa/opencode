@@ -17,10 +17,18 @@ const Module = require("node:module");
 
 const extDir = path.resolve(__dirname, "..");
 const dataDir = path.join(os.tmpdir(), "code-coach-host-smoke");
+const noModel = process.argv.includes("--no-model");
 fs.rmSync(dataDir, { recursive: true, force: true });
 fs.mkdirSync(dataDir, { recursive: true });
 
-process.env.CODE_COACH_MOCK = "1";
+if (noModel) {
+  // Simulate a dead model provider: the coach must fall back to the
+  // deterministic engine instead of going silent.
+  delete process.env.CODE_COACH_MOCK;
+  delete process.env.OPENROUTER_API_KEY;
+} else {
+  process.env.CODE_COACH_MOCK = "1";
+}
 process.env.CODE_COACH_DATA_DIR = dataDir;
 
 let clipboardText = "";
@@ -138,8 +146,12 @@ async function waitFor(label, predicate, timeoutMs = 15000) {
   await waitFor("save diff to reach the card", () => webview.html.includes("sql-injection"));
   if (!webview.html.includes("Better prompt")) throw new Error("card is missing the rewritten prompt");
   if (webview.html.includes("setTimeout")) throw new Error("card must not schedule an auto-dismiss");
+  if (/OPENROUTER_API_KEY|OpenRouter \d{3}|"error"\s*:/.test(webview.html)) {
+    throw new Error("card must not leak a provider error");
+  }
   console.log("save diff -> coach: ok");
   console.log("persistent card (no timer): ok");
+  if (noModel) console.log("deterministic fallback: ok");
 
   console.log("PASS");
   process.exit(0);

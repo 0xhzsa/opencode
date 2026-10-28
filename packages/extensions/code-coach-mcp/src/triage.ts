@@ -2,6 +2,7 @@
 // issue worth interrupting for. Returns { interrupt, severity, category }.
 
 import { chat, TRIAGE_MODEL } from "./model.js";
+import { preCheck } from "./precheck.js";
 
 export type TriageResult = {
   interrupt: boolean;
@@ -18,9 +19,11 @@ The source tells you where the observation came from. A prompt-only observation 
 Categories: security, scalability, correctness, maintainability, prompt-quality.
 If nothing is worth interrupting for, return {"interrupt": false}. Silence is the default.
 
+Real issues include: SQL built from input, a password compared or stored in plaintext, a secret committed in the diff, HTML rendered from user input, a query that reads every row and filters in application code, and a request boundary with no validation. These are examples, not a checklist.
+
 Be honest about uncertainty. Don't invent vulnerabilities. Only flag real issues. If something looks suspicious but you are not sure, set "uncertain": true and explain what would confirm it; do not escalate a guess to a critical.
 
-Return ONLY valid JSON, no prose:
+Return ONLY valid JSON, no prose. Do not explain your reasoning; the first character of your reply must be {.
 {"interrupt": bool, "uncertain": bool, "severity": "info"|"warn"|"critical", "category": "...", "reason": "..."}`;
 
 export async function triage(
@@ -28,6 +31,12 @@ export async function triage(
   diff: string,
   extra: { context?: string; source?: string } = {}
 ): Promise<TriageResult> {
+  // Deterministic safety net: a cheap model that reasons instead of answering,
+  // or one that is rate-limited, must not turn a textbook vulnerability into
+  // silence. This can only escalate.
+  const pre = preCheck(diff);
+  if (pre) return pre;
+
   const user = `SOURCE: ${extra.source ?? "unknown"}
 
 PROMPT:
@@ -41,18 +50,34 @@ ${extra.context || "(none)"}`;
   const raw = await chat(TRIAGE_MODEL, [
     { role: "system", content: TRIAGE_SYSTEM },
     { role: "user", content: user },
-  ], { maxTokens: 160, temperature: 0.1 });
+  ], { maxTokens: 400, temperature: 0.1 });
 
   // Extract JSON from the response (model may wrap in code fences).
   const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return { interrupt: false, reason: "no JSON in triage response" };
+  if (!match) {
+    // A model that reasoned instead of answering has NOT said "nothing to
+    // report". Mark it uncertain so the caller can tell the difference.
+    return { interrupt: false, uncertain: true, reason: "triage model returned no JSON" };
+  }
   try {
     const parsed = JSON.parse(match[0]);
+    const severity = ["info", "warn", "critical"].includes(parsed.severity)
+      ? (parsed.severity as TriageResult["severity"])
+      : undefined;
+    const category = [
+      "security",
+      "scalability",
+      "correctness",
+      "maintainability",
+      "prompt-quality",
+    ].includes(parsed.category)
+      ? (parsed.category as TriageResult["category"])
+      : undefined;
     return {
       interrupt: Boolean(parsed.interrupt),
       uncertain: Boolean(parsed.uncertain),
-      severity: parsed.severity,
-      category: parsed.category,
+      severity,
+      category,
       reason: parsed.reason,
     };
   } catch {
@@ -70,7 +95,7 @@ ${extra.context || "(none)"}`;
     )?.[1] as TriageResult["category"];
     const reason = raw.match(/"reason"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1];
     if (!interrupt) {
-      return { interrupt: false, reason: "invalid JSON in triage response" };
+      return { interrupt: false, uncertain: true, reason: "invalid JSON in triage response" };
     }
     return { interrupt, uncertain, severity, category, reason };
   }
